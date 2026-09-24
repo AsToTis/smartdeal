@@ -1,0 +1,5 @@
+const fs = require('fs');
+let content = fs.readFileSync('C:/smartdeal/server.js', 'utf8');
+const newSql = "SELECT shops.shop_id, shops.name AS shop_name, users.full_name AS owner_name, shops.created_at, shops.id_card_image, shops.bookbank_image, shops.bank_name, shops.bank_account, shops.address, shops.description, shops.latitude, shops.longitude FROM shops LEFT JOIN users ON shops.owner_id = users.user_id WHERE shops.status = 'pending' ORDER BY shops.created_at DESC";
+content = content.replace(/SELECT shops\.shop_id, shops\.name AS shop_name, users\.full_name AS owner_name, shops\.created_at\s+FROM shops\s+LEFT JOIN users ON shops\.owner_id = users\.user_id\s+WHERE shops\.status = 'pending'\s+ORDER BY shops\.created_at DESC/g, newSql);
+fs.writeFileSync('C:/smartdeal/server.js', content, 'utf8');
