@@ -10,6 +10,7 @@ import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { BASE_URL } from '../../constants/api';
 import { useCart } from '../../context/CartContext';
+import { useTheme } from '../../context/ThemeContext';
 
 // โครงสร้างการจัดสีและไอคอนตามแต่ละหมวดหมู่ (Pastel Theme)
 interface CategoryStyle {
@@ -118,8 +119,10 @@ export default function HomeScreen() {
   const [deals, setDeals] = useState<any[]>([]);
   const [shops, setShops] = useState<any[]>([]);
   const [activeAuction, setActiveAuction] = useState<any>(null);
+  const { colors, isDark } = useTheme();
   
   const [selectedCategory, setSelectedCategory] = useState<any>(null);
+  const [searchKeyword, setSearchKeyword] = useState('');
   const [unreadNotifications, setUnreadNotifications] = useState<number>(0);
   const [userAddress, setUserAddress] = useState<any>(null);
 
@@ -129,7 +132,7 @@ export default function HomeScreen() {
 
   const fetchUnreadNotifications = async () => {
     try {
-      let currentUserId = 2;
+      let currentUserId = null;
       const userData = await AsyncStorage.getItem('user');
       if (userData) {
         const u = JSON.parse(userData);
@@ -147,7 +150,7 @@ export default function HomeScreen() {
 
   const fetchUserAddress = async () => {
     try {
-      let currentUserId = 2;
+      let currentUserId = null;
       const userData = await AsyncStorage.getItem('user');
       if (userData) {
         const u = JSON.parse(userData);
@@ -225,54 +228,63 @@ export default function HomeScreen() {
   };
 
   const filteredDeals = deals.filter((item) => {
-    if (!selectedCategory) return true;
-    return (
-      item.category_id === selectedCategory || 
-      item.category_name === selectedCategory || 
-      item.category === selectedCategory
-    );
+    let matchCat = true;
+    if (selectedCategory) {
+      matchCat = (
+        item.category_id === selectedCategory || 
+        item.category_name === selectedCategory || 
+        item.category === selectedCategory
+      );
+    }
+    let matchSearch = true;
+    if (searchKeyword) {
+      const keyword = searchKeyword.toLowerCase();
+      matchSearch = (item.name && item.name.toLowerCase().includes(keyword)) ||
+                    (item.shop_name && item.shop_name.toLowerCase().includes(keyword));
+    }
+    return matchCat && matchSearch;
   });
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, isDark && { backgroundColor: '#0f172a' }]}>
       {loading ? (
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
           <ActivityIndicator size="large" color="#2e7a32" />
-          <Text style={{ marginTop: 10, color: '#666' }}>กำลังดึงข้อมูลสินค้าล่าสุด...</Text>
+          <Text style={{ marginTop: 10, color: isDark ? '#94a3b8' : '#666' }}>กำลังดึงข้อมูลสินค้าล่าสุด...</Text>
         </View>
       ) : (
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 30 }}>
           
           {/* Header & Location */}
-          <View style={styles.headerContainer}>
+          <View style={[styles.headerContainer, isDark && { backgroundColor: '#1e293b' }]}>
             <View style={styles.locationRow}>
               <TouchableOpacity 
                 style={styles.locationInfo} 
                 onPress={() => router.push('/address' as any)}
                 activeOpacity={0.7}
               >
-                <View style={styles.locIconBg}>
-                  <MaterialIcons name="location-on" size={20} color="#2e7a32" />
+                <View style={[styles.locIconBg, isDark && { backgroundColor: '#334155' }]}>
+                  <MaterialIcons name="location-on" size={20} color={isDark ? '#4ade80' : '#2e7a32'} />
                 </View>
                 <View style={{ flex: 1, marginRight: 8 }}>
-                  <Text style={styles.locationLabel}>ส่งไปที่</Text>
+                  <Text style={[styles.locationLabel, isDark && { color: '#94a3b8' }]}>ส่งไปที่</Text>
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <Text style={[styles.locationName, { flexShrink: 1 }]} numberOfLines={1}>
+                    <Text style={[styles.locationName, { flexShrink: 1 }, isDark && { color: '#f8fafc' }]} numberOfLines={1}>
                       {userAddress?.title 
                         ? (userAddress.address_detail 
                             ? `${userAddress.title} - ${userAddress.address_detail.split(' ')[0]}`
                             : userAddress.title)
                         : 'กำหนดที่อยู่จัดส่ง'}
                     </Text>
-                    <MaterialIcons name="keyboard-arrow-down" size={18} color="#333" />
+                    <MaterialIcons name="keyboard-arrow-down" size={18} color={isDark ? '#f8fafc' : '#333'} />
                   </View>
                 </View>
               </TouchableOpacity>
 
               {/* ไอคอนตะกร้าพร้อมตัวเลข Badge แจ้งเตือน */}
               <View style={styles.headerIcons}>
-                <TouchableOpacity style={styles.iconBtn} onPress={() => router.push('/cart')}>
-                  <MaterialIcons name="shopping-cart" size={20} color="#555" />
+                <TouchableOpacity style={[styles.iconBtn, isDark && { backgroundColor: '#334155' }]} onPress={() => router.push('/cart')}>
+                  <MaterialIcons name="shopping-cart" size={20} color={isDark ? '#f8fafc' : '#555'} />
                   {totalCount > 0 && (
                     <View style={styles.badge}>
                       <Text style={styles.badgeText}>{totalCount}</Text>
@@ -280,11 +292,11 @@ export default function HomeScreen() {
                   )}
                 </TouchableOpacity>
                 <TouchableOpacity 
-                  style={styles.iconBtn} 
+                  style={[styles.iconBtn, isDark && { backgroundColor: '#334155' }]} 
                   onPress={() => router.push('/notifications' as any)}
                   activeOpacity={0.7}
                 >
-                  <MaterialIcons name="notifications" size={20} color="#555" />
+                  <MaterialIcons name="notifications" size={20} color={isDark ? '#f8fafc' : '#555'} />
                   {unreadNotifications > 0 && (
                     <View style={styles.badge}>
                       <Text style={styles.badgeText}>
@@ -297,9 +309,20 @@ export default function HomeScreen() {
             </View>
 
             {/* Search Bar */}
-            <View style={styles.searchBar}>
-              <MaterialIcons name="search" size={20} color="#999" />
-              <TextInput style={styles.searchInput} placeholder="ค้นหาอาหารส่วนเกินแสนอร่อย..." placeholderTextColor="#999" />
+            <View style={[styles.searchBar, isDark && { backgroundColor: '#334155' }]}>
+              <MaterialIcons name="search" size={20} color={isDark ? '#94a3b8' : '#999'} />
+              <TextInput 
+                style={[styles.searchInput, isDark && { color: '#f8fafc' }]} 
+                placeholder="ค้นหาอาหารส่วนเกินแสนอร่อย..." 
+                placeholderTextColor={isDark ? '#94a3b8' : '#999'} 
+                value={searchKeyword}
+                onChangeText={setSearchKeyword}
+              />
+              {searchKeyword.length > 0 && (
+                <TouchableOpacity onPress={() => setSearchKeyword('')}>
+                  <MaterialIcons name="close" size={20} color="#999" />
+                </TouchableOpacity>
+              )}
             </View>
           </View>
 

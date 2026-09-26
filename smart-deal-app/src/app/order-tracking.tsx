@@ -8,6 +8,7 @@ import { MaterialIcons, Ionicons, FontAwesome5 } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import axios from 'axios';
 import { BASE_URL } from '../constants/api';
+import MapView, { Marker, Polyline } from 'react-native-maps';
 
 export default function OrderTrackingScreen() {
   const params = useLocalSearchParams();
@@ -15,10 +16,45 @@ export default function OrderTrackingScreen() {
 
   const [loading, setLoading] = useState(true);
   const [tracking, setTracking] = useState<any>(null);
+  const [riderLocation, setRiderLocation] = useState({ latitude: 13.736717, longitude: 100.523186 });
 
   useEffect(() => {
     fetchTrackingData();
   }, [orderId]);
+
+  // Simulate rider movement
+  useEffect(() => {
+    if (!tracking) return;
+    
+    const startLat = 13.736717;
+    const startLng = 100.523186;
+    const endLat = 13.739017;
+    const endLng = 100.527086;
+    
+    let currentLat = startLat;
+    let currentLng = startLng;
+    
+    const steps = 200;
+    const stepLat = (endLat - startLat) / steps;
+    const stepLng = (endLng - startLng) / steps;
+    
+    let stepCount = 0;
+    
+    const interval = setInterval(() => {
+      currentLat += stepLat;
+      currentLng += stepLng;
+      setRiderLocation({ latitude: currentLat, longitude: currentLng });
+      stepCount++;
+      
+      if (stepCount >= steps) {
+        currentLat = startLat; // Reset to start for demo continuous loop
+        currentLng = startLng;
+        stepCount = 0;
+      }
+    }, 150); 
+    
+    return () => clearInterval(interval);
+  }, [tracking]);
 
   const fetchTrackingData = async () => {
     try {
@@ -96,22 +132,52 @@ export default function OrderTrackingScreen() {
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
           {/* 2. Realistic Delivery Route Map Section */}
           <View style={styles.mapContainer}>
-            <Image 
-              source={{ uri: 'https://images.unsplash.com/photo-1524661135-423995f22d0b?w=800' }} 
-              style={styles.mapImage}
-            />
-            {/* Map Overlay Route Graphics */}
-            <View style={styles.mapOverlay}>
-              {/* Rider Pin Marker */}
-              <View style={styles.riderPinWrapper}>
-                <View style={styles.etaTooltip}>
-                  <Text style={styles.etaTooltipText}>{tracking?.eta_minutes || '5 นาที'}</Text>
+            <MapView
+              style={StyleSheet.absoluteFill}
+              initialRegion={{
+                latitude: 13.737867, // Center of route
+                longitude: 100.525136,
+                latitudeDelta: 0.007,
+                longitudeDelta: 0.007,
+              }}
+            >
+              {/* Route Line */}
+              <Polyline
+                coordinates={[
+                  { latitude: 13.736717, longitude: 100.523186 },
+                  { latitude: 13.739017, longitude: 100.527086 }
+                ]}
+                strokeColor="#16a34a"
+                strokeWidth={4}
+                lineDashPattern={[5, 5]}
+              />
+
+              {/* Shop Marker */}
+              <Marker coordinate={{ latitude: 13.736717, longitude: 100.523186 }} title="ร้านอาหาร">
+                <View style={styles.storeMarkerCircle}>
+                  <MaterialIcons name="storefront" size={20} color="#fff" />
                 </View>
-                <View style={styles.riderMarkerCircle}>
-                  <MaterialIcons name="two-wheeler" size={24} color="#fff" />
+              </Marker>
+
+              {/* Customer Marker */}
+              <Marker coordinate={{ latitude: 13.739017, longitude: 100.527086 }} title="จุดส่ง">
+                <View style={styles.homeMarkerCircle}>
+                  <MaterialIcons name="home" size={20} color="#fff" />
                 </View>
-              </View>
-            </View>
+              </Marker>
+
+              {/* Rider Marker (Animated) */}
+              <Marker coordinate={riderLocation} title="ไรเดอร์">
+                <View style={styles.riderPinWrapper}>
+                  <View style={styles.etaTooltip}>
+                    <Text style={styles.etaTooltipText}>{tracking?.eta_minutes || '5 นาที'}</Text>
+                  </View>
+                  <View style={styles.riderMarkerCircle}>
+                    <MaterialIcons name="two-wheeler" size={24} color="#fff" />
+                  </View>
+                </View>
+              </Marker>
+            </MapView>
           </View>
 
           {/* 3. Status Stepper Card */}
@@ -285,6 +351,28 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 3,
+    borderColor: '#fff',
+    elevation: 4
+  },
+  storeMarkerCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#ef4444',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#fff',
+    elevation: 4
+  },
+  homeMarkerCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#3b82f6',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
     borderColor: '#fff',
     elevation: 4
   },

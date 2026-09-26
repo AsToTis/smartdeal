@@ -8,13 +8,16 @@ import {
   ScrollView,
   Image,
   Linking,
-  Alert
+  Alert,
+  Modal,
+  TextInput
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons, MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { WebView } from 'react-native-webview';
 import axios from 'axios';
+import * as Location from 'expo-location';
 import { BASE_URL } from '../constants/api';
 
 const MapWebView = WebView as any;
@@ -27,10 +30,28 @@ export default function TrackingScreen() {
   const [order, setOrder] = useState<any>(null);
   const [shop, setShop] = useState<any>(null);
   const [rider, setRider] = useState<any>(null);
+  const [userLocation, setUserLocation] = useState<any>(null);
+  const userLocationRef = useRef<any>(null);
+  
+  const [showRatingModal, setShowRatingModal] = useState(false);
+  const [selectedRating, setSelectedRating] = useState(5);
+  const [ratingComment, setRatingComment] = useState('');
 
-  // Default coordinates (used if none provided)
-  const [centerLat, setCenterLat] = useState(13.745634);
-  const [centerLng, setCenterLng] = useState(100.534151);
+  // Default coordinates (used if none provided) - Mahasarakham City
+  const [centerLat, setCenterLat] = useState(16.1852);
+  const [centerLng, setCenterLng] = useState(103.3013);
+
+  useEffect(() => {
+    (async () => {
+      let { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') return;
+      let location = await Location.getCurrentPositionAsync({});
+      setUserLocation(location.coords);
+      userLocationRef.current = location.coords;
+      setCenterLat(location.coords.latitude);
+      setCenterLng(location.coords.longitude);
+    })();
+  }, []);
 
   const fetchTrackingData = async () => {
     try {
@@ -68,12 +89,29 @@ export default function TrackingScreen() {
   );
 
   const updateMapMarkers = (s: any, o: any, r: any) => {
+    // Escape quotes to prevent JS injection errors
+    const safeAddress = o?.shipping_address ? o.shipping_address.replace(/'/g, "\\'").replace(/\n/g, " ") : 'จัดส่งที่นี่';
+    const safeShopName = s?.name ? s.name.replace(/'/g, "\\'").replace(/\n/g, " ") : 'ร้านอาหาร';
+    
+    const sLat = s?.lat || 13.736717;
+    const sLng = s?.lng || 100.523186;
+    
+    // Customer fallback
+    const currentUserLoc = userLocationRef.current;
+    const cLat = currentUserLoc?.latitude || o?.delivery_lat || sLat + 0.008;
+    const cLng = currentUserLoc?.longitude || o?.delivery_lng || sLng + 0.005;
+    
+    // Rider fallback (starts near shop)
+    const rLat = r?.lat || sLat + 0.001;
+    const rLng = r?.lng || sLng + 0.001;
+
     const jsCode = `
       if (window.updateMarkers) {
         window.updateMarkers(
-          ${s?.lat || 'null'}, ${s?.lng || 'null'}, 
-          ${o?.delivery_lat || 'null'}, ${o?.delivery_lng || 'null'}, 
-          ${r?.lat || 'null'}, ${r?.lng || 'null'}
+          ${sLat}, ${sLng}, 
+          ${cLat}, ${cLng}, 
+          ${rLat}, ${rLng},
+          '${safeAddress}', '${safeShopName}'
         );
       }
       true;
@@ -90,7 +128,19 @@ export default function TrackingScreen() {
   };
 
   const handleChat = () => {
-    Alert.alert('แชท', 'ระบบแชทกำลังอยู่ระหว่างการพัฒนา');
+    router.push({ pathname: '/order-chat', params: { orderId: order?.order_id || id, riderId: rider?.rider_id } });
+  };
+
+  const handleShopCall = () => {
+    if (shop?.phone) {
+      Linking.openURL(`tel:${shop.phone}`);
+    } else {
+      Alert.alert('แจ้งเตือน', 'ไม่พบเบอร์โทรศัพท์ร้านค้า');
+    }
+  };
+
+  const handleShopChat = () => {
+    router.push({ pathname: '/order-chat', params: { orderId: order?.order_id || id, shopId: shop?.shop_id } });
   };
 
   // Helper to determine status index
@@ -189,6 +239,22 @@ export default function TrackingScreen() {
           font-size: 20px;
           box-shadow: 0 4px 8px rgba(0,0,0,0.3);
         }
+        
+        .map-tooltip {
+          background-color: white;
+          border: 1px solid #e2e8f0;
+          border-radius: 8px;
+          padding: 6px 10px;
+          font-family: sans-serif;
+          font-size: 13px;
+          font-weight: bold;
+          color: #0f172a;
+          box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+          white-space: nowrap;
+          max-width: 150px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
       </style>
     </head>
     <body>
@@ -196,7 +262,7 @@ export default function TrackingScreen() {
       <script>
         var map = L.map('map', { zoomControl: false, attributionControl: false }).setView([${centerLat}, ${centerLng}], 14);
         
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+        L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
           maxZoom: 19
         }).addTo(map);
 
@@ -206,18 +272,28 @@ export default function TrackingScreen() {
         var customerIcon = L.divIcon({ className: 'custom-div-icon', html: '<div class="customer-marker">📍</div>', iconSize: [32, 32], iconAnchor: [16, 16] });
         var riderIcon = L.divIcon({ className: 'custom-div-icon', html: '<div class="rider-marker-container"><div class="rider-eta">5 นาที</div><div class="rider-icon">🛵</div></div>', iconSize: [46, 66], iconAnchor: [23, 60] });
 
-        window.updateMarkers = function(sLat, sLng, cLat, cLng, rLat, rLng) {
+        window.updateMarkers = function(sLat, sLng, cLat, cLng, rLat, rLng, cAddress, sName) {
           var bounds = [];
           
           if (sLat && sLng) {
-            if (!shopMarker) shopMarker = L.marker([sLat, sLng], {icon: shopIcon}).addTo(map);
-            else shopMarker.setLatLng([sLat, sLng]);
+            if (!shopMarker) {
+              shopMarker = L.marker([sLat, sLng], {icon: shopIcon}).addTo(map);
+              if (sName) shopMarker.bindTooltip(sName, { permanent: true, direction: 'top', offset: [0, -20], className: 'map-tooltip' });
+            } else {
+              shopMarker.setLatLng([sLat, sLng]);
+              if (sName) shopMarker.setTooltipContent(sName);
+            }
             bounds.push([sLat, sLng]);
           }
           
           if (cLat && cLng) {
-            if (!customerMarker) customerMarker = L.marker([cLat, cLng], {icon: customerIcon}).addTo(map);
-            else customerMarker.setLatLng([cLat, cLng]);
+            if (!customerMarker) {
+              customerMarker = L.marker([cLat, cLng], {icon: customerIcon}).addTo(map);
+              if (cAddress) customerMarker.bindTooltip(cAddress, { permanent: true, direction: 'top', offset: [0, -20], className: 'map-tooltip' });
+            } else {
+              customerMarker.setLatLng([cLat, cLng]);
+              if (cAddress) customerMarker.setTooltipContent(cAddress);
+            }
             bounds.push([cLat, cLng]);
           }
           
@@ -225,6 +301,14 @@ export default function TrackingScreen() {
             if (!riderMarker) riderMarker = L.marker([rLat, rLng], {icon: riderIcon}).addTo(map);
             else riderMarker.setLatLng([rLat, rLng]);
             bounds.push([rLat, rLng]);
+          }
+
+          // Draw dashed route line
+          if (sLat && cLat) {
+            if (window.routeLine) {
+              map.removeLayer(window.routeLine);
+            }
+            window.routeLine = L.polyline([[sLat, sLng], [cLat, cLng]], {color: '#16a34a', dashArray: '10, 10', weight: 4}).addTo(map);
           }
 
           if (bounds.length > 1) {
@@ -236,10 +320,28 @@ export default function TrackingScreen() {
 
         // Initialize with default/fetched data
         setTimeout(function() {
+          var safeAddr = ${JSON.stringify(order?.shipping_address || 'จัดส่งที่นี่')};
+          var safeShop = ${JSON.stringify(shop?.name || 'ร้านอาหาร')};
+          
+          var sLat = ${shop?.lat || 'null'};
+          var sLng = ${shop?.lng || 'null'};
+          var cLat = ${userLocation?.latitude || order?.delivery_lat || 'null'};
+          var cLng = ${userLocation?.longitude || order?.delivery_lng || 'null'};
+          var rLat = ${rider?.lat || 'null'};
+          var rLng = ${rider?.lng || 'null'};
+          
+          sLat = sLat || 16.1852;
+          sLng = sLng || 103.3013;
+          cLat = cLat || (sLat + 0.008);
+          cLng = cLng || (sLng + 0.005);
+          rLat = rLat || (sLat + 0.001);
+          rLng = rLng || (sLng + 0.001);
+          
           window.updateMarkers(
-            ${shop?.lat || 'null'}, ${shop?.lng || 'null'},
-            ${order?.delivery_lat || 'null'}, ${order?.delivery_lng || 'null'},
-            ${rider?.lat || 'null'}, ${rider?.lng || 'null'}
+            sLat, sLng,
+            cLat, cLng,
+            rLat, rLng,
+            safeAddr || 'จัดส่งที่นี่', safeShop || 'ร้านอาหาร'
           );
         }, 500);
       </script>
@@ -294,6 +396,46 @@ export default function TrackingScreen() {
             <View style={{ alignItems: 'flex-end' }}>
               <Text style={styles.etaLabel}>เวลาที่คาดถึง</Text>
               <Text style={styles.etaTime}>12:45 น.</Text>
+            </View>
+          </View>
+
+          {/* Location Details Card */}
+          <View style={styles.locationCard}>
+            <View style={styles.locationConnectionLine} />
+            
+            {/* Shop Location */}
+            <View style={styles.locationItem}>
+              <View style={[styles.locationDot, { backgroundColor: '#ef4444' }]} />
+              <View style={styles.locationContent}>
+                <Text style={styles.locationLabel}>รับคำสั่งซื้อจาก</Text>
+                
+                <View style={styles.locationTitleRow}>
+                  <Text style={styles.locationTitle} numberOfLines={1}>{shop?.name || 'ร้านอาหาร'}</Text>
+                  <MaterialIcons name="chevron-right" size={20} color="#94a3b8" />
+                </View>
+                
+                <Text style={styles.locationDesc}>{shop?.address || 'ถ.นครสวรรค์ ต.ตลาด อ.เมือง จ.มหาสารคาม'}</Text>
+              </View>
+            </View>
+
+            <View style={{ height: 24 }} />
+
+            {/* Delivery Location */}
+            <View style={styles.locationItem}>
+              <View style={[styles.locationDot, { backgroundColor: '#10b981' }]} />
+              <View style={styles.locationContent}>
+                <Text style={styles.locationLabel}>จัดส่งที่</Text>
+                <Text style={styles.locationTitle}>{order?.shipping_address || 'ที่อยู่จัดส่งของคุณ'}</Text>
+                <Text style={styles.locationDesc}>ลูกค้า - (+66) 080 000 0000</Text>
+
+                {statusIdx >= 5 && (
+                  <TouchableOpacity style={styles.proofLink}>
+                    <MaterialCommunityIcons name="image-outline" size={18} color="#3b82f6" />
+                    <Text style={styles.proofText}>หลักฐานการจัดส่งอาหาร</Text>
+                    <MaterialIcons name="chevron-right" size={18} color="#3b82f6" />
+                  </TouchableOpacity>
+                )}
+              </View>
             </View>
           </View>
 
@@ -388,15 +530,70 @@ export default function TrackingScreen() {
                 <MaterialCommunityIcons name="chat-processing" size={20} color="#16a34a" />
               </TouchableOpacity>
               
-              <TouchableOpacity style={styles.rateBtn}>
-                <MaterialIcons name="star" size={18} color="#d97706" />
-                <Text style={styles.rateBtnText}>ให้คะแนนร้าน</Text>
-              </TouchableOpacity>
+              {statusIdx >= 5 && (
+                <TouchableOpacity style={styles.rateBtn} onPress={() => setShowRatingModal(true)}>
+                  <MaterialIcons name="star" size={18} color="#d97706" />
+                  <Text style={styles.rateBtnText}>ให้คะแนนคนขับ</Text>
+                </TouchableOpacity>
+              )}
             </View>
           </View>
           
         </ScrollView>
       </View>
+
+      {/* Rating Bottom Sheet Modal */}
+      <Modal visible={showRatingModal} transparent={true} animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            {/* Drag Handle */}
+            <View style={styles.dragHandle} />
+            
+            <Text style={styles.modalTitle}>ให้คะแนนคนขับ</Text>
+            <Text style={styles.modalSubTitle}>การจัดส่งของ {rider?.name || 'คนขับ'} เป็นอย่างไรบ้าง?</Text>
+            
+            <View style={styles.starsContainer}>
+              {[1, 2, 3, 4, 5].map((star) => (
+                <TouchableOpacity 
+                  key={star} 
+                  onPress={() => setSelectedRating(star)}
+                  style={{ padding: 4 }}
+                >
+                  <MaterialIcons 
+                    name={star <= selectedRating ? "star" : "star-border"} 
+                    size={46} 
+                    color={star <= selectedRating ? "#f59e0b" : "#e2e8f0"} 
+                  />
+                </TouchableOpacity>
+              ))}
+            </View>
+            <TextInput
+              style={styles.commentInput}
+              placeholder="พิมพ์คำติชมหรือความประทับใจ (ไม่บังคับ)..."
+              placeholderTextColor="#94a3b8"
+              multiline
+              value={ratingComment}
+              onChangeText={setRatingComment}
+            />
+            <View style={styles.modalActions}>
+              <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setShowRatingModal(false)}>
+                <Text style={styles.modalCancelText}>ยกเลิก</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={styles.modalSubmitBtn} 
+                onPress={() => {
+                  Alert.alert('ขอบคุณ', 'เราได้รับคะแนนของคุณแล้ว');
+                  setShowRatingModal(false);
+                  setRatingComment('');
+                  setSelectedRating(5);
+                }}
+              >
+                <Text style={styles.modalSubmitText}>ส่งคะแนน</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -475,6 +672,88 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#0f172a'
   },
+  locationCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#f1f5f9',
+    marginBottom: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2
+  },
+  locationConnectionLine: {
+    position: 'absolute',
+    left: 20,
+    top: 32,
+    bottom: 32,
+    width: 2,
+    backgroundColor: '#f1f5f9',
+    zIndex: 1
+  },
+  locationItem: {
+    flexDirection: 'row',
+    zIndex: 2
+  },
+  locationDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginTop: 4,
+    marginRight: 12
+  },
+  locationContent: {
+    flex: 1
+  },
+  locationLabel: {
+    fontSize: 13,
+    color: '#64748b',
+    marginBottom: 8
+  },
+  locationTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8
+  },
+  locationTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#0f172a',
+    marginRight: 4,
+    flexShrink: 1
+  },
+  locationShopActions: {
+    flexDirection: 'row',
+    gap: 8
+  },
+  locIconBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    justifyContent: 'center',
+    alignItems: 'center'
+  },
+  locationDesc: {
+    fontSize: 14,
+    color: '#64748b',
+    lineHeight: 20
+  },
+  proofLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 12,
+    gap: 4
+  },
+  proofText: {
+    color: '#3b82f6',
+    fontSize: 14,
+    fontWeight: '500'
+  },
   timelineContainer: {
     marginBottom: 24,
     paddingLeft: 8
@@ -527,6 +806,36 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#94a3b8',
     marginTop: 4
+  },
+  addressCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
+    marginBottom: 16
+  },
+  addressHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8
+  },
+  addressTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#0f172a',
+    marginLeft: 8
+  },
+  addressText: {
+    fontSize: 14,
+    color: '#475569',
+    lineHeight: 20,
+    marginLeft: 32
   },
   riderCard: {
     backgroundColor: '#ffffff',
@@ -618,6 +927,96 @@ const styles = StyleSheet.create({
   rateBtnText: {
     color: '#d97706',
     fontSize: 14,
+    fontWeight: 'bold'
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.6)', // Darker overlay for premium feel
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: '#ffffff',
+    borderTopLeftRadius: 32,
+    borderTopRightRadius: 32,
+    padding: 24,
+    paddingBottom: 40,
+    width: '100%',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -10 },
+    shadowOpacity: 0.1,
+    shadowRadius: 20,
+    elevation: 20
+  },
+  dragHandle: {
+    width: 48,
+    height: 5,
+    backgroundColor: '#e2e8f0',
+    borderRadius: 3,
+    marginBottom: 20
+  },
+  modalTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#0f172a',
+    marginBottom: 6
+  },
+  modalSubTitle: {
+    fontSize: 14,
+    color: '#64748b',
+    marginBottom: 24
+  },
+  starsContainer: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 28
+  },
+  commentInput: {
+    width: '100%',
+    height: 100,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 16,
+    padding: 16,
+    paddingTop: 16,
+    fontSize: 15,
+    color: '#0f172a',
+    textAlignVertical: 'top',
+    marginBottom: 28
+  },
+  modalActions: {
+    flexDirection: 'row',
+    width: '100%',
+    gap: 16
+  },
+  modalCancelBtn: {
+    flex: 1,
+    paddingVertical: 16,
+    borderRadius: 16,
+    backgroundColor: '#f1f5f9',
+    alignItems: 'center'
+  },
+  modalCancelText: {
+    color: '#64748b',
+    fontSize: 16,
+    fontWeight: 'bold'
+  },
+  modalSubmitBtn: {
+    flex: 2,
+    paddingVertical: 16,
+    borderRadius: 16,
+    backgroundColor: '#16a34a',
+    alignItems: 'center',
+    shadowColor: '#16a34a',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4
+  },
+  modalSubmitText: {
+    color: '#ffffff',
+    fontSize: 16,
     fontWeight: 'bold'
   }
 });

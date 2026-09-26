@@ -9,6 +9,9 @@ import { MaterialIcons, Ionicons, FontAwesome5 } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
+import * as ImagePicker from 'expo-image-picker';
+import * as Updates from 'expo-updates';
+import { useTheme } from '../../context/ThemeContext';
 import { BASE_URL } from '../../constants/api';
 
 const DEFAULT_AVATAR = 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=300';
@@ -39,6 +42,8 @@ export default function ProfileScreen() {
   const [showEditProfileModal, setShowEditProfileModal] = useState(false);
   const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
   const [showPointsModal, setShowPointsModal] = useState(false);
+  
+  const { colors, isDark } = useTheme();
 
   // Edit Profile Form state
   const [editName, setEditName] = useState('');
@@ -132,6 +137,19 @@ export default function ProfileScreen() {
     setShowEditProfileModal(true);
   };
 
+  const pickAvatar = async () => {
+    let result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+    });
+
+    if (!result.canceled && result.assets && result.assets.length > 0) {
+      setEditAvatar(result.assets[0].uri);
+    }
+  };
+
   // ฟังก์ชันบันทึกข้อมูลส่วนตัว (PUT /api/users/:id/profile)
   const handleSaveProfile = async () => {
     if (!editName.trim()) {
@@ -222,14 +240,32 @@ export default function ProfileScreen() {
     }
   };
 
-  const handleRedeemReward = () => {
-    Alert.alert('แลกของรางวัล 🎁', `คุณมีคะแนน ${points.toLocaleString()} พอยท์ สามารถแลกคูปองส่วนลด 50 บาท (ใช้ 500 พอยท์) ได้ทันที!`, [
+  const handleRedeemPoints = async (type: string, cost: number, code: string, title: string, value: number) => {
+    if (points < cost) {
+      Alert.alert('แจ้งเตือน', 'คะแนนสะสมของคุณไม่เพียงพอ');
+      return;
+    }
+
+    Alert.alert('ยืนยันการแลกคะแนน', `คุณต้องการใช้ ${cost} คะแนน เพื่อแลกรับ ${title} หรือไม่?`, [
       { text: 'ยกเลิก', style: 'cancel' },
       {
-        text: 'แลกคูปอง',
-        onPress: () => {
-          setPoints(prev => Math.max(0, prev - 500));
-          Alert.alert('สำเร็จ', 'แลกคูปองส่วนลด 50 บาทเรียบร้อยแล้ว');
+        text: 'แลกของรางวัล',
+        onPress: async () => {
+          try {
+            // หักคะแนน
+            setPoints(prev => prev - cost);
+            
+            // บันทึกคูปองลง AsyncStorage
+            const existingCouponsStr = await AsyncStorage.getItem('savedCoupons');
+            let coupons = existingCouponsStr ? JSON.parse(existingCouponsStr) : [];
+            coupons.push({ code, title, type, value, expiry: new Date(Date.now() + 86400000 * 7).toISOString() }); // หมดอายุใน 7 วัน
+            await AsyncStorage.setItem('savedCoupons', JSON.stringify(coupons));
+            
+            Alert.alert('สำเร็จ', `แลกของรางวัลสำเร็จ! โค้ด ${code} ถูกบันทึกเก็บไว้ในระบบ คุณสามารถใช้ได้ในหน้าชำระเงิน`);
+          } catch (e) {
+            console.error('Redeem error:', e);
+            Alert.alert('ผิดพลาด', 'ไม่สามารถแลกของรางวัลได้');
+          }
         }
       }
     ]);
@@ -243,26 +279,24 @@ export default function ProfileScreen() {
         style: 'destructive',
         onPress: async () => {
           try {
-            await AsyncStorage.removeItem('user');
-            await AsyncStorage.removeItem('userToken');
-            await AsyncStorage.removeItem('shop_id');
-            setUser(null);
-            
-            // นำทางไปหน้า Login แบบแทนที่ stack เดิม (กลับไปหน้า index.tsx)
-            router.replace('/');
-          } catch (error) {
-            console.error('Error during logout:', error);
-            Alert.alert('ข้อผิดพลาด', 'ไม่สามารถออกจากระบบได้');
+            await AsyncStorage.clear();
+          } catch (e) {
+            console.log('AsyncStorage clear error:', e);
           }
+          
+          setUser(null);
+          
+          // เปลี่ยนหน้าเป็น /login ชัดเจน ป้องกันการชนกับหน้า Home
+          router.replace('/login' as any);
         }
       }
     ]);
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={[styles.container, isDark && { backgroundColor: '#0f172a' }]} edges={['top']}>
       {/* 1. Header */}
-      <View style={styles.header}>
+      <View style={[styles.header, isDark && { backgroundColor: '#1e293b', borderBottomColor: '#334155' }]}>
         <TouchableOpacity 
           style={styles.backBtn}
           onPress={() => {
@@ -271,17 +305,17 @@ export default function ProfileScreen() {
           }}
           activeOpacity={0.7}
         >
-          <MaterialIcons name="arrow-back" size={24} color="#0f172a" />
+          <MaterialIcons name="arrow-back" size={24} color={isDark ? '#f8fafc' : '#0f172a'} />
         </TouchableOpacity>
 
-        <Text style={styles.headerTitle}>โปรไฟล์</Text>
+        <Text style={[styles.headerTitle, isDark && { color: '#f8fafc' }]}>โปรไฟล์</Text>
 
         <TouchableOpacity 
           style={styles.moreBtn}
-          onPress={() => Alert.alert('ตัวเลือก', 'Smart Deal App สำหรับผู้ซื้อและร้านค้า')}
+          onPress={() => router.push('/settings' as any)}
           activeOpacity={0.7}
         >
-          <MaterialIcons name="more-vert" size={24} color="#0f172a" />
+          <MaterialIcons name="more-vert" size={24} color={isDark ? '#f8fafc' : '#0f172a'} />
         </TouchableOpacity>
       </View>
 
@@ -306,24 +340,24 @@ export default function ProfileScreen() {
             </View>
           </TouchableOpacity>
 
-          <Text style={styles.userNameText}>{user?.full_name || 'สมชาย ใจดี'}</Text>
-          <Text style={styles.userEmailText}>{user?.email || 'test@gmail.com'}</Text>
-          <Text style={styles.userPhoneText}>{user?.phone || '0812345678'}</Text>
+          <Text style={[styles.userNameText, isDark && { color: '#f8fafc' }]}>{user?.full_name || 'สมชาย ใจดี'}</Text>
+          <Text style={[styles.userEmailText, isDark && { color: '#94a3b8' }]}>{user?.email || 'test@gmail.com'}</Text>
+          <Text style={[styles.userPhoneText, isDark && { color: '#94a3b8' }]}>{user?.phone || '0812345678'}</Text>
         </View>
 
         {/* 3. Points & Rewards Card (ดีลอัจฉริยะ พอยท์) */}
-        <View style={styles.pointsCard}>
+        <View style={[styles.pointsCard, isDark && { backgroundColor: '#064e3b', borderColor: '#065f46' }]}>
           <View style={styles.pointsLeft}>
-            <Text style={styles.pointsLabel}>ดีลอัจฉริยะ พอยท์</Text>
+            <Text style={[styles.pointsLabel, isDark && { color: '#a7f3d0' }]}>ดีลอัจฉริยะ พอยท์</Text>
             <View style={styles.pointsNumberRow}>
-              <Text style={styles.pointsNumber}>{points.toLocaleString()}</Text>
-              <Text style={styles.pointsUnit}>คะแนน</Text>
+              <Text style={[styles.pointsNumber, isDark && { color: '#fff' }]}>{points.toLocaleString()}</Text>
+              <Text style={[styles.pointsUnit, isDark && { color: '#34d399' }]}>คะแนน</Text>
             </View>
           </View>
 
           <TouchableOpacity 
             style={styles.redeemBtn}
-            onPress={handleRedeemReward}
+            onPress={() => setShowPointsModal(true)}
             activeOpacity={0.85}
           >
             <FontAwesome5 name="gift" size={14} color="#fff" />
@@ -335,75 +369,75 @@ export default function ProfileScreen() {
         <View style={styles.menuContainer}>
           {/* แก้ไขข้อมูลส่วนตัว */}
           <TouchableOpacity 
-            style={styles.menuCard}
+            style={[styles.menuCard, isDark && { backgroundColor: '#1e293b', borderColor: '#334155' }]}
             onPress={openEditModal}
             activeOpacity={0.7}
           >
-            <View style={styles.menuIconCircle}>
+            <View style={[styles.menuIconCircle, isDark && { backgroundColor: '#064e3b' }]}>
               <MaterialIcons name="person-outline" size={22} color="#16a34a" />
             </View>
-            <Text style={styles.menuTitle}>แก้ไขข้อมูลส่วนตัว</Text>
-            <MaterialIcons name="chevron-right" size={22} color="#cbd5e1" />
+            <Text style={[styles.menuTitle, isDark && { color: '#f8fafc' }]}>แก้ไขข้อมูลส่วนตัว</Text>
+            <MaterialIcons name="chevron-right" size={22} color={isDark ? '#94a3b8' : '#cbd5e1'} />
           </TouchableOpacity>
 
           {/* เปลี่ยนรหัสผ่าน */}
           <TouchableOpacity 
-            style={styles.menuCard}
+            style={[styles.menuCard, isDark && { backgroundColor: '#1e293b', borderColor: '#334155' }]}
             onPress={() => setShowChangePasswordModal(true)}
             activeOpacity={0.7}
           >
-            <View style={[styles.menuIconCircle, { backgroundColor: '#f0fdf4' }]}>
+            <View style={[styles.menuIconCircle, { backgroundColor: '#f0fdf4' }, isDark && { backgroundColor: '#064e3b' }]}>
               <MaterialIcons name="lock-outline" size={22} color="#16a34a" />
             </View>
-            <Text style={styles.menuTitle}>เปลี่ยนรหัสผ่าน</Text>
-            <MaterialIcons name="chevron-right" size={22} color="#cbd5e1" />
+            <Text style={[styles.menuTitle, isDark && { color: '#f8fafc' }]}>เปลี่ยนรหัสผ่าน</Text>
+            <MaterialIcons name="chevron-right" size={22} color={isDark ? '#94a3b8' : '#cbd5e1'} />
           </TouchableOpacity>
 
           {/* ประวัติคะแนนสะสม */}
           <TouchableOpacity 
-            style={styles.menuCard}
+            style={[styles.menuCard, isDark && { backgroundColor: '#1e293b', borderColor: '#334155' }]}
             onPress={() => setShowPointsModal(true)}
             activeOpacity={0.7}
           >
-            <View style={styles.menuIconCircle}>
+            <View style={[styles.menuIconCircle, isDark && { backgroundColor: '#064e3b' }]}>
               <MaterialIcons name="history" size={22} color="#16a34a" />
             </View>
-            <Text style={styles.menuTitle}>ประวัติคะแนนสะสม</Text>
-            <MaterialIcons name="chevron-right" size={22} color="#cbd5e1" />
+            <Text style={[styles.menuTitle, isDark && { color: '#f8fafc' }]}>ประวัติคะแนนสะสม</Text>
+            <MaterialIcons name="chevron-right" size={22} color={isDark ? '#94a3b8' : '#cbd5e1'} />
           </TouchableOpacity>
 
           {/* ตั้งค่าการใช้งาน */}
           <TouchableOpacity 
-            style={styles.menuCard}
-            onPress={() => Alert.alert('ตั้งค่า', 'เปิด/ปิด การแจ้งเตือนดีลสายฟ้าแลบ และตำแหน่งที่อยู่')}
+            style={[styles.menuCard, isDark && { backgroundColor: '#1e293b', borderColor: '#334155' }]}
+            onPress={() => router.push('/settings' as any)}
             activeOpacity={0.7}
           >
-            <View style={styles.menuIconCircle}>
+            <View style={[styles.menuIconCircle, isDark && { backgroundColor: '#064e3b' }]}>
               <MaterialIcons name="settings" size={22} color="#16a34a" />
             </View>
-            <Text style={styles.menuTitle}>ตั้งค่าการใช้งาน</Text>
-            <MaterialIcons name="chevron-right" size={22} color="#cbd5e1" />
+            <Text style={[styles.menuTitle, isDark && { color: '#f8fafc' }]}>ตั้งค่าการใช้งาน</Text>
+            <MaterialIcons name="chevron-right" size={22} color={isDark ? '#94a3b8' : '#cbd5e1'} />
           </TouchableOpacity>
 
           {/* ศูนย์ความช่วยเหลือ */}
           <TouchableOpacity 
-            style={styles.menuCard}
-            onPress={() => Alert.alert('ศูนย์ความช่วยเหลือ', 'ติดต่อสอบถามได้ที่ support@smartdeal.com หรือโทร 02-123-4567')}
+            style={[styles.menuCard, isDark && { backgroundColor: '#1e293b', borderColor: '#334155' }]}
+            onPress={() => router.push('/help-center' as any)}
             activeOpacity={0.7}
           >
-            <View style={styles.menuIconCircle}>
+            <View style={[styles.menuIconCircle, isDark && { backgroundColor: '#064e3b' }]}>
               <MaterialIcons name="help-outline" size={22} color="#16a34a" />
             </View>
-            <Text style={styles.menuTitle}>ศูนย์ความช่วยเหลือ</Text>
-            <MaterialIcons name="chevron-right" size={22} color="#cbd5e1" />
+            <Text style={[styles.menuTitle, isDark && { color: '#f8fafc' }]}>ศูนย์ความช่วยเหลือ</Text>
+            <MaterialIcons name="chevron-right" size={22} color={isDark ? '#94a3b8' : '#cbd5e1'} />
           </TouchableOpacity>
 
           {/* ระบบจัดการร้านค้า (Merchant Center) */}
           <TouchableOpacity 
-            style={[styles.menuCard, hasShop && shopStatus === 'pending' ? { opacity: 0.6 } : null]}
+            style={[styles.menuCard, isDark && { backgroundColor: '#1e293b', borderColor: '#334155' }, hasShop && shopStatus === 'pending' ? { opacity: 0.6 } : null]}
             onPress={() => {
               if (hasShop && shopStatus === 'approved') {
-                router.push('/(seller)');
+                router.replace('/(seller)');
               } else if (hasShop && shopStatus === 'pending') {
                 Alert.alert('แจ้งเตือน', 'บัญชีร้านค้าของคุณกำลังอยู่ระหว่างการตรวจสอบ');
               } else {
@@ -413,32 +447,32 @@ export default function ProfileScreen() {
             activeOpacity={0.7}
             disabled={hasShop && shopStatus === 'pending'}
           >
-            <View style={styles.menuIconCircle}>
+            <View style={[styles.menuIconCircle, isDark && { backgroundColor: '#064e3b' }]}>
               <MaterialIcons name="storefront" size={22} color="#16a34a" />
             </View>
             <View style={{ flex: 1, marginLeft: 16 }}>
-              <Text style={{ fontSize: 15, fontWeight: '600', color: '#0f172a' }}>
+              <Text style={{ fontSize: 15, fontWeight: '600', color: isDark ? '#f8fafc' : '#0f172a' }}>
                 {hasShop && shopStatus === 'approved' 
                   ? 'สลับไปจัดการร้านค้า' 
                   : hasShop && shopStatus === 'pending' 
-                    ? 'สมัครเปิดร้านค้ากับเรา (รอตรวจสอบอนุมัติ)' 
+                    ? 'สมัครเปิดร้านค้ากับเรา (รอตรวจสอบ)' 
                     : 'สมัครเปิดร้านค้ากับเรา'}
               </Text>
             </View>
-            <MaterialIcons name="chevron-right" size={22} color="#cbd5e1" />
+            <MaterialIcons name="chevron-right" size={22} color={isDark ? '#94a3b8' : '#cbd5e1'} />
           </TouchableOpacity>
         </View>
 
         {/* 5. Logout Button (Red pill card) */}
         <TouchableOpacity 
-          style={styles.logoutCard} 
+          style={[styles.logoutCard, isDark && { backgroundColor: '#7f1d1d', borderColor: '#991b1b' }]} 
           onPress={handleLogout}
           activeOpacity={0.8}
         >
-          <View style={styles.logoutIconCircle}>
-            <MaterialIcons name="logout" size={18} color="#ef4444" />
+          <View style={[styles.logoutIconCircle, isDark && { backgroundColor: '#991b1b' }]}>
+            <MaterialIcons name="logout" size={18} color={isDark ? '#fca5a5' : '#ef4444'} />
           </View>
-          <Text style={styles.logoutText}>ออกจากระบบ</Text>
+          <Text style={[styles.logoutText, isDark && { color: '#fca5a5' }]}>ออกจากระบบ</Text>
         </TouchableOpacity>
 
         {/* 6. Footer Version */}
@@ -469,27 +503,10 @@ export default function ProfileScreen() {
                   source={{ uri: editAvatar || DEFAULT_AVATAR }} 
                   style={styles.modalAvatarPreview} 
                 />
-                <Text style={styles.presetHeading}>เลือกรูปโปรไฟล์ด่วน:</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.presetRow}>
-                  {AVATAR_PRESETS.map((preset, index) => (
-                    <TouchableOpacity
-                      key={index}
-                      onPress={() => setEditAvatar(preset)}
-                      style={[
-                        styles.presetThumbnailWrapper,
-                        editAvatar === preset && styles.presetActiveThumbnail
-                      ]}
-                      activeOpacity={0.7}
-                    >
-                      <Image source={{ uri: preset }} style={styles.presetThumbnail} />
-                      {editAvatar === preset && (
-                        <View style={styles.presetCheckmark}>
-                          <MaterialIcons name="check" size={10} color="#fff" />
-                        </View>
-                      )}
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
+                <TouchableOpacity style={styles.uploadAvatarBtn} onPress={pickAvatar}>
+                  <MaterialIcons name="photo-camera" size={20} color="#16a34a" />
+                  <Text style={{ marginLeft: 8, color: '#16a34a', fontWeight: 'bold' }}>อัปโหลดจากคลังรูปภาพ</Text>
+                </TouchableOpacity>
               </View>
 
               {/* Input: ชื่อ-นามสกุล */}
@@ -748,6 +765,30 @@ export default function ProfileScreen() {
               )}
             </ScrollView>
 
+            <View style={{ marginTop: 12, marginBottom: 20 }}>
+              <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#0f172a', marginBottom: 12 }}>แลกของรางวัล</Text>
+              
+              <View style={{ flexDirection: 'row', gap: 12, marginBottom: 12 }}>
+                <TouchableOpacity 
+                  style={{ flex: 1, backgroundColor: '#f0fdf4', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#bbf7d0', alignItems: 'center' }}
+                  onPress={() => handleRedeemPoints('discount', 500, 'DISCOUNT50', 'ส่วนลด 50 บาท', 50)}
+                >
+                  <MaterialIcons name="local-offer" size={24} color="#16a34a" />
+                  <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#16a34a', marginTop: 4 }}>ส่วนลด 50 บ.</Text>
+                  <Text style={{ fontSize: 12, color: '#15803d' }}>ใช้ 500 พอยท์</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity 
+                  style={{ flex: 1, backgroundColor: '#eff6ff', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#bfdbfe', alignItems: 'center' }}
+                  onPress={() => handleRedeemPoints('free_delivery', 800, 'FREEDEL', 'ส่งฟรี', 0)}
+                >
+                  <MaterialIcons name="local-shipping" size={24} color="#3b82f6" />
+                  <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#3b82f6', marginTop: 4 }}>ส่งฟรี</Text>
+                  <Text style={{ fontSize: 12, color: '#1d4ed8' }}>ใช้ 800 พอยท์</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
             <TouchableOpacity 
               style={styles.modalFullBtn}
               onPress={() => setShowPointsModal(false)}
@@ -909,11 +950,17 @@ const styles = StyleSheet.create({
   
   // Avatar Selection in Modal
   modalAvatarContainer: { alignItems: 'center', marginVertical: 8 },
-  modalAvatarPreview: { width: 72, height: 72, borderRadius: 36, borderWidth: 2, borderColor: '#16a34a' },
-  presetHeading: { fontSize: 11, color: '#64748b', fontWeight: '600', marginTop: 8, marginBottom: 6 },
-  presetRow: { flexDirection: 'row', marginBottom: 6 },
-  presetThumbnailWrapper: { position: 'relative', marginRight: 8, borderRadius: 20, borderWidth: 2, borderColor: 'transparent' },
-  presetActiveThumbnail: { borderColor: '#16a34a' },
+  modalAvatarPreview: { width: 72, height: 72, borderRadius: 36, borderWidth: 2, borderColor: '#16a34a', marginBottom: 12 },
+  uploadAvatarBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f0fdf4',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+  },
   presetThumbnail: { width: 38, height: 38, borderRadius: 19 },
   presetCheckmark: {
     position: 'absolute',
@@ -972,3 +1019,7 @@ const styles = StyleSheet.create({
   modalFullBtn: { backgroundColor: '#f1f5f9', paddingVertical: 12, borderRadius: 12, alignItems: 'center', marginTop: 10 },
   modalFullBtnText: { color: '#475569', fontWeight: 'bold' }
 });
+
+
+
+

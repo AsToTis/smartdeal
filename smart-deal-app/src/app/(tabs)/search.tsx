@@ -112,7 +112,9 @@ export default function SearchScreen() {
       {/* 2. Search Input Bar */}
       <View style={styles.searchBarWrapper}>
         <View style={styles.searchBar}>
-          <MaterialIcons name="search" size={22} color="#16a34a" />
+          <TouchableOpacity onPress={() => performSearch(searchTerm)}>
+            <MaterialIcons name="search" size={22} color="#16a34a" />
+          </TouchableOpacity>
           <TextInput
             style={styles.searchInput}
             placeholder="ค้นหาร้านค้า, เมนูอาหาร หรือระยะทาง"

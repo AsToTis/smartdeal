@@ -150,18 +150,22 @@ export default function OrderDetailsScreen() {
 
         {/* สรุปยอดเงิน */}
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>สรุปยอดเงิน</Text>
+          <Text style={styles.sectionTitle}>สรุปยอดเงินสำหรับร้านค้า</Text>
           <View style={styles.summaryRow}>
             <Text style={styles.summaryLabel}>ยอดรวมค่าอาหาร</Text>
             <Text style={styles.summaryValue}>฿{Number(order.subtotal || order.total_amount).toLocaleString()}</Text>
           </View>
           <View style={styles.summaryRow}>
-            <Text style={styles.summaryLabel}>ส่วนลด</Text>
+            <Text style={styles.summaryLabel}>ส่วนลดร้านค้า</Text>
             <Text style={styles.summaryValue}>- ฿{Number(order.discount || 0).toLocaleString()}</Text>
           </View>
+          <View style={styles.summaryRow}>
+            <Text style={styles.summaryLabel}>หักค่าธรรมเนียมแอป (GP {order.gp_percent || 15}%)</Text>
+            <Text style={styles.summaryValue}>- ฿{((Number(order.subtotal || order.total_amount) - Number(order.discount || 0)) * (order.gp_percent || 15) / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</Text>
+          </View>
           <View style={[styles.summaryRow, styles.summaryTotalRow]}>
-            <Text style={styles.summaryTotalLabel}>ยอดสุทธิ</Text>
-            <Text style={styles.summaryTotalValue}>฿{Number(order.total_amount).toLocaleString()}</Text>
+            <Text style={styles.summaryTotalLabel}>ยอดสุทธิที่ร้านค้าได้รับ</Text>
+            <Text style={styles.summaryTotalValue}>฿{((Number(order.subtotal || order.total_amount) - Number(order.discount || 0)) * (1 - (order.gp_percent || 15) / 100)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</Text>
           </View>
         </View>
 
@@ -172,13 +176,37 @@ export default function OrderDetailsScreen() {
             <MaterialIcons name={order.delivery_type === 'pickup' ? "storefront" : "local-shipping"} size={20} color="#64748b" />
             <Text style={styles.infoText}>{order.delivery_type === 'pickup' ? 'รับเองที่ร้าน' : 'จัดส่งเดลิเวอรี'}</Text>
           </View>
-          {order.delivery_type !== 'pickup' && order.rider_name && (
+          {order.delivery_type !== 'pickup' && ['preparing', 'ready', 'delivering', 'shipped', 'completed'].includes(order.order_status) && order.rider_name && (
             <View style={styles.infoRow}>
               <Ionicons name="bicycle" size={20} color="#64748b" />
               <Text style={styles.infoText}>ไรเดอร์: {order.rider_name} ({order.rider_phone})</Text>
             </View>
           )}
         </View>
+
+        {/* รีวิวจากลูกค้า */}
+        {order.order_status === 'completed' && (
+          <View style={styles.card}>
+            <Text style={styles.sectionTitle}>รีวิวจากลูกค้า</Text>
+            {order.review ? (
+              <View style={{ marginTop: 8 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                  {[1, 2, 3, 4, 5].map(star => (
+                    <MaterialIcons 
+                      key={star} 
+                      name="star" 
+                      size={18} 
+                      color={star <= order.review.rating ? '#f59e0b' : '#e2e8f0'} 
+                    />
+                  ))}
+                </View>
+                <Text style={{ fontSize: 14, color: '#334155', fontStyle: 'italic' }}>"{order.review.comment}"</Text>
+              </View>
+            ) : (
+              <Text style={{ fontSize: 14, color: '#94a3b8', fontStyle: 'italic', marginTop: 8 }}>ไม่มีรีวิวจากลูกค้า</Text>
+            )}
+          </View>
+        )}
 
       </ScrollView>
 

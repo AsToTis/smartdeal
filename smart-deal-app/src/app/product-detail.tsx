@@ -146,6 +146,7 @@ export default function ProductDetailScreen() {
       name: product.name,
       price: Number(product.discount_price || product.original_price || 0),
       quantity: quantity,
+      stock_quantity: product.stock_quantity,
       shop_id: product.shop_id || 1,
       image_url: product.image_url
     }, quantity);

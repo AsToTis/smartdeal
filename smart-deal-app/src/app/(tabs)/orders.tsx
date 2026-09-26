@@ -41,7 +41,7 @@ export default function OrdersScreen() {
 
   const fetchOrders = async () => {
     try {
-      let currentUserId = 2; // ค่าเริ่มต้น (สมชาย ใจดี)
+      let currentUserId = null; // (สมชาย ใจดี)
       try {
         const userData = await AsyncStorage.getItem('user');
         if (userData) {
@@ -52,6 +52,7 @@ export default function OrdersScreen() {
         console.log('AsyncStorage read error', e);
       }
 
+      if (!currentUserId) { setOrders([]); setLoading(false); setRefreshing(false); return; }
       const res = await axios.get(`${BASE_URL}/orders/user/${currentUserId}`);
       if (res.data && res.data.success) {
         setOrders(res.data.data || []);
@@ -59,6 +60,7 @@ export default function OrdersScreen() {
         setOrders([]);
       }
     } catch (error: any) {
+      setOrders([]);
       console.error('❌ Fetch orders error:', error?.message || error);
     } finally {
       setLoading(false);
@@ -172,8 +174,20 @@ export default function OrdersScreen() {
               const res = await axios.put(`${BASE_URL}/orders/${orderId}/complete`);
               if (res.data?.success) {
                 Alert.alert('สำเร็จ', 'ยืนยันการรับสินค้าเรียบร้อยแล้ว');
+                const orderToReview = selectedOrder;
                 setSelectedOrder(null);
                 fetchOrders(); // Refresh orders
+                
+                // พาผู้ใช้ไปยังหน้ารีวิวสินค้าทันทีหลังจากกดยืนยันการรับสินค้า
+                router.push({
+                  pathname: '/review' as any,
+                  params: {
+                    order_id: orderToReview?.order_id,
+                    shop_name: orderToReview?.shop_name,
+                    product_name: orderToReview?.items?.[0]?.product_name || orderToReview?.display_title || 'อาหารจานโปรด',
+                    order_date: formatThaiDateTime(orderToReview?.created_at)
+                  }
+                });
               } else {
                 Alert.alert('ข้อผิดพลาด', res.data?.message || 'ไม่สามารถยืนยันได้');
               }
@@ -291,7 +305,7 @@ export default function OrdersScreen() {
     
     setIsSubmittingIssue(true);
     try {
-      let currentUserId = 2; 
+      let currentUserId = null; 
       const userData = await AsyncStorage.getItem('user');
       if (userData) {
         const user = JSON.parse(userData);
@@ -317,6 +331,21 @@ export default function OrdersScreen() {
     } finally {
       setIsSubmittingIssue(false);
     }
+  };
+
+  const canReview = (order: any) => {
+    if (!order) return false;
+    const statusInfo = getStatusInfo(order.order_status);
+    if (statusInfo.isActive || statusInfo.isCancelled) return false;
+    
+    const completedAt = order.updated_at || order.created_at;
+    if (!completedAt) return false;
+    
+    const completedDate = new Date(completedAt).getTime();
+    const now = new Date().getTime();
+    const hoursDiff = (now - completedDate) / (1000 * 60 * 60);
+    
+    return hoursDiff <= 12;
   };
 
   return (
@@ -622,8 +651,8 @@ export default function OrdersScreen() {
                   </TouchableOpacity>
                 )}
 
-                {/* ปุ่มรีวิว (เฉพาะออเดอร์ที่สำเร็จแล้ว) */}
-                {!getStatusInfo(selectedOrder?.order_status).isActive && !getStatusInfo(selectedOrder?.order_status).isCancelled && (
+                {/* ปุ่มรีวิว (เฉพาะออเดอร์ที่สำเร็จแล้ว ภายใน 12 ชม.) */}
+                {canReview(selectedOrder) && (
                   <TouchableOpacity 
                     style={styles.reviewOrderBtn}
                     onPress={() => {

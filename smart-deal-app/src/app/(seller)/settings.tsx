@@ -2,6 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Switch, Image, Alert, Modal, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
+import MapView, { Marker } from 'react-native-maps';
 import { router, useFocusEffect } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
@@ -14,6 +15,8 @@ export default function SellerSettingsScreen() {
   const [notiEnabled, setNotiEnabled] = useState(true);
   const [ownerName, setOwnerName] = useState('เจ้าของร้าน');
   const [userId, setUserId] = useState<string | null>(null);
+  const [mapRegion, setMapRegion] = useState({ latitude: 13.7563, longitude: 100.5018, latitudeDelta: 0.01, longitudeDelta: 0.01 });
+  const [tempLocation, setTempLocation] = useState({ latitude: 13.7563, longitude: 100.5018 });
 
   const fetchShopData = async () => {
     try {
@@ -59,6 +62,12 @@ export default function SellerSettingsScreen() {
   };
 
   const openEdit = (field: string, title: string) => {
+    if (field === 'address') {
+      const lat = parseFloat(formData.latitude) || 13.7563;
+      const lng = parseFloat(formData.longitude) || 100.5018;
+      setMapRegion({ latitude: lat, longitude: lng, latitudeDelta: 0.01, longitudeDelta: 0.01 });
+      setTempLocation({ latitude: lat, longitude: lng });
+    }
     setEditModal({
       visible: true,
       field,
@@ -68,7 +77,11 @@ export default function SellerSettingsScreen() {
   };
 
   const handleEditSave = () => {
-    setFormData((prev: any) => ({ ...prev, [editModal.field]: editModal.value }));
+    if (editModal.field === 'address') {
+      setFormData((prev: any) => ({ ...prev, address: editModal.value, latitude: tempLocation.latitude, longitude: tempLocation.longitude }));
+    } else {
+      setFormData((prev: any) => ({ ...prev, [editModal.field]: editModal.value }));
+    }
     setEditModal({visible: false, field: '', value: '', title: ''});
   };
 
@@ -79,7 +92,9 @@ export default function SellerSettingsScreen() {
         text: 'ออกจากระบบ', 
         style: 'destructive',
         onPress: () => {
-          // just go back to profile (Buyer mode)
+          if (router.canDismiss()) {
+            router.dismissAll();
+          }
           router.replace('/(tabs)/profile');
         }
       }
@@ -202,6 +217,13 @@ export default function SellerSettingsScreen() {
           <Text style={styles.saveBtnText}>บันทึกการเปลี่ยนแปลง</Text>
         </TouchableOpacity>
 
+        <TouchableOpacity 
+          style={[styles.saveBtn, { backgroundColor: '#e2e8f0', marginTop: 12, marginBottom: 16 }]} 
+          onPress={() => router.replace('/(tabs)/profile' as any)}
+        >
+          <Text style={[styles.saveBtnText, { color: '#0f172a' }]}>สลับเป็นโหมดผู้ซื้อ</Text>
+        </TouchableOpacity>
+
         <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
           <Text style={styles.logoutBtnText}>ออกจากระบบ</Text>
         </TouchableOpacity>
@@ -226,9 +248,26 @@ export default function SellerSettingsScreen() {
               style={styles.textInput}
               value={editModal.value}
               onChangeText={(text) => setEditModal(prev => ({...prev, value: text}))}
-              autoFocus
+              autoFocus={editModal.field !== 'address'}
               multiline={editModal.field === 'address'}
             />
+            {editModal.field === 'address' && (
+              <View style={{ height: 200, width: '100%', marginTop: 10, borderRadius: 12, overflow: 'hidden' }}>
+                <MapView
+                  style={{ flex: 1 }}
+                  region={mapRegion}
+                  onRegionChangeComplete={(region) => {
+                    setMapRegion(region);
+                    setTempLocation({ latitude: region.latitude, longitude: region.longitude });
+                  }}
+                >
+                  <Marker coordinate={tempLocation} />
+                </MapView>
+                <View style={{ position: 'absolute', top: 10, left: 10, backgroundColor: 'rgba(255,255,255,0.8)', padding: 4, borderRadius: 4 }}>
+                  <Text style={{ fontSize: 10 }}>เลื่อนแผนที่เพื่อปักหมุด</Text>
+                </View>
+              </View>
+            )}
             
             <View style={styles.modalActions}>
               <TouchableOpacity 

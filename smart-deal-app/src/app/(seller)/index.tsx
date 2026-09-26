@@ -76,11 +76,9 @@ export default function SellerDashboardScreen() {
           </View>
         </View>
         <View style={styles.headerRight}>
-          <TouchableOpacity style={styles.iconBtn}>
-            <Ionicons name="search" size={22} color="#64748b" />
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.iconBtn}>
+          <TouchableOpacity style={styles.iconBtn} onPress={() => router.push('/(seller)/notifications')}>
             <Ionicons name="notifications-outline" size={22} color="#64748b" />
+            <View style={{ position: 'absolute', top: -2, right: -2, width: 10, height: 10, borderRadius: 5, backgroundColor: '#ef4444', borderWidth: 1, borderColor: '#fff' }} />
           </TouchableOpacity>
         </View>
       </View>
@@ -187,7 +185,11 @@ export default function SellerDashboardScreen() {
             <View style={styles.recentOrdersCard}>
               {dashboardData.recentOrders && dashboardData.recentOrders.length > 0 ? (
                 dashboardData.recentOrders.map((item: any, index: number) => (
-                  <View key={item.order_id || index} style={[styles.recentOrderItem, index > 0 && { marginTop: 16 }]}>
+                  <TouchableOpacity 
+                    key={item.order_id || index} 
+                    style={[styles.recentOrderItem, index > 0 && { marginTop: 16 }]}
+                    onPress={() => router.push({ pathname: '/(seller)/order-details', params: { orderId: item.order_id } })}
+                  >
                     <View style={styles.recentOrderIcon}>
                       <Image 
                         source={{ uri: item.image_url || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=100' }} 
@@ -199,12 +201,12 @@ export default function SellerDashboardScreen() {
                       <Text style={styles.recentOrderSub}>{item.product_name || 'รายการอาหาร'}</Text>
                     </View>
                     <View style={styles.recentOrderRight}>
-                      <Text style={styles.recentOrderPrice}>฿{formatMoney(item.total_amount)}</Text>
+                      <Text style={styles.recentOrderPrice}>฿{formatMoney(item.subtotal || item.total_amount)}</Text>
                       <View style={[styles.statusBadge, item.order_status === 'completed' && {backgroundColor: '#dcfce7'}]}>
                         <Text style={[styles.statusText, item.order_status === 'completed' && {color: '#16a34a'}]}>{item.order_status}</Text>
                       </View>
                     </View>
-                  </View>
+                  </TouchableOpacity>
                 ))
               ) : (
                 <Text style={{ textAlign: 'center', color: '#64748b', marginVertical: 10 }}>ยังไม่มีรายการสั่งซื้อล่าสุด</Text>

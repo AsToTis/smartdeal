@@ -9,6 +9,16 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 
+const otpStore = {};
+
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: 'astotisuss@gmail.com',
+    pass: 'jrmxvmhzvwekagmo'
+  }
+});
+
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -95,6 +105,26 @@ const initOrderMessagesTable = async () => {
   }
 };
 initOrderMessagesTable();
+
+const initComplaintsTable = async () => {
+  try {
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS complaints (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        subject VARCHAR(255) NOT NULL,
+        message TEXT NOT NULL,
+        image_url VARCHAR(255),
+        status ENUM('pending', 'in_progress', 'resolved') DEFAULT 'pending',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+  } catch (err) {
+    console.error('❌ Error creating complaints table:', err.message);
+  }
+};
+initComplaintsTable();
+
 const initBannersTable = async () => {
   try {
     await db.execute(`
@@ -183,11 +213,58 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-// สมัครสมาชิก
+// สมัครสมาชิก (ขอ OTP)
+app.post('/api/register/request-otp', async (req, res) => {
+  const { email, phone } = req.body;
+  try {
+    const [existing] = await db.execute(
+      'SELECT * FROM users WHERE email = ? OR phone = ?',
+      [email, phone]
+    );
+
+    if (existing.length > 0) {
+      return res.status(400).json({ message: 'อีเมลหรือเบอร์โทรศัพท์นี้ถูกใช้งานแล้ว' });
+    }
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = Date.now() + 5 * 60 * 1000;
+
+    otpStore[email] = { otp, expiresAt };
+    console.log('[OTP DEBUG] รหัส OTP สมัครสมาชิกของ ' + email + ' คือ: ' + otp);
+
+    try {
+      await transporter.sendMail({
+        from: '"Smart Deal Support" <no-reply@smartdeal.com>',
+        to: email,
+        subject: 'รหัส OTP สำหรับยืนยันการสมัครสมาชิก - Smart Deal',
+        html: '<h3>รหัส OTP ยืนยันอีเมลของคุณคือ: <b style="color: #2e7a32; font-size: 24px;">' + otp + '</b></h3><p>รหัสนี้จะหมดอายุภายใน 5 นาที</p>'
+      });
+      res.json({ message: 'ส่งรหัส OTP ไปยังอีเมลเรียบร้อยแล้ว' });
+    } catch (err) {
+      console.log('ส่งอีเมลไม่สำเร็จ:', err.message);
+      delete otpStore[email];
+      return res.status(500).json({ message: 'ไม่สามารถส่งอีเมลได้ กรุณาตรวจสอบอีเมลอีกครั้ง' });
+    }
+  } catch (error) {
+    res.status(500).json({ message: 'เกิดข้อผิดพลาดทางเซิร์ฟเวอร์', error: error.message });
+  }
+});
+
+// สมัครสมาชิก (ยืนยัน OTP)
 app.post('/api/register', async (req, res) => {
-  const { email, phone, password, full_name, role = 'buyer' } = req.body;
+  const { email, phone, password, full_name, role = 'buyer', otp } = req.body;
 
   try {
+    const record = otpStore[email];
+    if (!record) return res.status(400).json({ message: 'กรุณาขอรหัส OTP สำหรับการสมัครสมาชิก' });
+    if (Date.now() > record.expiresAt) {
+      delete otpStore[email];
+      return res.status(400).json({ message: 'รหัส OTP หมดอายุแล้ว' });
+    }
+    if (record.otp !== otp) {
+      return res.status(400).json({ message: 'รหัส OTP ไม่ถูกต้อง' });
+    }
+
     const [existing] = await db.execute(
       'SELECT * FROM users WHERE email = ? OR phone = ?',
       [email, phone]
@@ -205,6 +282,8 @@ app.post('/api/register', async (req, res) => {
       [email, phone, password_hash, full_name, role]
     );
 
+    delete otpStore[email];
+
     res.status(201).json({ message: 'สมัครสมาชิกสำเร็จ!', user_id: result.insertId });
   } catch (error) {
     res.status(500).json({ message: 'เกิดข้อผิดพลาดในการสมัครสมาชิก', error: error.message });
@@ -220,7 +299,7 @@ app.get('/api/users/:id/profile', async (req, res) => {
   const { id } = req.params;
   try {
     const [users] = await db.execute(
-      'SELECT user_id, full_name, email, phone, avatar_url, role, status, created_at FROM users WHERE user_id = ?',
+      'SELECT user_id, full_name, email, phone, avatar_url, role, status, created_at, is_2fa_enabled FROM users WHERE user_id = ?',
       [id]
     );
 
@@ -243,7 +322,7 @@ app.get('/api/users/:id', async (req, res) => {
   const { id } = req.params;
   try {
     const [users] = await db.execute(
-      'SELECT user_id, full_name, email, phone, avatar_url, role, status, created_at FROM users WHERE user_id = ?',
+      'SELECT user_id, full_name, email, phone, avatar_url, role, status, created_at, is_2fa_enabled FROM users WHERE user_id = ?',
       [id]
     );
 
@@ -400,7 +479,7 @@ app.get('/api/users/:id/profile', async (req, res) => {
   const { id } = req.params;
   try {
     const [users] = await db.execute(
-      'SELECT user_id, full_name, email, phone, avatar_url, role, status, created_at FROM users WHERE user_id = ?',
+      'SELECT user_id, full_name, email, phone, avatar_url, role, status, created_at, is_2fa_enabled FROM users WHERE user_id = ?',
       [id]
     );
 
@@ -423,7 +502,7 @@ app.get('/api/users/:id', async (req, res) => {
   const { id } = req.params;
   try {
     const [users] = await db.execute(
-      'SELECT user_id, full_name, email, phone, avatar_url, role, status, created_at FROM users WHERE user_id = ?',
+      'SELECT user_id, full_name, email, phone, avatar_url, role, status, created_at, is_2fa_enabled FROM users WHERE user_id = ?',
       [id]
     );
 
@@ -575,15 +654,6 @@ app.get('/api/points/:userId', async (req, res) => {
 // 2. OTP & PASSWORD RESET APIs
 // ==========================================
 
-const otpStore = {};
-
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: 'YOUR_EMAIL@gmail.com',
-    pass: 'YOUR_GMAIL_APP_PASSWORD'
-  }
-});
 
 app.post('/api/forgot-password/request-otp', async (req, res) => {
   const { email } = req.body;
@@ -1037,12 +1107,15 @@ app.get('/api/orders/user/:userId', async (req, res) => {
         shops.image_url AS shop_image,
         del.status,
         u_rider.full_name AS rider_name,
-        u_rider.phone AS rider_phone
+        u_rider.phone AS rider_phone,
+        u_customer.full_name AS customer_name,
+        u_customer.phone AS customer_phone
       FROM orders
       LEFT JOIN shops ON orders.shop_id = shops.shop_id
       LEFT JOIN deliveries del ON orders.order_id = del.order_id
       LEFT JOIN riders r ON del.rider_id = r.rider_id
       LEFT JOIN users u_rider ON r.user_id = u_rider.user_id
+      LEFT JOIN users u_customer ON orders.user_id = u_customer.user_id
       WHERE orders.user_id = ?
       ORDER BY orders.created_at DESC
     `;
@@ -1115,12 +1188,15 @@ app.get('/api/orders/:orderId', async (req, res) => {
         shops.image_url AS shop_image,
         del.status,
         u_rider.full_name AS rider_name,
-        u_rider.phone AS rider_phone
+        u_rider.phone AS rider_phone,
+        u_customer.full_name AS customer_name,
+        u_customer.phone AS customer_phone
       FROM orders
       LEFT JOIN shops ON orders.shop_id = shops.shop_id
       LEFT JOIN deliveries del ON orders.order_id = del.order_id
       LEFT JOIN riders r ON del.rider_id = r.rider_id
       LEFT JOIN users u_rider ON r.user_id = u_rider.user_id
+      LEFT JOIN users u_customer ON orders.user_id = u_customer.user_id
       WHERE orders.order_id = ?
     `, [orderId]);
 
@@ -1137,10 +1213,12 @@ app.get('/api/orders/:orderId', async (req, res) => {
       [orderId]
     );
 
+    const [reviews] = await db.execute('SELECT rating, comment, created_at FROM reviews WHERE order_id = ? LIMIT 1', [orderId]);
     res.json({
       success: true,
       order: {
         ...order,
+        review: reviews.length > 0 ? reviews[0] : null,
         items: items.map(item => ({
           ...item,
           product_name: item.product_name || item.db_product_name || 'สินค้า'
@@ -1372,7 +1450,7 @@ app.post(['/api/payments', '/api/payments/confirm'], async (req, res) => {
       await connection.query(`
         INSERT INTO wallet_transactions (user_type, target_id, order_id, amount, type, description)
         VALUES ('shop', ?, ?, ?, 'credit', ?)
-      `, [targetShopId, effectiveOrderId, shopAmount, \`รายรับจากออเดอร์ #${effectiveOrderId}\`]);
+      `, [targetShopId, effectiveOrderId, shopAmount, const stats = { today_sales: (statsData[0].today_sales || 0) - (statsData[0].total_gp || 0), today_orders: statsData[0].today_orders || 0 };`รายรับจากออเดอร์ #${effectiveOrderId}const stats = {const stats = {\n      today_sales: (statsData[0].today_sales || 0) - (statsData[0].total_gp || 0),\n      today_orders: statsData[0].today_orders || 0\n    };n      today_sales: (statsData[0].today_sales || 0) - (statsData[0].total_gp || 0),\n      today_orders: statsData[0].today_orders || 0\n    };`]);
     }
     */
 
@@ -1391,6 +1469,15 @@ app.post(['/api/payments', '/api/payments/confirm'], async (req, res) => {
 
     await connection.commit();
     res.json({ success: true, message: "บันทึกการชำระเงินและกระจายยอดเข้า Wallet เรียบร้อย" });
+
+  } catch (error) {
+    await connection.rollback();
+    console.error('Payment Confirmation Error:', error);
+    res.status(500).json({ success: false, message: "เกิดข้อผิดพลาดในการบันทึกข้อมูล", error: error.message });
+  } finally {
+    connection.release();
+  }
+});
 
 // ==========================================
 // API ยืนยันรับสินค้า (Escrow System)
@@ -1415,7 +1502,7 @@ app.put('/api/orders/:orderId/complete', async (req, res) => {
     }
 
     // 1. อัปเดตสถานะเป็น completed
-    await connection.query('UPDATE orders SET order_status = "completed" WHERE order_id = ?', [orderId]);
+    await connection.query('UPDATE orders SET order_status = "completed", delivered_at = NOW() WHERE order_id = ?', [orderId]);
 
     // 2. คำนวณยอดเงินร้านค้าและโอนเข้า Wallet
     const shopId = order.shop_id;
@@ -1441,16 +1528,6 @@ app.put('/api/orders/:orderId/complete', async (req, res) => {
     await connection.rollback();
     console.error('Order Complete Error:', error);
     res.status(500).json({ success: false, message: 'เกิดข้อผิดพลาดในการยืนยันรับสินค้า' });
-  } finally {
-    connection.release();
-  }
-});
-
-
-  } catch (error) {
-    await connection.rollback();
-    console.error('Payment Confirmation Error:', error);
-    res.status(500).json({ success: false, message: "เกิดข้อผิดพลาดในการบันทึกข้อมูล", error: error.message });
   } finally {
     connection.release();
   }
@@ -2516,7 +2593,7 @@ app.put('/api/shops/:shopId/products/:productId', async (req, res) => {
         formattedDealEndTime,
         stock_quantity,
         is_auction !== undefined ? (is_auction ? 1 : 0) : null,
-        formattedExpiryTime,
+        formattedExpiryTime ?? null,
         productId,
         shopId
       ]
@@ -2560,9 +2637,14 @@ app.get('/api/shops/:shopId/orders', async (req, res) => {
         o.*,
         u.full_name AS customer_name,
         u.phone AS customer_phone,
-        u.email AS customer_email
+        u.email AS customer_email,
+        u_rider.full_name AS rider_name,
+        u_rider.phone AS rider_phone
       FROM orders o
       LEFT JOIN users u ON o.user_id = u.user_id
+      LEFT JOIN deliveries d ON o.order_id = d.order_id
+      LEFT JOIN riders r ON d.rider_id = r.rider_id
+      LEFT JOIN users u_rider ON r.user_id = u_rider.user_id
       WHERE o.shop_id = ?
     `;
     const params = [shopId];
@@ -2928,19 +3010,19 @@ app.get('/api/seller/dashboard/:owner_id', async (req, res) => {
 
     // 2. Get Today's Sales
     const [statsData] = await db.execute(`
-      SELECT SUM(total_amount) AS today_sales, COUNT(order_id) AS today_orders 
+      SELECT SUM(subtotal) AS today_sales, SUM(subtotal * (SELECT setting_value FROM system_settings WHERE setting_key='platform_fee_percent') / 100) AS total_gp, COUNT(order_id) AS today_orders 
       FROM orders 
-      WHERE shop_id = ? AND DATE(created_at) = CURDATE() AND order_status IN ('completed', 'paid', 'delivered')
+      WHERE shop_id = ? AND DATE(created_at) = CURDATE() AND order_status IN ('completed', 'paid', 'delivered', 'shipped')
     `, [shop_id]);
     
     const stats = {
-      today_sales: statsData[0].today_sales || 0,
+      today_sales: (statsData[0].today_sales || 0) - (statsData[0].total_gp || 0),
       today_orders: statsData[0].today_orders || 0
     };
 
     // 3. Get Recent Orders
     const [recentOrders] = await db.execute(`
-      SELECT o.order_id, o.total_amount, o.order_status, o.created_at, oi.product_id, p.image_url, p.name as product_name
+      SELECT o.order_id, (o.subtotal * (1 - (SELECT setting_value FROM system_settings WHERE setting_key='platform_fee_percent') / 100)) as total_amount, o.order_status, o.created_at, oi.product_id, p.image_url, p.name as product_name
       FROM orders o
       LEFT JOIN order_items oi ON o.order_id = oi.order_id
       LEFT JOIN products p ON oi.product_id = p.product_id
@@ -3098,8 +3180,8 @@ app.get('/api/seller/settings/:owner_id', async (req, res) => {
 app.put('/api/seller/settings/:shop_id', async (req, res) => {
   try {
     const shop_id = req.params.shop_id;
-    const { name, address, opening_hours, bank_name, bank_account } = req.body;
-    await db.execute('UPDATE shops SET name = ?, address = ?, opening_hours = ?, bank_name = ?, bank_account = ? WHERE shop_id = ?', [name, address, opening_hours, bank_name, bank_account, shop_id]);
+    const { name, address, opening_hours, bank_name, bank_account, latitude, longitude } = req.body;
+    await db.execute('UPDATE shops SET name = ?, address = ?, opening_hours = ?, bank_name = ?, bank_account = ?, latitude = ?, longitude = ? WHERE shop_id = ?', [name, address, opening_hours, bank_name, bank_account, latitude || null, longitude || null, shop_id]);
     res.json({ success: true, message: 'บันทึกข้อมูลสำเร็จ' });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -3945,6 +4027,71 @@ app.get('/api/payment/status/:order_id', async (req, res) => {
   }
 });
 
+// Mock Google Login API
+app.post('/api/auth/google-mock', async (req, res) => {
+  const { email, full_name, avatar_url } = req.body;
+  try {
+    const [users] = await db.execute('SELECT * FROM users WHERE email = ?', [email]);
+    let user;
+    if (users.length > 0) {
+      user = users[0];
+    } else {
+      const dummyPassword = await bcrypt.hash('google_dummy_password', 10);
+      const [result] = await db.execute(
+        'INSERT INTO users (email, full_name, avatar_url, password_hash, role) VALUES (?, ?, ?, ?, ?)',
+        [email, full_name || 'Google User', avatar_url || '', dummyPassword, 'buyer']
+      );
+      const [newUsers] = await db.execute('SELECT * FROM users WHERE user_id = ?', [result.insertId]);
+      user = newUsers[0];
+    }
+    res.json({ success: true, user, message: 'Google Login Success' });
+  } catch (error) {
+    console.error('Google Mock Login Error:', error);
+    res.status(500).json({ message: 'Internal Server Error' });
+  }
+});
+
+
+// Auto-cancel and refund orders pending > 30 mins
+setInterval(async () => {
+  try {
+    const [orders] = await db.query(
+      "SELECT order_id, user_id FROM orders WHERE order_status = 'pending' AND created_at < NOW() - INTERVAL 30 MINUTE"
+    );
+
+    if (orders.length > 0) {
+      for (const order of orders) {
+        // 1. Return stock
+        const [items] = await db.query("SELECT product_id, quantity FROM order_items WHERE order_id = ?", [order.order_id]);
+        for (const item of items) {
+          if (item.product_id) {
+            await db.query(
+              "UPDATE products SET stock_quantity = stock_quantity + ? WHERE product_id = ?",
+              [item.quantity, item.product_id]
+            );
+          }
+        }
+        
+        // 2. Notify customer
+        const msg = 'ออเดอร์ของคุณถูกยกเลิกเนื่องจากร้านค้าไม่ตอบรับภายใน 30 นาที ระบบได้ลบออเดอร์และจะดำเนินการคืนเงินให้คุณ';
+        await db.query(
+          "INSERT INTO notifications (user_id, title, message) VALUES (?, 'ยกเลิกออเดอร์ (ร้านไม่ตอบรับ)', ?)",
+          [order.user_id, msg]
+        );
+        
+        // 3. Delete order (cascades to order_items)
+        await db.query("DELETE FROM deliveries WHERE order_id = ?", [order.order_id]);
+        await db.query("DELETE FROM orders WHERE order_id = ?", [order.order_id]);
+        
+        console.log(`🗑️ ลบออเดอร์ที่หมดเวลา (30 นาที) Order ID: ${order.order_id}`);
+      }
+    }
+  } catch (error) {
+    console.error('Auto-cancel cron error:', error.message);
+  }
+}, 60 * 1000); // Check every 1 minute
+
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log('Server is running on port ' + PORT);
 });
@@ -3975,5 +4122,31 @@ app.post('/api/rider/wallet/withdraw', async (req, res) => {
   } catch (error) {
     console.error('Withdraw error:', error);
     res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+
+
+
+
+
+// Notifications API
+app.get('/api/seller/notifications/:shopId', async (req, res) => {
+  const { shopId } = req.params;
+  try {
+    const [reviews] = await db.execute(
+      'SELECT r.*, u.full_name as customer_name, p.name as product_name FROM reviews r LEFT JOIN users u ON r.user_id = u.user_id LEFT JOIN products p ON r.product_id = p.product_id WHERE r.shop_id = ? ORDER BY r.created_at DESC LIMIT 50',
+      [shopId]
+    );
+    const formattedReviews = reviews.map(r => ({
+      id: r.review_id,
+      title: 'รีวิวใหม่จากลูกค้า',
+      body: `ลูกค้า ${r.customer_name || 'ไม่ระบุชื่อ'} รีวิวสินค้า "${r.product_name || 'สินค้า'}" ${r.rating} ดาว: ${r.comment || 'ไม่มีคอมเมนต์'}`,
+      type: 'review',
+      created_at: r.created_at
+    }));
+    res.json({ success: true, notifications: formattedReviews });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
   }
 });

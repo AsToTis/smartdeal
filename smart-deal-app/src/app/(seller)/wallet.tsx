@@ -9,6 +9,7 @@ import { BASE_URL } from '../../constants/api';
 
 export default function SellerWalletScreen() {
   const [activeTab, setActiveTab] = useState('sales'); // sales, withdrawals
+  const [showAllTransactions, setShowAllTransactions] = useState(false);
   const [stats, setStats] = useState<any>({ balance: 0, pending: 0, withdrawn_this_month: 0 });
   const [transactions, setTransactions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -54,7 +55,7 @@ export default function SellerWalletScreen() {
            return {
              id: item.id || index,
              type: item.type, // 'sale' or 'withdrawal'
-             title: item.type === 'sale' ? `ออเดอร์ #${item.id}` : 'ถอนเงิน',
+             title: item.type === 'sale' ? `ออเดอร์ #${item.id} (หัก GP)` : 'ถอนเงิน',
              date: formattedDate,
              amount: item.amount,
              status: item.status === 'completed' ? 'สำเร็จ' : (item.status === 'pending' ? 'รอดำเนินการ' : item.status),
@@ -115,7 +116,7 @@ export default function SellerWalletScreen() {
   };
 
   const filteredTransactions = transactions.filter(t => 
-    activeTab === 'sales' ? t.type === 'sale' : t.type === 'withdraw'
+    activeTab === 'sales' ? t.type === 'sale' : t.type === 'withdrawal'
   );
 
   return (
@@ -184,7 +185,7 @@ export default function SellerWalletScreen() {
 
         {/* List */}
         <View style={styles.listContainer}>
-          {filteredTransactions.map(item => (
+          {filteredTransactions.slice(0, showAllTransactions ? filteredTransactions.length : 5).map(item => (
             <View key={item.id} style={styles.transactionItem}>
               <View style={styles.transactionIcon}>
                 <FontAwesome5 name={item.icon} size={18} color="#2e7a32" />
@@ -196,9 +197,9 @@ export default function SellerWalletScreen() {
               <View style={styles.transactionRight}>
                 <Text style={[
                   styles.transactionAmount, 
-                  { color: item.type === 'withdraw' ? '#475569' : '#16a34a' }
+                  { color: item.type === 'withdrawal' ? '#475569' : '#16a34a' }
                 ]}>
-                  {item.type === 'withdraw' ? '-' : '+'}฿{formatMoney(item.amount)}
+                  {item.type === 'withdrawal' ? '-' : '+'}฿{formatMoney(item.amount)}
                 </Text>
                 <View style={styles.statusBadge}>
                   <Text style={styles.statusText}>{item.status}</Text>
@@ -207,10 +208,15 @@ export default function SellerWalletScreen() {
             </View>
           ))}
           
-          <TouchableOpacity style={styles.viewAllBtn}>
-            <Text style={styles.viewAllText}>ดูรายการทั้งหมด</Text>
-            <MaterialIcons name="keyboard-arrow-down" size={20} color="#2e7a32" />
-          </TouchableOpacity>
+          {!showAllTransactions && filteredTransactions.length > 5 && (
+            <TouchableOpacity 
+              style={styles.viewAllBtn} 
+              onPress={() => setShowAllTransactions(true)}
+            >
+              <Text style={styles.viewAllText}>ดูรายการทั้งหมด</Text>
+              <MaterialIcons name="keyboard-arrow-down" size={20} color="#2e7a32" />
+            </TouchableOpacity>
+          )}
         </View>
 
       </ScrollView>

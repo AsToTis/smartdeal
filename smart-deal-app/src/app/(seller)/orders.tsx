@@ -68,6 +68,7 @@ export default function SellerOrdersScreen() {
     if (activeTab === 'new') return ['pending', 'paid'].includes(o.order_status);
     if (activeTab === 'preparing') return o.order_status === 'preparing';
     if (activeTab === 'ready') return o.order_status === 'ready';
+    if (activeTab === 'history') return ['delivering', 'shipped', 'completed', 'cancelled'].includes(o.order_status);
     return false;
   });
 
@@ -86,7 +87,7 @@ export default function SellerOrdersScreen() {
 
       {/* Tabs */}
       <View style={styles.tabContainer}>
-        {['new', 'preparing', 'ready'].map((tab) => {
+        {['new', 'preparing', 'ready', 'history'].map((tab) => {
           const labels: any = { new: 'ใหม่', preparing: 'กำลังเตรียม', ready: 'พร้อมส่ง' };
           const isActive = activeTab === tab;
           
@@ -151,19 +152,30 @@ export default function SellerOrdersScreen() {
                     <View style={styles.badgeNew}><Text style={styles.badgeTextNew}>ใหม่</Text></View>
                   ) : activeTab === 'preparing' ? (
                     <View style={styles.badgePrep}><Text style={styles.badgeTextPrep}>กำลังเตรียม</Text></View>
-                  ) : (
+                  ) : activeTab === 'ready' ? (
                     <View style={styles.badgeReady}><Text style={styles.badgeTextReady}>พร้อมส่ง</Text></View>
+                  ) : (
+                    <View style={styles.badgeReady}><Text style={styles.badgeTextReady}>ประวัติ</Text></View>
                   )}
                 </View>
 
                 <View style={styles.divider} />
+
+                {['preparing', 'ready', 'delivering', 'shipped', 'completed'].includes(order.order_status) && order.rider_name && (
+                  <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: 12, backgroundColor: '#f8fafc', padding: 8, borderRadius: 8}}>
+                    <MaterialIcons name="two-wheeler" size={16} color="#2e7a32" />
+                    <Text style={{marginLeft: 8, fontSize: 13, color: '#475569', flex: 1}}>
+                      ไรเดอร์: {order.rider_name} ({order.rider_phone})
+                    </Text>
+                  </View>
+                )}
 
                 <Text style={styles.itemsText} numberOfLines={2}>
                   รายการ: {itemsText}
                 </Text>
 
                 <View style={styles.footerRow}>
-                  <Text style={styles.totalPrice}>฿{Number(order.total_amount).toLocaleString()}</Text>
+                  <Text style={styles.totalPrice}>฿{Number(order.subtotal || order.total_amount).toLocaleString()}</Text>
                   <View style={styles.actionRow}>
                     {activeTab === 'new' && (
                       <TouchableOpacity 
