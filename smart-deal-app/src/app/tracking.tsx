@@ -145,9 +145,13 @@ export default function TrackingScreen() {
 
   // Helper to determine status index
   const getStatusIndex = (status: string) => {
-    const statuses = ['pending', 'preparing', 'finding_rider', 'heading_to_shop', 'delivering', 'completed'];
-    const idx = statuses.indexOf(status);
-    return idx === -1 ? 0 : idx;
+    if (['pending', 'paid'].includes(status)) return 0;
+    if (['preparing'].includes(status)) return 1;
+    if (['ready'].includes(status)) return 2;
+    if (['finding_rider', 'heading_to_shop', 'shipped'].includes(status)) return 3;
+    if (['delivering'].includes(status)) return 4;
+    if (['completed', 'delivered'].includes(status)) return 5;
+    return 0;
   };
 
   const statusIdx = getStatusIndex(order?.status || 'heading_to_shop');
@@ -414,7 +418,7 @@ export default function TrackingScreen() {
                   <MaterialIcons name="chevron-right" size={20} color="#94a3b8" />
                 </View>
                 
-                <Text style={styles.locationDesc}>{shop?.address || 'ถ.นครสวรรค์ ต.ตลาด อ.เมือง จ.มหาสารคาม'}</Text>
+                <Text style={styles.locationDesc}>{shop?.address || 'ไม่มีข้อมูลที่อยู่'}</Text>
               </View>
             </View>
 
@@ -426,7 +430,7 @@ export default function TrackingScreen() {
               <View style={styles.locationContent}>
                 <Text style={styles.locationLabel}>จัดส่งที่</Text>
                 <Text style={styles.locationTitle}>{order?.shipping_address || 'ที่อยู่จัดส่งของคุณ'}</Text>
-                <Text style={styles.locationDesc}>ลูกค้า - (+66) 080 000 0000</Text>
+                <Text style={styles.locationDesc}>{order?.receiver_name || 'ลูกค้า'} - {order?.receiver_phone || ''}</Text>
 
                 {statusIdx >= 5 && (
                   <TouchableOpacity style={styles.proofLink}>
@@ -498,46 +502,49 @@ export default function TrackingScreen() {
           </View>
 
           {/* Rider Info Card */}
-          <View style={styles.riderCard}>
-            <View style={styles.riderHeader}>
-              <View style={styles.riderImgWrapper}>
-                <Image source={{ uri: 'https://images.unsplash.com/photo-1599566150163-29194dcaad36?w=200' }} style={styles.riderImg} />
+          {rider?.name ? (
+            <View style={styles.riderCard}>
+              <View style={styles.riderHeader}>
+                <View style={styles.riderImgWrapper}>
+                  <Image source={{ uri: 'https://images.unsplash.com/photo-1599566150163-29194dcaad36?w=200' }} style={styles.riderImg} />
+                </View>
+                <View style={styles.riderInfo}>
+                  <Text style={styles.riderName}>
+                    {rider?.name}
+                  </Text>
+                  <Text style={styles.riderPlate}>
+                    ทะเบียน {rider?.vehicle_plate}
+                  </Text>
+                  <Text style={styles.riderVaccine}>ฉีดวัคซีนแล้ว 3 เข็ม</Text>
+                </View>
+                <View style={styles.riderRating}>
+                  <MaterialIcons name="star" size={14} color="#f59e0b" />
+                  <Text style={styles.ratingText}>{rider?.rating}</Text>
+                </View>
               </View>
-              <View style={styles.riderInfo}>
-                <Text style={styles.riderName}>
-                  {rider?.name || 
-                    ['สมศักดิ์ สายแว้น', 'สมหวัง ส่งไว', 'วินัย ขับดี', 'สมชาย ใจดี', 'อำนาจ รวดเร็ว'][(order?.order_id || 0) % 5]
-                  }
-                </Text>
-                <Text style={styles.riderPlate}>
-                  ทะเบียน {rider?.vehicle_plate || 
-                    ['กค-5555', 'ขข-9999', 'งง-1111', 'กข-1234', 'จจ-8888'][(order?.order_id || 0) % 5] + ' (รถจักรยานยนต์)'
-                  }
-                </Text>
-                <Text style={styles.riderVaccine}>ฉีดวัคซีนแล้ว 3 เข็ม</Text>
-              </View>
-              <View style={styles.riderRating}>
-                <MaterialIcons name="star" size={14} color="#f59e0b" />
-                <Text style={styles.ratingText}>{rider?.rating || ['4.8', '5.0', '4.7', '4.9', '4.9'][(order?.order_id || 0) % 5]}</Text>
-              </View>
-            </View>
 
-            <View style={styles.riderActions}>
-              <TouchableOpacity style={styles.actionIconBtn} onPress={handleCall}>
-                <MaterialIcons name="phone" size={20} color="#16a34a" />
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.actionIconBtn} onPress={handleChat}>
-                <MaterialCommunityIcons name="chat-processing" size={20} color="#16a34a" />
-              </TouchableOpacity>
-              
-              {statusIdx >= 5 && (
-                <TouchableOpacity style={styles.rateBtn} onPress={() => setShowRatingModal(true)}>
-                  <MaterialIcons name="star" size={18} color="#d97706" />
-                  <Text style={styles.rateBtnText}>ให้คะแนนคนขับ</Text>
+              <View style={styles.riderActions}>
+                <TouchableOpacity style={styles.actionIconBtn} onPress={handleCall}>
+                  <MaterialIcons name="phone" size={20} color="#16a34a" />
                 </TouchableOpacity>
-              )}
+                <TouchableOpacity style={styles.actionIconBtn} onPress={handleChat}>
+                  <MaterialCommunityIcons name="chat-processing" size={20} color="#16a34a" />
+                </TouchableOpacity>
+                
+                {statusIdx >= 5 && (
+                  <TouchableOpacity style={styles.rateBtn} onPress={() => setShowRatingModal(true)}>
+                    <MaterialIcons name="star" size={18} color="#d97706" />
+                    <Text style={styles.rateBtnText}>ให้คะแนนคนขับ</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
             </View>
-          </View>
+          ) : (
+            <View style={[styles.riderCard, {alignItems: 'center', paddingVertical: 24}]}>
+              <MaterialCommunityIcons name="motorbike" size={48} color="#cbd5e1" />
+              <Text style={{marginTop: 8, color: '#64748b', fontSize: 16}}>ระบบกำลังค้นหาคนขับให้คุณ...</Text>
+            </View>
+          )}
           
         </ScrollView>
       </View>

@@ -181,6 +181,8 @@ export default function HomeScreen() {
 
       if (auctionRes.data?.active_auction) {
         setActiveAuction(auctionRes.data.active_auction);
+      } else {
+        setActiveAuction(null);
       }
 
       if (bannerRes.data?.success || bannerRes.data?.banners) {
@@ -435,82 +437,86 @@ export default function HomeScreen() {
           {/* ========================================== */}
           {/* 🔥 ดีลประมูลพิเศษ (สินค้าหายาก) — LIVE */}
           {/* ========================================== */}
-          <View style={styles.sectionHeader}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <Text style={styles.sectionTitle}>🔥 ดีลประมูลพิเศษ (สินค้าหายาก)</Text>
-              <View style={styles.liveBadge}>
-                <View style={styles.liveDot} />
-                <Text style={styles.liveText}>LIVE</Text>
-              </View>
-            </View>
-          </View>
-
-          {/* Auction Deal Card */}
-          <TouchableOpacity
-            style={styles.auctionCard}
-            onPress={() => router.push({
-              pathname: '/auction-detail' as any,
-              params: {
-                auction_id: activeAuction?.auction_id || 1,
-                id: activeAuction?.auction_id || 1,
-                title: activeAuction?.title || 'ชุดซูชิรวมพรีเมียม (ใกล้หมดอายุ)',
-                price: activeAuction?.current_bid || 8900
-              }
-            })}
-            activeOpacity={0.88}
-          >
-            {/* รูปสินค้าประมูล */}
-            <View style={styles.auctionImgWrapper}>
-              <Image
-                source={{ uri: activeAuction?.image_url || 'https://images.unsplash.com/photo-1579871494447-9811cf80d66c?w=600' }}
-                style={styles.auctionImg}
-              />
-              <View style={styles.auctionImgBadge}>
-                <Text style={styles.auctionImgBadgeText}>ประมูล</Text>
-              </View>
-            </View>
-
-            {/* ข้อมูลประมูล */}
-            <View style={styles.auctionContent}>
-              <Text style={styles.auctionProductName} numberOfLines={1}>
-                {activeAuction?.title || 'ชุดซูชิรวมพรีเมียม (ใกล้หมดอายุ)'}
-              </Text>
-              <Text style={styles.auctionShopName}>{activeAuction?.shop_name || 'Sushiro Central World'}</Text>
-
-              {/* Countdown */}
-              <View style={styles.auctionCountdownRow}>
-                <MaterialIcons name="access-time" size={13} color="#f59e0b" />
-                <Text style={styles.auctionCountdownText}>
-                  ⏱ เวลาเหลือ: {activeAuction?.time_remaining_text || '1 ชม. 30 นาที'}
-                </Text>
+          {activeAuction && (
+            <>
+              <View style={styles.sectionHeader}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <Text style={styles.sectionTitle}>🔥 ดีลประมูลพิเศษ (สินค้าหายาก)</Text>
+                  <View style={styles.liveBadge}>
+                    <View style={styles.liveDot} />
+                    <Text style={styles.liveText}>LIVE</Text>
+                  </View>
+                </View>
               </View>
 
-              {/* ราคาประมูลสูงสุด */}
-              <Text style={styles.auctionBidLabel}>เสนอราคาสูงสุด</Text>
-              <View style={styles.auctionPriceRow}>
-                <Text style={styles.auctionBidPrice}>
-                  ฿{Number(activeAuction?.current_bid || activeAuction?.start_price || 89).toLocaleString()}
-                </Text>
-                <TouchableOpacity
-                  style={styles.joinAuctionBtn}
-                  onPress={() => {
-                    router.push({
-                      pathname: '/auction-detail' as any,
-                      params: { 
-                        auction_id: activeAuction?.auction_id || 1,
-                        id: activeAuction?.auction_id || 1,
-                        title: activeAuction?.title || 'ชุดซูชิรวมพรีเมียม (ใกล้หมดอายุ)', 
-                        price: activeAuction?.current_bid || 89 
-                      }
-                    });
-                  }}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.joinAuctionBtnText}>ร่วมประมูล</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </TouchableOpacity>
+              {/* Auction Deal Card */}
+              <TouchableOpacity
+                style={styles.auctionCard}
+                onPress={() => router.push({
+                  pathname: '/auction-detail' as any,
+                  params: {
+                    auction_id: activeAuction?.auction_id || 1,
+                    id: activeAuction?.auction_id || 1,
+                    title: activeAuction?.title || 'ชุดซูชิรวมพรีเมียม (ใกล้หมดอายุ)',
+                    price: activeAuction?.current_bid || 8900
+                  }
+                })}
+                activeOpacity={0.88}
+              >
+                {/* รูปสินค้าประมูล */}
+                <View style={styles.auctionImgWrapper}>
+                  <Image
+                    source={{ uri: activeAuction?.image_url || 'https://images.unsplash.com/photo-1579871494447-9811cf80d66c?w=600' }}
+                    style={styles.auctionImg}
+                  />
+                  <View style={styles.auctionImgBadge}>
+                    <Text style={styles.auctionImgBadgeText}>ประมูล</Text>
+                  </View>
+                </View>
+
+                {/* ข้อมูลประมูล */}
+                <View style={styles.auctionContent}>
+                  <Text style={styles.auctionProductName} numberOfLines={1}>
+                    {activeAuction?.title || 'ชุดซูชิรวมพรีเมียม (ใกล้หมดอายุ)'}
+                  </Text>
+                  <Text style={styles.auctionShopName}>{activeAuction?.shop_name || 'Sushiro Central World'}</Text>
+
+                  {/* Countdown */}
+                  <View style={styles.auctionCountdownRow}>
+                    <MaterialIcons name="access-time" size={13} color="#f59e0b" />
+                    <Text style={styles.auctionCountdownText}>
+                      ⏱ เวลาเหลือ: {activeAuction?.time_remaining_text || '1 ชม. 30 นาที'}
+                    </Text>
+                  </View>
+
+                  {/* ราคาประมูลสูงสุด */}
+                  <Text style={styles.auctionBidLabel}>เสนอราคาสูงสุด</Text>
+                  <View style={styles.auctionPriceRow}>
+                    <Text style={styles.auctionBidPrice}>
+                      ฿{Number(activeAuction?.current_bid || activeAuction?.start_price || 89).toLocaleString()}
+                    </Text>
+                    <TouchableOpacity
+                      style={styles.joinAuctionBtn}
+                      onPress={() => {
+                        router.push({
+                          pathname: '/auction-detail' as any,
+                          params: { 
+                            auction_id: activeAuction?.auction_id || 1,
+                            id: activeAuction?.auction_id || 1,
+                            title: activeAuction?.title || 'ชุดซูชิรวมพรีเมียม (ใกล้หมดอายุ)', 
+                            price: activeAuction?.current_bid || 89 
+                          }
+                        });
+                      }}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.joinAuctionBtnText}>ร่วมประมูล</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </TouchableOpacity>
+            </>
+          )}
 
           {/* Near Expiry Deals */}
           <View style={styles.sectionHeader}>

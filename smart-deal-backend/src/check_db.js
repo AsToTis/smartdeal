@@ -1,0 +1,1 @@
+const db = require('./db'); async function check() { const [tables] = await db.execute('SHOW TABLES'); for (let t of tables) { const tableName = Object.values(t)[0]; const [rows] = await db.execute('SELECT COUNT(*) as c FROM ' + tableName); if(rows[0].c > 0) console.log(tableName, rows[0].c); } } check().then(()=>process.exit());

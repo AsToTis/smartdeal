@@ -11,12 +11,13 @@ import { BASE_URL } from '../../constants/api';
 export default function SellerSettingsScreen() {
   const [shopInfo, setShopInfo] = useState<any>(null);
   const [formData, setFormData] = useState<any>({});
-  const [editModal, setEditModal] = useState({visible: false, field: '', value: '', title: ''});
+  const [editModal, setEditModal] = useState({ visible: false, field: '', value: '', title: '' });
   const [notiEnabled, setNotiEnabled] = useState(true);
   const [ownerName, setOwnerName] = useState('เจ้าของร้าน');
   const [userId, setUserId] = useState<string | null>(null);
   const [mapRegion, setMapRegion] = useState({ latitude: 13.7563, longitude: 100.5018, latitudeDelta: 0.01, longitudeDelta: 0.01 });
   const [tempLocation, setTempLocation] = useState({ latitude: 13.7563, longitude: 100.5018 });
+  const [isLoading, setIsLoading] = useState(false);
 
   const fetchShopData = async () => {
     try {
@@ -25,7 +26,7 @@ export default function SellerSettingsScreen() {
         const parsed = JSON.parse(userData);
         setOwnerName(`เจ้าของร้าน: ${parsed.full_name || 'สมชาย แซ่ตั้ง'}`);
         setUserId(parsed.user_id?.toString());
-        
+
         if (parsed.user_id) {
           const res = await axios.get(`${BASE_URL}/seller/settings/${parsed.user_id}`);
           if (res.data?.success) {
@@ -61,6 +62,72 @@ export default function SellerSettingsScreen() {
     }
   };
 
+  const pickImage = async () => {
+    try {
+      const ImagePicker = require('expo-image-picker');
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        uploadImage(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.log('Error picking image:', error);
+    }
+  };
+
+  const uploadImage = async (uri: string) => {
+    try {
+      setIsLoading(true);
+      const filename = uri.split('/').pop() || 'profile.jpg';
+      const match = /\.(\w+)$/.exec(filename);
+      const ext = match ? match[1].toLowerCase() : 'jpg';
+
+      const formData = new FormData();
+      formData.append('image', {
+        uri,
+        name: filename,
+        type: ext === 'jpg' ? 'image/jpeg' : `image/${ext}`
+      } as any);
+
+      const responseData = await new Promise<any>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `${BASE_URL}/seller/settings/${shopInfo.shop_id}/image`);
+        xhr.onload = () => {
+          try {
+            const data = JSON.parse(xhr.responseText);
+            if (xhr.status >= 200 && xhr.status < 300) {
+              resolve(data);
+            } else {
+              reject(new Error(data.message || 'เซิร์ฟเวอร์แจ้งข้อผิดพลาด'));
+            }
+          } catch (e) {
+            reject(new Error('เซิร์ฟเวอร์ส่งข้อมูลกลับมาผิดพลาด'));
+          }
+        };
+        xhr.onerror = () => reject(new Error('เกิดข้อผิดพลาดในการเชื่อมต่อเครือข่าย'));
+        xhr.send(formData);
+      });
+
+      if (responseData?.success) {
+        setShopInfo((prev: any) => ({ ...prev, image_url: responseData.image_url }));
+        setFormData((prev: any) => ({ ...prev, image_url: responseData.image_url }));
+        Alert.alert('สำเร็จ', 'อัปเดตรูปโปรไฟล์ร้านค้าเรียบร้อยแล้ว');
+      } else {
+        Alert.alert('ข้อผิดพลาด', responseData?.message || 'ไม่สามารถอัปเดตรูปโปรไฟล์ได้');
+      }
+    } catch (error: any) {
+      console.error('Upload error:', error);
+      Alert.alert('ข้อผิดพลาด', `เกิดข้อผิดพลาด: ${error.message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const openEdit = (field: string, title: string) => {
     if (field === 'address') {
       const lat = parseFloat(formData.latitude) || 13.7563;
@@ -82,14 +149,14 @@ export default function SellerSettingsScreen() {
     } else {
       setFormData((prev: any) => ({ ...prev, [editModal.field]: editModal.value }));
     }
-    setEditModal({visible: false, field: '', value: '', title: ''});
+    setEditModal({ visible: false, field: '', value: '', title: '' });
   };
 
   const handleLogout = () => {
     Alert.alert('ออกจากระบบ', 'คุณต้องการออกจากระบบและกลับไปหน้าผู้ซื้อใช่หรือไม่?', [
       { text: 'ยกเลิก', style: 'cancel' },
-      { 
-        text: 'ออกจากระบบ', 
+      {
+        text: 'ออกจากระบบ',
         style: 'destructive',
         onPress: () => {
           if (router.canDismiss()) {
@@ -112,18 +179,18 @@ export default function SellerSettingsScreen() {
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
-        
+
         {/* Profile Card */}
         <View style={styles.profileSection}>
-          <View style={styles.avatarContainer}>
-            <Image 
-              source={{ uri: shopInfo?.image_url || 'https://images.unsplash.com/photo-1540420773420-3366772f4999?w=300' }} 
-              style={styles.avatar} 
+          <TouchableOpacity style={styles.avatarContainer} onPress={pickImage}>
+            <Image
+              source={{ uri: shopInfo?.image_url ? (shopInfo.image_url.startsWith('http') ? shopInfo.image_url : `${BASE_URL.replace('/api', '')}${shopInfo.image_url}`) : 'https://images.unsplash.com/photo-1540420773420-3366772f4999?w=300' }}
+              style={styles.avatar}
             />
             <View style={styles.cameraBadge}>
               <MaterialIcons name="camera-alt" size={14} color="#fff" />
             </View>
-          </View>
+          </TouchableOpacity>
           <Text style={styles.shopNameLarge}>{formData.name || shopInfo?.name || 'สมาร์ทดีล สาขากรุงเทพ'}</Text>
           <Text style={styles.ownerName}>{ownerName}</Text>
         </View>
@@ -142,7 +209,7 @@ export default function SellerSettingsScreen() {
             <MaterialIcons name="chevron-right" size={24} color="#cbd5e1" />
           </TouchableOpacity>
           <View style={styles.divider} />
-          
+
           <TouchableOpacity style={styles.settingItem} activeOpacity={0.7} onPress={() => openEdit('address', 'ที่อยู่ร้านค้า')}>
             <View style={[styles.iconCircle, { backgroundColor: '#f0fdf4' }]}>
               <MaterialIcons name="location-on" size={20} color="#2e7a32" />
@@ -156,7 +223,7 @@ export default function SellerSettingsScreen() {
             <MaterialIcons name="chevron-right" size={24} color="#cbd5e1" />
           </TouchableOpacity>
           <View style={styles.divider} />
-          
+
           <TouchableOpacity style={styles.settingItem} activeOpacity={0.7} onPress={() => openEdit('opening_hours', 'เวลาเปิด-ปิด')}>
             <View style={[styles.iconCircle, { backgroundColor: '#f1f5f9' }]}>
               <MaterialIcons name="access-time" size={20} color="#2e7a32" />
@@ -217,8 +284,8 @@ export default function SellerSettingsScreen() {
           <Text style={styles.saveBtnText}>บันทึกการเปลี่ยนแปลง</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity 
-          style={[styles.saveBtn, { backgroundColor: '#e2e8f0', marginTop: 12, marginBottom: 16 }]} 
+        <TouchableOpacity
+          style={[styles.saveBtn, { backgroundColor: '#e2e8f0', marginTop: 12, marginBottom: 16 }]}
           onPress={() => router.replace('/(tabs)/profile' as any)}
         >
           <Text style={[styles.saveBtnText, { color: '#0f172a' }]}>สลับเป็นโหมดผู้ซื้อ</Text>
@@ -235,19 +302,19 @@ export default function SellerSettingsScreen() {
         visible={editModal.visible}
         transparent
         animationType="fade"
-        onRequestClose={() => setEditModal(prev => ({...prev, visible: false}))}
+        onRequestClose={() => setEditModal(prev => ({ ...prev, visible: false }))}
       >
-        <KeyboardAvoidingView 
+        <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           style={styles.modalOverlay}
         >
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>แก้ไข{editModal.title}</Text>
-            
+
             <TextInput
               style={styles.textInput}
               value={editModal.value}
-              onChangeText={(text) => setEditModal(prev => ({...prev, value: text}))}
+              onChangeText={(text) => setEditModal(prev => ({ ...prev, value: text }))}
               autoFocus={editModal.field !== 'address'}
               multiline={editModal.field === 'address'}
             />
@@ -268,16 +335,16 @@ export default function SellerSettingsScreen() {
                 </View>
               </View>
             )}
-            
+
             <View style={styles.modalActions}>
-              <TouchableOpacity 
-                style={styles.modalBtnCancel} 
-                onPress={() => setEditModal(prev => ({...prev, visible: false}))}
+              <TouchableOpacity
+                style={styles.modalBtnCancel}
+                onPress={() => setEditModal(prev => ({ ...prev, visible: false }))}
               >
                 <Text style={styles.modalBtnCancelText}>ยกเลิก</Text>
               </TouchableOpacity>
-              <TouchableOpacity 
-                style={styles.modalBtnSubmit} 
+              <TouchableOpacity
+                style={styles.modalBtnSubmit}
                 onPress={handleEditSave}
               >
                 <Text style={styles.modalBtnSubmitText}>ยืนยัน</Text>

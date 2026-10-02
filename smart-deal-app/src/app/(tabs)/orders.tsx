@@ -141,8 +141,16 @@ export default function OrdersScreen() {
       return { dotColor: '#0ea5e9', textColor: '#0ea5e9', text: 'กำลังจัดเตรียมอาหาร', isCancelled: false, isActive: true };
     }
     
-    if (s === 'delivering' || s === 'finding_rider' || s === 'heading_to_shop' || s === 'ready') {
+    if (s === 'delivering' || s === 'finding_rider' || s === 'heading_to_shop' || s === 'ready' || s === 'shipped') {
       return { dotColor: '#2563eb', textColor: '#2563eb', text: 'กำลังจัดส่ง', isCancelled: false, isActive: true };
+    }
+    
+    if (s === 'delivered') {
+      return { dotColor: '#059669', textColor: '#059669', text: 'ไรเดอร์ส่งของแล้ว (รอคุณยืนยัน)', isCancelled: false, isActive: true };
+    }
+    
+    if (s === 'ready_for_pickup') {
+      return { dotColor: '#059669', textColor: '#059669', text: 'รอคุณเข้ารับที่ร้าน', isCancelled: false, isActive: true };
     }
     
     // pending หรือค่าเริ่มต้น
@@ -151,10 +159,13 @@ export default function OrdersScreen() {
 
   // รูปภาพสินค้าตัวแทน
   const getOrderImage = (order: any) => {
-    if (order.display_image) return order.display_image;
-    if (order.shop_image) return order.shop_image;
-    if (order.items && order.items.length > 0 && order.items[0].product_image) {
-      return order.items[0].product_image;
+    const isValid = (img: string) => img && typeof img === 'string' && img.trim() !== '';
+    const formatUrl = (img: string) => img.startsWith('/') ? `${BASE_URL.replace('/api', '')}${img}` : img;
+    
+    if (isValid(order?.display_image)) return formatUrl(order.display_image);
+    if (isValid(order?.shop_image)) return formatUrl(order.shop_image);
+    if (order?.items && order.items.length > 0 && isValid(order.items[0].product_image)) {
+      return formatUrl(order.items[0].product_image);
     }
     return 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500';
   };
@@ -626,7 +637,7 @@ export default function OrdersScreen() {
               {/* Row 1: ติดตามสถานะ / รีวิว + สั่งซ้ำ */}
               <View style={{ flexDirection: 'row', gap: 8, width: '100%' }}>
                 {/* ปุ่มยืนยันการรับสินค้า (Escrow) */}
-                {['paid', 'shipped', 'pending'].includes(selectedOrder?.order_status) && (
+                {['delivered', 'ready_for_pickup'].includes(selectedOrder?.order_status) && (
                   <TouchableOpacity 
                     style={[styles.trackNavBtn, { backgroundColor: '#16a34a', borderColor: '#16a34a', flex: 1.5 }]}
                     onPress={() => handleConfirmReceipt(selectedOrder?.order_id)}
@@ -637,7 +648,7 @@ export default function OrdersScreen() {
                 )}
 
                 {/* ปุ่มติดตามสถานะ (เฉพาะออเดอร์ที่กำลังดำเนินการ) */}
-                {getStatusInfo(selectedOrder?.order_status).isActive && (
+                {getStatusInfo(selectedOrder?.order_status).isActive && !['pending', 'paid'].includes(selectedOrder?.order_status) && (
                   <TouchableOpacity 
                     style={styles.trackNavBtn}
                     onPress={() => {
@@ -675,7 +686,7 @@ export default function OrdersScreen() {
                 )}
 
                 {/* ปุ่มสั่งซ้ำ */}
-                {selectedOrder?.items && selectedOrder.items.length > 0 && (
+                {['completed', 'cancelled'].includes(selectedOrder?.order_status) && selectedOrder?.items && selectedOrder.items.length > 0 && (
                   <TouchableOpacity 
                     style={styles.reorderBtn}
                     onPress={() => handleReorder(selectedOrder)}

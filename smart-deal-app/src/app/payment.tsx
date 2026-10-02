@@ -116,10 +116,16 @@ export default function PaymentScreen() {
       const baseDir = FileSystem.documentDirectory || FileSystem.cacheDirectory || '';
       const filename = `${baseDir}QR_Order_${orderId || 'payment'}.png`;
       
-      const downloadRes = await FileSystem.downloadAsync(qrUrl, filename);
+            // Extract base64 data
+      const base64Data = qrUrl.includes(',') ? qrUrl.split(',')[1] : qrUrl;
+      
+      // Write base64 to file
+      await FileSystem.writeAsStringAsync(filename, base64Data, {
+        encoding: FileSystem.EncodingType.Base64
+      });
       
       if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(downloadRes.uri);
+        await Sharing.shareAsync(filename);
       } else {
         Alert.alert('สำเร็จ', 'บันทึกภาพ QR Code เรียบร้อยแล้ว');
       }

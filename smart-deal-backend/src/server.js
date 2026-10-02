@@ -1,4 +1,7 @@
 const express = require('express');
+const { Expo } = require('expo-server-sdk');
+let expo = new Expo();
+require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const nodemailer = require('nodemailer');
@@ -14,8 +17,8 @@ const otpStore = {};
 const transporter = nodemailer.createTransport({
   service: 'gmail',
   auth: {
-    user: 'astotisuss@gmail.com',
-    pass: 'jrmxvmhzvwekagmo'
+    user: process.env.EMAIL_USER || 'astotisuss@gmail.com',
+    pass: process.env.EMAIL_PASS || 'jrmxvmhzvwekagmo'
   }
 });
 
@@ -35,7 +38,7 @@ const storage = multer.diskStorage({
     cb(null, path.join(__dirname, '../../uploads/'))
   },
   filename: function (req, file, cb) {
-    cb(null, Date.now() + path.extname(file.originalname))
+    cb(null, Date.now() + path.extname(file.originalname || '.jpg'))
   }
 });
 
@@ -87,6 +90,20 @@ const initAddressesTable = async () => {
   }
 };
 initAddressesTable();
+
+const initPushTokenColumn = async () => {
+  try {
+    const [rows] = await db.query("SHOW COLUMNS FROM users LIKE 'push_token'");
+    if (rows.length === 0) {
+      await db.execute("ALTER TABLE users ADD COLUMN push_token VARCHAR(255) NULL");
+      console.log('✅ Added push_token column to users table');
+    }
+  } catch (err) {
+    console.error('❌ Error adding push_token column:', err.message);
+  }
+};
+initPushTokenColumn();
+
 
 const initOrderMessagesTable = async () => {
   try {
@@ -153,6 +170,23 @@ const initBannersTable = async () => {
   }
 };
 initBannersTable();
+
+const initPointsHistoryTable = async () => {
+  try {
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS user_point_history (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        title VARCHAR(255) NOT NULL,
+        points_change VARCHAR(50) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+  } catch (err) {
+    console.error('❌ Error creating user_point_history table:', err.message);
+  }
+};
+initPointsHistoryTable();
 
 
 // ==========================================
@@ -234,10 +268,10 @@ app.post('/api/register/request-otp', async (req, res) => {
 
     try {
       await transporter.sendMail({
-        from: '"Smart Deal Support" <no-reply@smartdeal.com>',
+        from: process.env.EMAIL_USER || 'astotisuss@gmail.com',
         to: email,
         subject: 'รหัส OTP สำหรับยืนยันการสมัครสมาชิก - Smart Deal',
-        html: '<h3>รหัส OTP ยืนยันอีเมลของคุณคือ: <b style="color: #2e7a32; font-size: 24px;">' + otp + '</b></h3><p>รหัสนี้จะหมดอายุภายใน 5 นาที</p>'
+        html: `<h3>รหัส OTP ยืนยันอีเมลของคุณคือ: <b style="color: #2e7a32; font-size: 24px;">${otp}</b></h3><p>รหัสนี้จะหมดอายุภายใน 5 นาที</p>`
       });
       res.json({ message: 'ส่งรหัส OTP ไปยังอีเมลเรียบร้อยแล้ว' });
     } catch (err) {
@@ -399,6 +433,21 @@ app.put('/api/users/:id/profile', async (req, res) => {
   }
 });
 
+// อัปโหลดรูปโปรไฟล์ (POST /api/users/:id/avatar)
+app.post('/api/users/:id/avatar', upload.single('avatar'), async (req, res) => {
+  const { id } = req.params;
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: 'ไม่มีไฟล์' });
+    }
+    const avatarUrl = '/uploads/' + req.file.filename;
+    await db.execute('UPDATE users SET avatar_url = ? WHERE user_id = ?', [avatarUrl, id]);
+    res.json({ success: true, avatar_url: avatarUrl });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // เปลี่ยนรหัสผ่าน (PUT /api/users/:id/change-password)
 app.put('/api/users/:id/change-password', async (req, res) => {
   const { id } = req.params;
@@ -447,22 +496,28 @@ app.get('/api/points/:userId', async (req, res) => {
   const { userId } = req.params;
   try {
     const [rows] = await db.execute('SELECT * FROM user_points WHERE user_id = ?', [userId]);
-    let points = 1250;
-    if (rows.length > 0) {
-      points = rows[0].points;
+    let points = 1000;
+    
+    if (rows.length === 0) {
+      await db.execute('INSERT IGNORE INTO user_points (user_id, points) VALUES (?, 1000)', [userId]);
+      await db.execute('INSERT IGNORE INTO user_point_history (user_id, title, points_change) VALUES (?, ?, ?)', [userId, 'โบนัสต้อนรับสมาชิกใหม่', '+1000']);
     } else {
-      await db.execute('INSERT IGNORE INTO user_points (user_id, points) VALUES (?, 1250)', [userId]);
+      points = rows[0].points;
     }
+
+    const [historyRows] = await db.execute('SELECT * FROM user_point_history WHERE user_id = ? ORDER BY created_at DESC', [userId]);
+    
+    const formattedHistory = historyRows.map(h => ({
+      id: h.id.toString(),
+      title: h.title,
+      points: h.points_change,
+      date: new Date(h.created_at).toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' })
+    }));
 
     res.json({
       success: true,
       points: points,
-      history: [
-        { id: '1', title: 'สั่งซื้อสินค้าอาหารคลีน', points: '+50', date: 'วันนี้' },
-        { id: '2', title: 'เช็คอินประจำวัน', points: '+10', date: 'เมื่อวาน' },
-        { id: '3', title: 'รีวิวสินค้า', points: '+20', date: '2 วันที่แล้ว' },
-        { id: '4', title: 'โบนัสต้อนรับสมาชิกใหม่', points: '+1000', date: 'สัปดาห์ที่แล้ว' }
-      ]
+      history: formattedHistory
     });
   } catch (error) {
     console.error(`❌ GET /api/points/${userId} error:`, error.message);
@@ -579,6 +634,21 @@ app.put('/api/users/:id/profile', async (req, res) => {
   }
 });
 
+// อัปโหลดรูปโปรไฟล์ (POST /api/users/:id/avatar)
+app.post('/api/users/:id/avatar', upload.single('avatar'), async (req, res) => {
+  const { id } = req.params;
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: 'ไม่มีไฟล์' });
+    }
+    const avatarUrl = '/uploads/' + req.file.filename;
+    await db.execute('UPDATE users SET avatar_url = ? WHERE user_id = ?', [avatarUrl, id]);
+    res.json({ success: true, avatar_url: avatarUrl });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // เปลี่ยนรหัสผ่าน (PUT /api/users/:id/change-password)
 app.put('/api/users/:id/change-password', async (req, res) => {
   const { id } = req.params;
@@ -627,22 +697,28 @@ app.get('/api/points/:userId', async (req, res) => {
   const { userId } = req.params;
   try {
     const [rows] = await db.execute('SELECT * FROM user_points WHERE user_id = ?', [userId]);
-    let points = 1250;
-    if (rows.length > 0) {
-      points = rows[0].points;
+    let points = 1000;
+    
+    if (rows.length === 0) {
+      await db.execute('INSERT IGNORE INTO user_points (user_id, points) VALUES (?, 1000)', [userId]);
+      await db.execute('INSERT IGNORE INTO user_point_history (user_id, title, points_change) VALUES (?, ?, ?)', [userId, 'โบนัสต้อนรับสมาชิกใหม่', '+1000']);
     } else {
-      await db.execute('INSERT IGNORE INTO user_points (user_id, points) VALUES (?, 1250)', [userId]);
+      points = rows[0].points;
     }
+
+    const [historyRows] = await db.execute('SELECT * FROM user_point_history WHERE user_id = ? ORDER BY created_at DESC', [userId]);
+    
+    const formattedHistory = historyRows.map(h => ({
+      id: h.id.toString(),
+      title: h.title,
+      points: h.points_change,
+      date: new Date(h.created_at).toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' })
+    }));
 
     res.json({
       success: true,
       points: points,
-      history: [
-        { id: '1', title: 'สั่งซื้อสินค้าอาหารคลีน', points: '+50', date: 'วันนี้' },
-        { id: '2', title: 'เช็คอินประจำวัน', points: '+10', date: 'เมื่อวาน' },
-        { id: '3', title: 'รีวิวสินค้า', points: '+20', date: '2 วันที่แล้ว' },
-        { id: '4', title: 'โบนัสต้อนรับสมาชิกใหม่', points: '+1000', date: 'สัปดาห์ที่แล้ว' }
-      ]
+      history: formattedHistory
     });
   } catch (error) {
     console.error(`❌ GET /api/points/${userId} error:`, error.message);
@@ -670,7 +746,7 @@ app.post('/api/forgot-password/request-otp', async (req, res) => {
     console.log(`[OTP DEBUG] รหัส OTP ของ ${email} คือ: ${otp}`);
 
     await transporter.sendMail({
-      from: '"Smart Deal Support" <no-reply@smartdeal.com>',
+      from: process.env.EMAIL_USER || 'astotisuss@gmail.com',
       to: email,
       subject: 'รหัส OTP สำหรับตั้งรหัสผ่านใหม่ - Smart Deal',
       html: `<h3>รหัส OTP ยืนยันตัวตนของคุณคือ: <b style="color: #2e7a32; font-size: 24px;">${otp}</b></h3><p>รหัสนี้จะหมดอายุภายใน 5 นาที</p>`
@@ -731,7 +807,7 @@ app.get('/api/home-data', async (req, res) => {
         s.image_url AS shop_image
       FROM products p
       LEFT JOIN shops s ON p.shop_id = s.shop_id
-      WHERE p.stock_quantity > 0 AND (p.deal_end_time IS NULL OR p.deal_end_time > NOW())
+      WHERE p.stock_quantity > 0 AND p.is_auction = 0 AND (p.deal_end_time IS NULL OR p.deal_end_time > NOW()) ORDER BY p.deal_end_time IS NULL ASC, p.deal_end_time ASC
     `);
     const [shops] = await db.execute('SELECT * FROM shops');
 
@@ -1053,8 +1129,10 @@ app.get('/api/orders/:id/tracking', async (req, res) => {
         delivery_lat: o.delivery_lat ? parseFloat(o.delivery_lat) : null,
         delivery_lng: o.delivery_lng ? parseFloat(o.delivery_lng) : null,
         shipping_address: o.shipping_address,
-        note_for_rider: o.note_for_rider
-      },
+          receiver_name: o.receiver_name,
+          receiver_phone: o.receiver_phone,
+          note_for_rider: o.note_for_rider
+        },
       shop: {
         name: o.shop_name,
         address: o.shop_address,
@@ -1143,7 +1221,7 @@ app.get('/api/orders/user/:userId', async (req, res) => {
 
     const formattedOrders = await Promise.all(orders.map(async (order) => {
       const [items] = await db.execute(
-        `SELECT oi.*, p.name AS db_product_name, p.image_url AS product_image
+        `SELECT oi.*, p.name AS db_product_name, COALESCE(p.image_url, (SELECT image_url FROM auctions WHERE title COLLATE utf8mb4_unicode_ci = oi.product_name COLLATE utf8mb4_unicode_ci LIMIT 1)) AS product_image
          FROM order_items oi
          LEFT JOIN products p ON oi.product_id = p.product_id
          WHERE oi.order_id = ?`,
@@ -1206,8 +1284,8 @@ app.get('/api/orders/:orderId', async (req, res) => {
 
     const order = orders[0];
     const [items] = await db.execute(
-      `SELECT oi.*, p.name AS db_product_name, p.image_url AS product_image
-       FROM order_items oi
+      `SELECT oi.*, p.name AS db_product_name, COALESCE(p.image_url, (SELECT image_url FROM auctions WHERE title COLLATE utf8mb4_unicode_ci = oi.product_name COLLATE utf8mb4_unicode_ci LIMIT 1)) AS product_image
+         FROM order_items oi
        LEFT JOIN products p ON oi.product_id = p.product_id
        WHERE oi.order_id = ?`,
       [orderId]
@@ -1545,7 +1623,7 @@ app.get(['/api/auctions', '/api/auctions/active'], async (req, res) => {
         (SELECT COUNT(*) FROM auction_bids WHERE auction_id = a.auction_id) AS total_bids
       FROM auctions a
       WHERE a.auction_status = 'active'
-      ORDER BY a.end_time ASC
+      ORDER BY RAND()
     `);
 
     const now = new Date();
@@ -1581,7 +1659,8 @@ app.get(['/api/auctions', '/api/auctions/active'], async (req, res) => {
       };
     });
 
-    res.json({ success: true, auctions: result, active_auction: result[0] || null });
+    const validAuctions = result.filter(a => a.time_remaining_ms > 0);
+    res.json({ success: true, auctions: result, active_auction: validAuctions[0] || null });
   } catch (error) {
     console.error('❌ GET /api/auctions error:', error.message);
     res.status(500).json({ success: false, error: error.message });
@@ -1789,6 +1868,20 @@ app.post('/api/auctions/:auctionId/bid', async (req, res) => {
       console.log(`🔔 แจ้งเตือนผู้ใช้ ${previousBidder.user_id} ว่าถูกแซงราคาในห้อง #${auctionId}`);
     }
 
+    const [shops] = await connection.query('SELECT owner_id FROM shops WHERE shop_id = ?', [auction.shop_id]);
+    if (shops.length > 0 && shops[0].owner_id) {
+      await connection.query(
+        `INSERT INTO notifications (user_id, title, message, type, reference_id, is_read, created_at)
+         VALUES (?, ?, ?, 'shop_auction_bid', ?, 0, NOW())`,
+        [
+          shops[0].owner_id,
+          'มีผู้เสนอราคาใหม่ในห้องประมูล!',
+          `สินค้า "${auction.title}" มีผู้เสนอราคาล่าสุดที่ ฿${bidAmt.toLocaleString()}`,
+          auctionId
+        ]
+      );
+    }
+
     await connection.commit();
 
     // ดึงประวัติ bids ล่าสุดกลับไปให้ Frontend ทันที
@@ -1863,10 +1956,23 @@ app.post('/api/auctions/:auctionId/close', async (req, res) => {
       LIMIT 1
     `, [auctionId]);
 
-    const winnerBid = topBids.length > 0 ? topBids[0] : null;
-    const winnerUserId = winnerBid ? winnerBid.user_id : (auction.winner_user_id || 2);
-    const winAmount = winnerBid ? parseFloat(winnerBid.bid_amount) : parseFloat(auction.current_bid || auction.start_price);
-    const winnerName = winnerBid?.full_name || 'ผู้ชนะการประมูล';
+        const winnerBid = topBids.length > 0 ? topBids[0] : null;
+
+    if (!winnerBid) {
+      await connection.query(
+        'UPDATE auctions SET auction_status = "ended" WHERE auction_id = ?',
+        [auctionId]
+      );
+      await connection.commit();
+      return res.json({
+        success: true,
+        message: 'ปิดการประมูลเรียบร้อย (ไม่มีผู้เสนอราคา)'
+      });
+    }
+
+    const winnerUserId = winnerBid.user_id;
+    const winAmount = parseFloat(winnerBid.bid_amount);
+    const winnerName = winnerBid.full_name || 'ผู้ชนะการประมูล';
 
     // อัปเดตสถานะการประมูลเป็น 'ended'
     await connection.query(
@@ -1905,7 +2011,7 @@ app.post('/api/auctions/:auctionId/close', async (req, res) => {
       // เพิ่ม Order Item
       await connection.query(`
         INSERT INTO order_items (order_id, product_id, product_name, price, quantity)
-        VALUES (?, 1, ?, ?, 1)
+        VALUES (?, NULL, ?, ?, 1)
       `, [createdOrderId, auction.title, winAmount]);
     }
 
@@ -2197,8 +2303,8 @@ app.get('/api/orders/:orderId/tracking', async (req, res) => {
 
     const order = orders[0];
     const [items] = await db.execute(
-      `SELECT oi.*, p.name AS db_product_name, p.image_url AS product_image
-       FROM order_items oi
+      `SELECT oi.*, p.name AS db_product_name, COALESCE(p.image_url, (SELECT image_url FROM auctions WHERE title COLLATE utf8mb4_unicode_ci = oi.product_name COLLATE utf8mb4_unicode_ci LIMIT 1)) AS product_image
+         FROM order_items oi
        LEFT JOIN products p ON oi.product_id = p.product_id
        WHERE oi.order_id = ?`,
       [orderId]
@@ -2305,21 +2411,36 @@ app.get('/api/users/:userId/shop', async (req, res) => {
 });
 
 // สมัครร้านค้าใหม่
-app.post('/api/shops/register', async (req, res) => {
-  const { owner_id, name, description, category_id, address, latitude, longitude, bank_name, bank_account, id_card_image, bookbank_image } = req.body;
+app.post('/api/shops/register', upload.fields([
+  { name: 'id_card_image', maxCount: 1 },
+  { name: 'bookbank_image', maxCount: 1 }
+]), async (req, res) => {
+  const { owner_id, name, description, category_id, address, latitude, longitude, bank_name, bank_account } = req.body;
   
   if (!owner_id || !name || !address) {
     return res.status(400).json({ success: false, message: 'กรุณากรอกข้อมูลให้ครบถ้วน' });
   }
 
+  // รับค่ารูปภาพจาก req.files (ถ้ามีอัปโหลดเข้ามา) 
+  // หรือถ้าส่งเป็น URL เก่ามาใน req.body (fallback)
+  let id_card_image = req.body.id_card_image || null;
+  if (req.files && req.files['id_card_image']) {
+    id_card_image = `/uploads/${req.files['id_card_image'][0].filename}`;
+  }
+
+  let bookbank_image = req.body.bookbank_image || null;
+  if (req.files && req.files['bookbank_image']) {
+    bookbank_image = `/uploads/${req.files['bookbank_image'][0].filename}`;
+  }
+
   try {
-    const [check] = await db.execute('SELECT shop_id, status FROM shops WHERE owner_id = ?', [owner_id]);
+    const [check] = await db.execute('SELECT * FROM shops WHERE owner_id = ?', [owner_id]);
     
     if (check.length > 0) {
       if (check[0].status === 'rejected') {
         await db.execute(
           `UPDATE shops SET name=?, description=?, category_id=?, address=?, latitude=?, longitude=?, bank_name=?, bank_account=?, id_card_image=?, bookbank_image=?, status='pending' WHERE owner_id=?`,
-          [name, description || null, category_id || null, address, latitude || null, longitude || null, bank_name || null, bank_account || null, id_card_image || null, bookbank_image || null, owner_id]
+          [name, description || null, category_id || null, address, latitude || null, longitude || null, bank_name || null, bank_account || null, id_card_image, bookbank_image, owner_id]
         );
         return res.json({ success: true, message: 'ส่งข้อมูลสมัครใหม่สำเร็จ รอการตรวจสอบ', shop_id: check[0].shop_id });
       } else {
@@ -2330,7 +2451,7 @@ app.post('/api/shops/register', async (req, res) => {
     const [result] = await db.execute(
       `INSERT INTO shops (owner_id, name, description, category_id, address, latitude, longitude, bank_name, bank_account, id_card_image, bookbank_image, status) 
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`, 
-      [owner_id, name, description || null, category_id || null, address, latitude || null, longitude || null, bank_name || null, bank_account || null, id_card_image || null, bookbank_image || null]
+      [owner_id, name, description || null, category_id || null, address, latitude || null, longitude || null, bank_name || null, bank_account || null, id_card_image, bookbank_image]
     );
 
     res.json({ success: true, message: 'สมัครร้านค้าสำเร็จ รอการตรวจสอบ', shop_id: result.insertId });
@@ -2411,7 +2532,7 @@ app.get('/api/shops/:shopId/products', async (req, res) => {
       FROM products p
       LEFT JOIN categories c ON p.category_id = c.category_id
       WHERE p.shop_id = ?
-      ORDER BY p.product_id DESC
+      ORDER BY p.deal_end_time IS NULL ASC, p.deal_end_time ASC, p.product_id DESC
     `, [shopId]);
 
     const formattedProducts = products.map(p => {
@@ -2462,7 +2583,7 @@ app.get('/api/shops/:shopId/products/:productId', async (req, res) => {
 });
 
 // เพิ่มสินค้าใหม่
-app.post('/api/shops/:shopId/products', async (req, res) => {
+app.post('/api/shops/:shopId/products', upload.single('image'), async (req, res) => {
   const { shopId } = req.params;
   const {
     category_id,
@@ -2492,8 +2613,8 @@ app.post('/api/shops/:shopId/products', async (req, res) => {
   }
 
   // แปลงรูปแบบเวลา deal_end_time ถ้ามี
-  let formattedDealEndTime = deal_end_time ? new Date(deal_end_time).toISOString().slice(0, 19).replace('T', ' ') : null;
-  let formattedExpiryTime = expiry_time ? new Date(expiry_time).toISOString().slice(0, 19).replace('T', ' ') : null;
+  let formattedDealEndTime = deal_end_time ? new Date(new Date(deal_end_time).getTime() - new Date().getTimezoneOffset()*60000).toISOString().slice(0, 19).replace('T', ' ') : null;
+  let formattedExpiryTime = expiry_time ? new Date(new Date(expiry_time).getTime() - new Date().getTimezoneOffset()*60000).toISOString().slice(0, 19).replace('T', ' ') : null;
 
   try {
     const [result] = await db.execute(
@@ -2511,16 +2632,41 @@ app.post('/api/shops/:shopId/products', async (req, res) => {
         discount_price || 0,
         calculatedDiscountPercent || 0,
         expiry_text || 'หมดอายุในวันนี้',
-        image_url || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500',
+        req.file ? `http://${req.get('host')}/uploads/${req.file.filename}` : (image_url || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500'),
         description || '',
         freshness || 'ทำสดใหม่ทุกเช้า',
         shipping_type || 'ควบคุมอุณหภูมิ',
         formattedDealEndTime,
         stock_quantity || 0,
-        is_auction ? 1 : 0,
+        (is_auction === '1' || is_auction === 'true' || is_auction === 1) ? 1 : 0,
         formattedExpiryTime
       ]
     );
+
+    if (is_auction === '1' || is_auction === 'true' || is_auction === 1) {
+      const [shops] = await db.execute('SELECT name FROM shops WHERE shop_id = ?', [shopId]);
+      const shopName = shops.length > 0 ? shops[0].name : 'Unknown Shop';
+      
+      await db.execute(`
+        INSERT INTO auctions (
+          title, description, image_url, shop_id, shop_name, 
+          start_price, current_bid, min_increment, end_time, 
+          auction_status, original_price, discount_percent
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+      `, [
+        name,
+        description || '',
+        req.file ? `http://${req.get('host')}/uploads/${req.file.filename}` : (image_url || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500'),
+        shopId,
+        shopName,
+        Math.floor((discount_price || original_price || 0) * 0.3),
+        Math.floor((discount_price || original_price || 0) * 0.3),
+        10,
+        new Date(Date.now() + 30*60*1000 - new Date().getTimezoneOffset()*60000).toISOString().slice(0, 19).replace('T', ' '),
+        original_price || 0,
+        calculatedDiscountPercent || 0
+      ]);
+    }
 
     res.status(201).json({
       success: true,
@@ -2533,8 +2679,8 @@ app.post('/api/shops/:shopId/products', async (req, res) => {
   }
 });
 
-// แก้ไขสินค้าเดิม
-app.put('/api/shops/:shopId/products/:productId', async (req, res) => {
+// แก้ไขสินค้าเดิม (เปลี่ยนเป็น POST เพราะ axios put FormData ใน React Native มีปัญหาบ่อย)
+app.post('/api/shops/:shopId/products/:productId', upload.single('image'), async (req, res) => {
   const { shopId, productId } = req.params;
   const {
     category_id,
@@ -2558,8 +2704,8 @@ app.put('/api/shops/:shopId/products/:productId', async (req, res) => {
     calculatedDiscountPercent = Math.round(((original_price - discount_price) / original_price) * 100);
   }
 
-  let formattedDealEndTime = deal_end_time ? new Date(deal_end_time).toISOString().slice(0, 19).replace('T', ' ') : null;
-  let formattedExpiryTime = expiry_time ? new Date(expiry_time).toISOString().slice(0, 19).replace('T', ' ') : null;
+  let formattedDealEndTime = deal_end_time ? new Date(new Date(deal_end_time).getTime() - new Date().getTimezoneOffset()*60000).toISOString().slice(0, 19).replace('T', ' ') : null;
+  let formattedExpiryTime = expiry_time ? new Date(new Date(expiry_time).getTime() - new Date().getTimezoneOffset()*60000).toISOString().slice(0, 19).replace('T', ' ') : null;
 
   try {
     await db.execute(
@@ -2580,28 +2726,41 @@ app.put('/api/shops/:shopId/products/:productId', async (req, res) => {
         expiry_time = COALESCE(?, expiry_time)
       WHERE product_id = ? AND shop_id = ?`,
       [
-        category_id,
-        name,
-        original_price,
-        discount_price,
-        calculatedDiscountPercent,
-        expiry_text,
-        image_url,
-        description,
-        freshness,
-        shipping_type,
-        formattedDealEndTime,
-        stock_quantity,
-        is_auction !== undefined ? (is_auction ? 1 : 0) : null,
+        category_id ?? null,
+        name ?? null,
+        original_price ?? null,
+        discount_price ?? null,
+        calculatedDiscountPercent ?? null,
+        expiry_text ?? null,
+        req.file ? `http://${req.get('host')}/uploads/${req.file.filename}` : (image_url ?? null),
+        description ?? null,
+        freshness ?? null,
+        shipping_type ?? null,
+        formattedDealEndTime ?? null,
+        stock_quantity ?? null,
+        is_auction !== undefined ? (is_auction === 'true' || is_auction === '1' || is_auction === 1 ? 1 : 0) : null,
         formattedExpiryTime ?? null,
         productId,
         shopId
       ]
     );
 
+    const [updatedProducts] = await db.execute('SELECT * FROM products WHERE product_id = ?', [productId]);
+    if (updatedProducts.length > 0) {
+      const product = updatedProducts[0];
+      if (product.is_auction === 1) {
+        const [existingAuctions] = await db.execute('SELECT auction_id FROM auctions WHERE shop_id = ? AND title = ? AND auction_status = \'active\'', [shopId, product.name]);
+        if (existingAuctions.length === 0) {
+          const [shops] = await db.execute('SELECT name FROM shops WHERE shop_id = ?', [shopId]);
+          const shopName = shops.length > 0 ? shops[0].name : 'Unknown Shop';
+          await db.execute(`INSERT INTO auctions (title, description, image_url, shop_id, shop_name, start_price, current_bid, min_increment, end_time, auction_status, original_price, discount_percent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`, [product.name, product.description || '', product.image_url || '', shopId, shopName, Math.floor((product.discount_price || product.original_price || 0) * 0.3), Math.floor((product.discount_price || product.original_price || 0) * 0.3), 10, new Date(Date.now() + 30*60*1000 - new Date().getTimezoneOffset()*60000).toISOString().slice(0, 19).replace('T', ' '), product.original_price || 0, product.discount_percent || 0]);
+        }
+      }
+    }
+
     res.json({ success: true, message: 'แก้ไขข้อมูลสินค้าสำเร็จ' });
   } catch (error) {
-    console.error(`❌ PUT /api/shops/${shopId}/products/${productId} error:`, error.message);
+    console.error(`❌ POST /api/shops/${shopId}/products/${productId} error:`, error.message);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -2610,13 +2769,24 @@ app.put('/api/shops/:shopId/products/:productId', async (req, res) => {
 app.delete('/api/shops/:shopId/products/:productId', async (req, res) => {
   const { shopId, productId } = req.params;
   try {
+    const [products] = await db.execute('SELECT name FROM products WHERE product_id = ? AND shop_id = ?', [productId, shopId]);
+    if (products.length === 0) {
+      return res.status(404).json({ success: false, message: 'ไม่พบสินค้า หรือไม่มีสิทธิ์ลบสินค้านี้' });
+    }
+    
+    const productName = products[0].name;
+
     const [result] = await db.execute(
       'DELETE FROM products WHERE product_id = ? AND shop_id = ?',
       [productId, shopId]
     );
 
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ success: false, message: 'ไม่พบสินค้า หรือไม่มีสิทธิ์ลบสินค้านี้' });
+    if (result.affectedRows > 0) {
+      // ยกเลิกประมูลที่เกี่ยวข้องทันทีเมื่อลบสินค้า
+      await db.execute(
+        'UPDATE auctions SET auction_status = ? WHERE shop_id = ? AND title = ? AND auction_status = ?',
+        ['cancelled', shopId, productName, 'active']
+      );
     }
 
     res.json({ success: true, message: 'ลบสินค้าเรียบร้อยแล้ว' });
@@ -2662,7 +2832,7 @@ app.get('/api/shops/:shopId/orders', async (req, res) => {
     const formattedOrders = [];
     for (const order of orders) {
       const [items] = await db.execute(
-        `SELECT oi.*, p.name AS db_product_name, p.image_url AS product_image
+        `SELECT oi.*, p.name AS db_product_name, COALESCE(p.image_url, (SELECT image_url FROM auctions WHERE title COLLATE utf8mb4_unicode_ci = oi.product_name COLLATE utf8mb4_unicode_ci LIMIT 1)) AS product_image
          FROM order_items oi
          LEFT JOIN products p ON oi.product_id = p.product_id
          WHERE oi.order_id = ?`,
@@ -2690,7 +2860,7 @@ app.put('/api/orders/:orderId/status', async (req, res) => {
   const { orderId } = req.params;
   const { order_status } = req.body;
 
-  const validStatuses = ['pending', 'paid', 'preparing', 'ready', 'finding_rider', 'delivering', 'completed', 'cancelled'];
+  const validStatuses = ['pending', 'paid', 'preparing', 'ready', 'finding_rider', 'delivering', 'shipped', 'completed', 'cancelled'];
   if (!validStatuses.includes(order_status)) {
     return res.status(400).json({ success: false, message: 'สถานะคำสั่งซื้อไม่ถูกต้อง' });
   }
@@ -2731,7 +2901,7 @@ app.get('/api/search', async (req, res) => {
       `SELECT p.*, s.name AS shop_name 
        FROM products p 
        LEFT JOIN shops s ON p.shop_id = s.shop_id 
-       WHERE p.name LIKE ? AND s.status = 'approved'`,
+       WHERE p.name LIKE ? AND s.status = 'approved' AND p.is_auction = 0 ORDER BY p.deal_end_time IS NULL ASC, p.deal_end_time ASC`,
       [searchParam]
     );
 
@@ -2762,8 +2932,12 @@ app.get('/api/admin/users', async (req, res) => {
         ELSE 0
       END as performance_score
       FROM users u 
-      ORDER BY u.created_at DESC`
-    );
+      WHERE 
+          (u.role = 'buyer') OR
+          (u.role = 'seller' AND EXISTS (SELECT 1 FROM shops s WHERE s.owner_id = u.user_id AND s.status = 'approved')) OR
+          (u.role = 'driver' AND EXISTS (SELECT 1 FROM riders r WHERE r.user_id = u.user_id AND r.status = 'approved')) OR
+          (u.role NOT IN ('buyer', 'seller', 'driver'))
+        ORDER BY u.created_at DESC`);
     res.json(results);
   } catch (error) {
     console.error('API /api/admin/users Error:', error);
@@ -2815,9 +2989,28 @@ app.put('/api/admin/shops/:id/approve', async (req, res) => {
 app.put('/api/admin/shops/:id/reject', async (req, res) => {
   const { reason } = req.body;
   try {
-    const [result] = await db.execute(`UPDATE shops SET status = "rejected", reject_reason = ? WHERE shop_id = ?`, [reason || null, req.params.id]);
+    const [result] = await db.execute('UPDATE shops SET status = "rejected", reject_reason = ? WHERE shop_id = ?', [reason || null, req.params.id]);
     if (result.affectedRows === 0) return res.status(404).json({ error: 'ไม่พบร้านค้า' });
-    res.json({ success: true, message: 'ปฏิเสธร้านค้าเรียบร้อยแล้ว' });
+
+    const [shopData] = await db.execute('SELECT owner_id FROM shops WHERE shop_id = ?', [req.params.id]);
+    if (shopData.length > 0) {
+      const ownerId = shopData[0].owner_id;
+      await db.execute('INSERT INTO notifications (user_id, title, message, type, reference_id) VALUES (?, ?, ?, ?, ?)', 
+        [ownerId, 'คำขอเปิดร้านไม่ผ่านการอนุมัติ', `เหตุผล: ${reason || 'ไม่ระบุ'}`, 'shop_rejected', req.params.id]);
+      
+      const [userRows] = await db.execute('SELECT push_token FROM users WHERE user_id = ?', [ownerId]);
+      if (userRows.length > 0 && userRows[0].push_token && Expo.isExpoPushToken(userRows[0].push_token)) {
+        expo.sendPushNotificationsAsync([{
+          to: userRows[0].push_token,
+          sound: 'default',
+          title: 'คำขอของคุณไม่ผ่านการอนุมัติ ❌',
+          body: `เหตุผล: ${reason || 'ไม่ระบุ'}`,
+          data: { type: 'REGISTRATION_REJECTED', status: 'rejected', reason: reason }
+        }]).catch(console.error);
+      }
+    }
+
+    res.json({ success: true, message: 'ปฏิเสธร้านค้าสำเร็จ' });
   } catch (error) {
     console.error('API /api/admin/shops/:id/reject Error:', error);
     res.status(500).json({ error: 'Database error' });
@@ -3022,8 +3215,8 @@ app.get('/api/seller/dashboard/:owner_id', async (req, res) => {
 
     // 3. Get Recent Orders
     const [recentOrders] = await db.execute(`
-      SELECT o.order_id, (o.subtotal * (1 - (SELECT setting_value FROM system_settings WHERE setting_key='platform_fee_percent') / 100)) as total_amount, o.order_status, o.created_at, oi.product_id, p.image_url, p.name as product_name
-      FROM orders o
+      SELECT o.order_id, (o.subtotal * (1 - (SELECT setting_value FROM system_settings WHERE setting_key='platform_fee_percent') / 100)) as total_amount, o.order_status, o.created_at, oi.product_id, COALESCE(p.image_url, (SELECT image_url FROM auctions WHERE title COLLATE utf8mb4_unicode_ci = oi.product_name COLLATE utf8mb4_unicode_ci LIMIT 1)) as image_url, COALESCE(p.name, oi.product_name) as product_name
+        FROM orders o
       LEFT JOIN order_items oi ON o.order_id = oi.order_id
       LEFT JOIN products p ON oi.product_id = p.product_id
       WHERE o.shop_id = ? 
@@ -3169,7 +3362,7 @@ app.post('/api/admin/withdrawals/:id/reject', async (req, res) => {
 app.get('/api/seller/settings/:owner_id', async (req, res) => {
   try {
     const owner_id = req.params.owner_id;
-    const [rows] = await db.execute('SELECT s.shop_id, s.name, s.address, s.opening_hours, s.bank_name, s.bank_account, u.full_name AS owner_name FROM shops s JOIN users u ON s.owner_id = u.user_id WHERE s.owner_id = ?', [owner_id]);
+    const [rows] = await db.execute('SELECT s.shop_id, s.name, s.address, s.opening_hours, s.bank_name, s.bank_account, s.image_url, u.full_name AS owner_name FROM shops s JOIN users u ON s.owner_id = u.user_id WHERE s.owner_id = ?', [owner_id]);
     if (rows.length === 0) return res.json({ success: false, message: 'Shop not found' });
     res.json({ success: true, data: rows[0] });
   } catch (error) {
@@ -3177,6 +3370,17 @@ app.get('/api/seller/settings/:owner_id', async (req, res) => {
   }
 });
 
+
+app.post('/api/seller/settings/:shop_id/image', upload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ success: false, message: 'No image uploaded' });
+    const imageUrl = '/uploads/' + req.file.filename;
+    await db.execute('UPDATE shops SET image_url = ? WHERE shop_id = ?', [imageUrl, req.params.shop_id]);
+    res.json({ success: true, image_url: imageUrl });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
 app.put('/api/seller/settings/:shop_id', async (req, res) => {
   try {
     const shop_id = req.params.shop_id;
@@ -3326,7 +3530,7 @@ app.post('/api/rider/register', upload.fields([
     { name: 'license_image', maxCount: 1 },
     { name: 'vehicle_doc_image', maxCount: 1 }
   ]), async (req, res) => {
-  const { email, password, phone, name, vehicle_type, vehicle_plate, real_name } = req.body;
+  const { email, password, phone, name, vehicle_type, vehicle_plate, real_name, license_number } = req.body;
   if (!email || !password || !phone || !name || !vehicle_plate || !real_name) {
     return res.status(400).json({ success: false, message: 'กรุณากรอกข้อมูลที่จำเป็นให้ครบถ้วน' });
   }
@@ -3343,6 +3547,28 @@ app.post('/api/rider/register', upload.fields([
     // Check if email or phone exists
     const [existing] = await connection.query('SELECT * FROM users WHERE email = ? OR phone = ?', [email, phone]);
     if (existing.length > 0) {
+      const user = existing[0];
+      if (user.role === 'driver') {
+        const [riderCheck] = await connection.query('SELECT * FROM riders WHERE user_id = ?', [user.user_id]);
+        if (riderCheck.length > 0 && riderCheck[0].status === 'rejected') {
+          // Allow resubmitting
+          const salt = await bcrypt.genSalt(10);
+          const password_hash = await bcrypt.hash(password, salt);
+          await connection.query('UPDATE users SET password_hash = ?, phone = ?, full_name = ? WHERE user_id = ?', [password_hash, phone, name, user.user_id]);
+          
+          await connection.query(
+            'UPDATE riders SET name=?, phone=?, real_name=?, vehicle_type=?, vehicle_plate=?, license_number=?, id_card_image=?, license_image=?, vehicle_doc_image=?, status="pending" WHERE user_id=?',
+            [name, phone, real_name, vehicle_type, vehicle_plate, license_number, 
+             id_card_image || riderCheck[0].id_card_image, 
+             license_image || riderCheck[0].license_image, 
+             vehicle_doc_image || riderCheck[0].vehicle_doc_image, 
+             user.user_id]
+          );
+          
+          await connection.commit();
+          return res.json({ success: true, message: 'ส่งข้อมูลสมัครใหม่สำเร็จ รอการตรวจสอบ' });
+        }
+      }
       await connection.rollback();
       return res.status(400).json({ success: false, message: 'อีเมลหรือเบอร์โทรศัพท์นี้ถูกใช้งานแล้ว' });
     }
@@ -3358,8 +3584,8 @@ app.post('/api/rider/register', upload.fields([
 
     // Step 2: Insert into riders
     await connection.query(
-      'INSERT INTO riders (user_id, name, phone, real_name, vehicle_type, vehicle_plate, id_card_image, license_image, vehicle_doc_image, status, rider_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, "pending", "offline")',
-      [userId, name, phone, real_name, vehicle_type, vehicle_plate, id_card_image, license_image, vehicle_doc_image]
+      'INSERT INTO riders (user_id, name, phone, real_name, vehicle_type, vehicle_plate, license_number, id_card_image, license_image, vehicle_doc_image, status, rider_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "pending", "offline")',
+      [userId, name, phone, real_name, vehicle_type, vehicle_plate, license_number, id_card_image, license_image, vehicle_doc_image]
     );
 
     await connection.commit();
@@ -3408,7 +3634,14 @@ app.post('/api/rider/login', async (req, res) => {
       return res.status(401).json({ success: false, message: 'บัญชีของคุณกำลังรอการอนุมัติจากผู้ดูแลระบบ' });
     }
     if (rider.status === 'rejected') {
-      return res.status(403).json({ success: false, message: 'บัญชีของคุณถูกปฏิเสธการใช้งาน' });
+      return res.status(403).json({ 
+        success: false, 
+        message: 'บัญชีของคุณถูกปฏิเสธ', 
+        status: 'rejected', 
+        reason: rider.reject_reason || 'ไม่ระบุเหตุผล',
+        rider: rider,
+        user: { email: user.email, phone: user.phone, full_name: user.full_name }
+      });
     }
 
     // Mock generating a simple token
@@ -3449,7 +3682,7 @@ app.get('/api/rider/jobs', async (req, res) => {
       JOIN shops s ON o.shop_id = s.shop_id
       JOIN users u ON o.user_id = u.user_id
       LEFT JOIN deliveries del ON o.order_id = del.order_id
-      WHERE o.order_status IN ('finding_rider', 'ready', 'paid') AND o.delivery_type != 'pickup' AND (del.id IS NULL OR del.status = 'cancelled')
+      WHERE o.order_status IN ('preparing', 'ready') AND o.delivery_type != 'pickup' AND (del.id IS NULL OR del.status = 'cancelled')
       ORDER BY o.created_at ASC
     `);
     res.json({ success: true, data: orders });
@@ -3475,7 +3708,7 @@ app.put('/api/rider/deliveries/:order_id/status', async (req, res) => {
     // If accepting the job, we create a record in deliveries table
     if (status === 'accepted') {
       const [orders] = await connection.query('SELECT order_id, order_status, delivery_type FROM orders WHERE order_id = ? FOR UPDATE', [orderId]);
-      if (orders.length === 0 || orders[0].delivery_type !== 'delivery' || !['finding_rider', 'ready', 'paid'].includes(orders[0].order_status)) {
+      if (orders.length === 0 || orders[0].delivery_type !== 'delivery' || !['preparing', 'ready'].includes(orders[0].order_status)) {
         await connection.rollback();
         return res.status(409).json({ success: false, message: 'ออเดอร์นี้ไม่พร้อมให้รับงาน' });
       }
@@ -3494,7 +3727,7 @@ app.put('/api/rider/deliveries/:order_id/status', async (req, res) => {
         'INSERT INTO deliveries (order_id, rider_id, status, assigned_at) VALUES (?, ?, ?, NOW())',
         [orderId, rider_id, 'accepted']
       );
-      await connection.query('UPDATE orders SET order_status = "delivering", rider_id = ? WHERE order_id = ?', [rider_id, orderId]);
+      await connection.query('UPDATE orders SET rider_id = ? WHERE order_id = ?', [rider_id, orderId]);
       await connection.commit();
       return res.json({ success: true, message: 'รับงานสำเร็จ' });
     }
@@ -3504,6 +3737,14 @@ app.put('/api/rider/deliveries/:order_id/status', async (req, res) => {
       await connection.rollback();
       return res.status(404).json({ success: false, message: 'ไม่พบงานที่ไรเดอร์รับไว้' });
     }
+    
+    // Sync with order_status
+    if (status === 'picked_up' || status === 'delivering') {
+      await connection.query('UPDATE orders SET order_status = "delivering" WHERE order_id = ?', [orderId]);
+    } else if (status === 'delivered') {
+      await connection.query('UPDATE orders SET order_status = "delivered" WHERE order_id = ?', [orderId]);
+    }
+    
     await connection.commit();
     res.json({ success: true, message: 'อัปเดตสถานะสำเร็จ' });
   } catch (error) {
@@ -3529,7 +3770,7 @@ app.post('/api/rider/deliveries/:order_id/complete', upload.single('proof_image'
 
     // Don't mark order as completed yet, wait for user to confirm receipt via escrow, or auto complete it?
     // Based on food delivery standard, rider delivers -> status = delivered/shipped. User confirms -> completed.
-    await db.query('UPDATE orders SET order_status = "shipped", delivered_at = CURRENT_TIMESTAMP WHERE order_id = ?', [orderId]);
+    await db.query('UPDATE orders SET order_status = "delivered", delivered_at = CURRENT_TIMESTAMP WHERE order_id = ?', [orderId]);
 
     res.json({ success: true, message: 'ยืนยันการจัดส่งสำเร็จ' });
   } catch (error) {
@@ -3812,6 +4053,14 @@ app.put('/api/admin/riders/:id/reject', async (req, res) => {
   try {
     const [result] = await db.query('UPDATE riders SET status = "rejected", reject_reason = ? WHERE rider_id = ?', [reason || 'ไม่ระบุเหตุผล', req.params.id]);
     if (result.affectedRows === 0) return res.status(404).json({ success: false, message: 'Rider not found' });
+
+    // ส่งแจ้งเตือนผ่าน In-App Notification (วิธีที่ 2)
+    const [riderData] = await db.query('SELECT user_id FROM riders WHERE rider_id = ?', [req.params.id]);
+    if (riderData.length > 0) {
+      await db.execute(`INSERT INTO notifications (user_id, title, message, type, reference_id) VALUES (?, ?, ?, ?, ?)`, 
+        [riderData[0].user_id, 'คำขอสมัครไรเดอร์ถูกปฏิเสธ', `คำขอของคุณถูกปฏิเสธเนื่องจาก: ${reason || 'ไม่ระบุเหตุผล'}`, 'rider_rejected', req.params.id]);
+    }
+
     res.json({ success: true, message: 'Rider rejected successfully' });
   } catch (err) {
     console.error(err);
@@ -3833,7 +4082,7 @@ app.get('/api/rider/jobs', async (req, res) => {
         s.distance
       FROM orders o
       JOIN shops s ON o.shop_id = s.shop_id
-      WHERE o.order_status = 'finding_rider' AND o.delivery_type = 'delivery'
+      WHERE o.order_status IN ('preparing', 'ready') AND o.delivery_type = 'delivery'
       ORDER BY o.created_at ASC
     `);
     res.json({ success: true, jobs });
@@ -4056,21 +4305,43 @@ app.post('/api/auth/google-mock', async (req, res) => {
 setInterval(async () => {
   try {
     const [orders] = await db.query(
-      "SELECT order_id, user_id FROM orders WHERE order_status = 'pending' AND created_at < NOW() - INTERVAL 30 MINUTE"
-    );
+        "SELECT order_id, user_id, order_type FROM orders WHERE order_status = 'pending' AND created_at < NOW() - INTERVAL 30 MINUTE"
+      );
 
     if (orders.length > 0) {
       for (const order of orders) {
-        // 1. Return stock
-        const [items] = await db.query("SELECT product_id, quantity FROM order_items WHERE order_id = ?", [order.order_id]);
-        for (const item of items) {
-          if (item.product_id) {
-            await db.query(
-              "UPDATE products SET stock_quantity = stock_quantity + ? WHERE product_id = ?",
-              [item.quantity, item.product_id]
-            );
+        // 1. Return stock or Restart Auction
+          const [items] = await db.query("SELECT product_id, quantity, product_name FROM order_items WHERE order_id = ?", [order.order_id]);
+          
+          if (order.order_type === 'auction') {
+            for (const item of items) {
+              const title = item.product_name;
+              // Restart the auction
+              await db.query(`
+                UPDATE auctions 
+                SET auction_status = 'active', 
+                    current_bid = start_price, 
+                    winner_user_id = NULL,
+                    end_time = DATE_ADD(NOW(), INTERVAL 30 MINUTE)
+                WHERE title = ? AND auction_status = 'ended' AND winner_user_id = ?
+                ORDER BY auction_id DESC LIMIT 1
+              `, [title, order.user_id]);
+              
+              const [aucRows] = await db.query("SELECT auction_id FROM auctions WHERE title = ? AND auction_status = 'active' ORDER BY auction_id DESC LIMIT 1", [title]);
+              if (aucRows.length > 0) {
+                await db.query("DELETE FROM auction_bids WHERE auction_id = ?", [aucRows[0].auction_id]);
+              }
+            }
+          } else {
+            for (const item of items) {
+              if (item.product_id) {
+                await db.query(
+                  "UPDATE products SET stock_quantity = stock_quantity + ? WHERE product_id = ?",
+                  [item.quantity, item.product_id]
+                );
+              }
+            }
           }
-        }
         
         // 2. Notify customer
         const msg = 'ออเดอร์ของคุณถูกยกเลิกเนื่องจากร้านค้าไม่ตอบรับภายใน 30 นาที ระบบได้ลบออเดอร์และจะดำเนินการคืนเงินให้คุณ';
@@ -4139,13 +4410,29 @@ app.get('/api/seller/notifications/:shopId', async (req, res) => {
       [shopId]
     );
     const formattedReviews = reviews.map(r => ({
-      id: r.review_id,
-      title: 'รีวิวใหม่จากลูกค้า',
-      body: `ลูกค้า ${r.customer_name || 'ไม่ระบุชื่อ'} รีวิวสินค้า "${r.product_name || 'สินค้า'}" ${r.rating} ดาว: ${r.comment || 'ไม่มีคอมเมนต์'}`,
-      type: 'review',
-      created_at: r.created_at
-    }));
-    res.json({ success: true, notifications: formattedReviews });
+        id: r.review_id,
+        title: 'มีลูกค้ารีวิวสินค้า',
+        body: `ลูกค้า ${r.customer_name || 'ไม่ระบุชื่อ'} รีวิวสินค้า "${r.product_name || 'สินค้า'}" ${r.rating} ดาว : ${r.comment || 'ไม่มีคอมเมนต์'}`,
+        type: 'review',
+        created_at: r.created_at
+      }));
+
+      // Fetch actual notifications for this shop owner
+      const [shopRows] = await db.execute('SELECT owner_id FROM shops WHERE shop_id = ?', [shopId]);
+      let realNotifs = [];
+      if (shopRows.length > 0 && shopRows[0].owner_id) {
+        const [nRows] = await db.execute('SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 50', [shopRows[0].owner_id]);
+        realNotifs = nRows.map(n => ({
+          id: 'n_' + n.notification_id,
+          title: n.title,
+          body: n.message,
+          type: n.type,
+          created_at: n.created_at
+        }));
+      }
+
+      const combined = [...formattedReviews, ...realNotifs].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      res.json({ success: true, notifications: combined });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }

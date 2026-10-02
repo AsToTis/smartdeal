@@ -6,12 +6,16 @@ import { router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
 import * as ImagePicker from 'expo-image-picker';
+import * as Location from 'expo-location';
+import MapView, { Marker } from 'react-native-maps';
 import { BASE_URL } from '../../constants/api';
 
 export default function RegisterShopScreen() {
   const [step, setStep] = useState(1);
   const [agreed, setAgreed] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [isRejected, setIsRejected] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
 
   // Step 1: Owner Info & Bank
   const [idCardImage, setIdCardImage] = useState<string | null>(null);
@@ -24,7 +28,9 @@ export default function RegisterShopScreen() {
   const [shopName, setShopName] = useState('');
   const [description, setDescription] = useState('');
   const [categoryId, setCategoryId] = useState(1); // Default
-  const [address, setAddress] = useState('123/45 อาคารสมาร์ททาวเวอร์ ชั้น 10 ถนนสุขุมวิท เขตคลองเตย กรุงเทพมหานคร 10110');
+  const [address, setAddress] = useState('');
+  const [latitude, setLatitude] = useState(13.725109);
+  const [longitude, setLongitude] = useState(100.569109);
   const [categories, setCategories] = useState<any[]>([]);
 
   // State for pending check
@@ -35,7 +41,26 @@ export default function RegisterShopScreen() {
   useEffect(() => {
     checkPendingStatus();
     fetchCategories();
+    getCurrentLocation();
   }, []);
+
+  const getCurrentLocation = async () => {
+    try {
+      let { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('การอนุญาตถูกปฏิเสธ', 'กรุณาอนุญาตการเข้าถึงตำแหน่งเพื่อปักหมุดร้านค้า');
+        return;
+      }
+
+      let location = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Highest,
+      });
+      setLatitude(location.coords.latitude);
+      setLongitude(location.coords.longitude);
+    } catch (error) {
+      console.log('Error getting location', error);
+    }
+  };
 
   const checkPendingStatus = async () => {
     try {
@@ -56,8 +81,34 @@ export default function RegisterShopScreen() {
           Alert.alert('แจ้งเตือน', `คุณมีร้านค้าที่อนุมัติแล้วในระบบ`, [
             { text: 'กลับ', onPress: () => router.back() }
           ]);
+        } else if (status === 'rejected') {
+          setIsRejected(true);
+          setRejectReason(res.data.shop.reject_reason || 'ไม่ระบุเหตุผล');
+          
+          setShopName(res.data.shop.name || '');
+          setDescription(res.data.shop.description || '');
+          if (res.data.shop.category_id) setCategoryId(res.data.shop.category_id);
+          setAddress(res.data.shop.address || '');
+          if (res.data.shop.latitude) setLatitude(parseFloat(res.data.shop.latitude));
+          if (res.data.shop.longitude) setLongitude(parseFloat(res.data.shop.longitude));
+          if (res.data.shop.bank_name) setBankName(res.data.shop.bank_name);
+          setBankAccount(res.data.shop.bank_account || '');
+          
+          const getImageUrl = (path: string) => {
+            if (!path) return null;
+            if (path.startsWith('http')) return path;
+            if (path.startsWith('file://')) return null; // Force re-upload if DB has broken local path
+            return `${BASE_URL.replace('/api', '')}${path}`;
+          };
+          
+          const idUrl = getImageUrl(res.data.shop.id_card_image);
+          if (idUrl) setIdCardImage(idUrl);
+          
+          const bbUrl = getImageUrl(res.data.shop.bookbank_image);
+          if (bbUrl) setBookbankImage(bbUrl);
+          
+          setStep(0); // special step for rejection screen
         }
-        // หาก status === 'rejected' อนุญาตให้กรอกฟอร์มสมัครใหม่ได้
       }
     } catch (e) {
       console.log('Check shop error:', e);
@@ -109,33 +160,104 @@ export default function RegisterShopScreen() {
         if (parsed?.user_id) userId = parsed.user_id;
       }
 
-      const res = await axios.post(`${BASE_URL}/shops/register`, {
-        owner_id: userId,
-        name: shopName,
-        description: description,
-        category_id: categoryId,
-        address: address,
-        latitude: 13.725109,
-        longitude: 100.569109,
-        bank_name: bankName,
-        bank_account: bankAccount,
-        id_card_image: idCardImage,
-        bookbank_image: bookbankImage
+      const formData = new FormData();
+      formData.append('owner_id', userId.toString());
+      formData.append('name', shopName);
+      formData.append('description', description);
+      formData.append('category_id', categoryId.toString());
+      formData.append('address', address);
+      formData.append('latitude', latitude.toString());
+      formData.append('longitude', longitude.toString());
+      formData.append('bank_name', bankName);
+      formData.append('bank_account', bankAccount);
+
+      if (idCardImage && !idCardImage.startsWith('http')) {
+        const filename = idCardImage.split('/').pop() || 'idcard.jpg';
+        const match = /\.(\w+)$/.exec(filename);
+        const ext = match ? match[1].toLowerCase() : 'jpg';
+        formData.append('id_card_image', {
+          uri: idCardImage,
+          name: filename,
+          type: ext === 'jpg' ? 'image/jpeg' : `image/${ext}`
+        } as any);
+      }
+
+      if (bookbankImage && !bookbankImage.startsWith('http')) {
+        const filename = bookbankImage.split('/').pop() || 'bookbank.jpg';
+        const match = /\.(\w+)$/.exec(filename);
+        const ext = match ? match[1].toLowerCase() : 'jpg';
+        formData.append('bookbank_image', {
+          uri: bookbankImage,
+          name: filename,
+          type: ext === 'jpg' ? 'image/jpeg' : `image/${ext}`
+        } as any);
+      }
+
+      // Use pure XMLHttpRequest to bypass Expo fetch polyfill bugs
+      const responseData = await new Promise<any>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `${BASE_URL}/shops/register`);
+        xhr.onload = () => {
+          try {
+            const data = JSON.parse(xhr.responseText);
+            if (xhr.status >= 200 && xhr.status < 300) {
+              resolve(data);
+            } else {
+              reject(new Error(data.message || data.error || 'เซิร์ฟเวอร์แจ้งข้อผิดพลาด'));
+            }
+          } catch (e) {
+            reject(new Error(`เซิร์ฟเวอร์ส่งกลับมาผิดปกติ: ${xhr.status} - ${xhr.responseText.substring(0, 300)}`));
+          }
+        };
+        xhr.onerror = () => reject(new Error('เกิดข้อผิดพลาดในการเชื่อมต่อเครือข่าย'));
+        xhr.send(formData);
       });
 
-      if (res.data?.success) {
+      if (responseData?.success) {
         setIsPending(true);
         setStep(3);
       } else {
-        Alert.alert('ข้อผิดพลาด', res.data?.message || 'ไม่สามารถสมัครร้านค้าได้');
+        Alert.alert('ข้อผิดพลาด', responseData?.message || 'ไม่สามารถสมัครร้านค้าได้');
       }
     } catch (error: any) {
       console.error('Register Shop Error:', error);
-      Alert.alert('ข้อผิดพลาด', error.response?.data?.message || 'เกิดข้อผิดพลาดในการเชื่อมต่อ');
+      Alert.alert('ข้อผิดพลาด', `เกิดข้อผิดพลาด: ${error.message || 'ไม่สามารถส่งข้อมูลได้'}`);
     } finally {
       setLoading(false);
     }
   };
+
+  if (isRejected && step === 0) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.header}>
+          <TouchableOpacity style={styles.backBtn} onPress={() => router.replace('/(tabs)/profile')}>
+            <MaterialIcons name="arrow-back" size={24} color="#0f172a" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>การตรวจสอบไม่ผ่าน</Text>
+          <View style={{ width: 40 }} />
+        </View>
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+          <MaterialIcons name="error-outline" size={80} color="#ef4444" />
+          <Text style={{ fontSize: 20, fontWeight: 'bold', marginTop: 20, color: '#0f172a', textAlign: 'center' }}>คำขอเปิดร้านของคุณไม่ผ่านการอนุมัติ</Text>
+          <Text style={{ textAlign: 'center', color: '#ef4444', marginTop: 10, lineHeight: 22, fontWeight: '600' }}>
+            เหตุผล: {rejectReason}
+          </Text>
+          <Text style={{ textAlign: 'center', color: '#64748b', marginTop: 10, lineHeight: 22 }}>
+            กรุณาแก้ไขข้อมูลและแนบเอกสารที่ถูกต้องตามที่แจ้งไว้ แล้วส่งคำขอเข้ามาใหม่อีกครั้ง
+          </Text>
+          <TouchableOpacity 
+            style={[styles.submitBtn, { width: '100%', marginTop: 30 }]} 
+            onPress={() => {
+              setStep(1); // go to form
+            }}
+          >
+            <Text style={styles.submitBtnText}>แก้ไขข้อมูลและส่งใหม่</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   if (isPending || step === 3) {
     return (
@@ -280,15 +402,42 @@ export default function RegisterShopScreen() {
               ))}
             </ScrollView>
 
-            <Text style={styles.inputLabel}>ที่ตั้งร้านค้า (แผนที่จำลอง)</Text>
+            <Text style={styles.inputLabel}>ที่ตั้งร้านค้า (เลือกตำแหน่งจากแผนที่)</Text>
             <View style={styles.mapCard}>
-              <View style={styles.mapPreview}>
-                <Ionicons name="map-outline" size={48} color="#16a34a" />
-                <Text style={{ color: '#16a34a', marginTop: 8, fontWeight: 'bold' }}>จำลองพิกัด 13.725109, 100.569109</Text>
+              <View style={[styles.mapPreview, { padding: 0, overflow: 'hidden' }]}>
+                <MapView 
+                  style={{ width: '100%', height: '100%' }}
+                  initialRegion={{
+                    latitude: latitude,
+                    longitude: longitude,
+                    latitudeDelta: 0.01,
+                    longitudeDelta: 0.01,
+                  }}
+                  region={{
+                    latitude: latitude,
+                    longitude: longitude,
+                    latitudeDelta: 0.01,
+                    longitudeDelta: 0.01,
+                  }}
+                  onPress={(e) => {
+                    setLatitude(e.nativeEvent.coordinate.latitude);
+                    setLongitude(e.nativeEvent.coordinate.longitude);
+                  }}
+                >
+                  <Marker 
+                    coordinate={{ latitude, longitude }} 
+                    draggable
+                    onDragEnd={(e) => {
+                      setLatitude(e.nativeEvent.coordinate.latitude);
+                      setLongitude(e.nativeEvent.coordinate.longitude);
+                    }}
+                  />
+                </MapView>
               </View>
+              <Text style={{ fontSize: 12, color: '#64748b', marginTop: 8, textAlign: 'center' }}>พิกัด: {latitude.toFixed(6)}, {longitude.toFixed(6)}</Text>
               <TextInput
-                style={[styles.textInput, { borderWidth: 0, paddingHorizontal: 0, marginTop: 10 }]}
-                placeholder="รายละเอียดที่อยู่..."
+                style={[styles.textInput, { borderWidth: 0, paddingHorizontal: 0, marginTop: 4 }]}
+                placeholder="รายละเอียดที่อยู่ (บ้านเลขที่ ซอย ถนน...)"
                 multiline
                 value={address}
                 onChangeText={setAddress}
@@ -403,7 +552,7 @@ const styles = StyleSheet.create({
     marginBottom: 20
   },
   mapPreview: {
-    height: 120,
+    height: 180,
     backgroundColor: '#f0fdf4',
     borderRadius: 12,
     justifyContent: 'center',

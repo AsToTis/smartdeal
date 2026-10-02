@@ -195,8 +195,14 @@ export default function SellerOrdersScreen() {
                     )}
                     {activeTab === 'ready' && (
                       <TouchableOpacity 
-                        style={styles.primaryBtn}
-                        onPress={() => handleUpdateStatus(order.order_id, 'delivering')}
+                        style={[styles.primaryBtn, !order.rider_name && { backgroundColor: '#94a3b8' }]}
+                        onPress={() => {
+                          if (!order.rider_name) {
+                            Alert.alert('รอดำเนินการ', 'ยังไม่มีคนขับรับงานนี้ กรุณารอคนขับรับงานก่อนกดส่งมอบ');
+                            return;
+                          }
+                          handleUpdateStatus(order.order_id, 'delivering');
+                        }}
                       >
                         <Text style={styles.primaryBtnText}>ส่งมอบแล้ว</Text>
                       </TouchableOpacity>

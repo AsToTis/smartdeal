@@ -11,8 +11,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
 import * as ImagePicker from 'expo-image-picker';
 import * as Updates from 'expo-updates';
+import * as FileSystem from 'expo-file-system';
 import { useTheme } from '../../context/ThemeContext';
-import { BASE_URL } from '../../constants/api';
+import { BASE_URL, SERVER_URL } from '../../constants/api';
 
 const DEFAULT_AVATAR = 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=300';
 
@@ -169,11 +170,41 @@ export default function ProfileScreen() {
     const userId = user?.user_id || 2;
 
     try {
+      let finalAvatarUrl = editAvatar;
+
+      if (editAvatar && editAvatar.startsWith('file://')) {
+        try {
+          // Fetch the local file as a Blob
+          const fileRes = await fetch(editAvatar);
+          const blob = await fileRes.blob();
+          
+          const formData = new FormData();
+          formData.append('avatar', blob, 'avatar.jpg');
+
+          const uploadRes = await fetch(`${BASE_URL}/users/${userId}/avatar`, {
+            method: 'POST',
+            body: formData,
+            headers: {
+              'Accept': 'application/json',
+            }
+          });
+          
+          const uploadData = await uploadRes.json();
+          if (uploadData?.success) {
+            finalAvatarUrl = uploadData.avatar_url;
+          } else {
+             console.log('Upload failed with response:', uploadData);
+          }
+        } catch (uploadError) {
+          console.error('Upload Error:', uploadError);
+        }
+      }
+
       const response = await axios.put(`${BASE_URL}/users/${userId}/profile`, {
         full_name: editName.trim(),
         phone: editPhone.trim(),
         email: editEmail.trim(),
-        avatar_url: editAvatar || null
+        avatar_url: finalAvatarUrl || null
       });
 
       if (response.data?.success) {
@@ -331,7 +362,7 @@ export default function ProfileScreen() {
             activeOpacity={0.9}
           >
             <Image 
-              source={{ uri: user?.avatar_url || DEFAULT_AVATAR }} 
+              source={{ uri: (user?.avatar_url?.startsWith('/uploads') ? SERVER_URL + user.avatar_url : user?.avatar_url) || DEFAULT_AVATAR }} 
               style={styles.avatarImage} 
             />
             {/* Green pencil edit badge */}
@@ -500,7 +531,7 @@ export default function ProfileScreen() {
               {/* Avatar Preview & Selection */}
               <View style={styles.modalAvatarContainer}>
                 <Image 
-                  source={{ uri: editAvatar || DEFAULT_AVATAR }} 
+                  source={{ uri: (editAvatar?.startsWith('/uploads') ? SERVER_URL + editAvatar : editAvatar) || DEFAULT_AVATAR }} 
                   style={styles.modalAvatarPreview} 
                 />
                 <TouchableOpacity style={styles.uploadAvatarBtn} onPress={pickAvatar}>

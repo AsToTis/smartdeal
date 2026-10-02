@@ -71,7 +71,8 @@ export default function SellerLayout() {
         name="register-shop"
         options={{
           href: null,
-          headerShown: false
+          headerShown: false,
+          tabBarStyle: { display: 'none' }
         }}
       />
       <Tabs.Screen

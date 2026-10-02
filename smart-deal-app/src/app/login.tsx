@@ -11,19 +11,19 @@ import { BASE_URL } from '../constants/api';
 
 export default function App() {
   const [screen, setScreen] = useState<'login' | 'register' | 'forgot' | 'login_2fa'>('login');
-  
+
   // 1. ข้อมูลสำหรับ Login
-  const [identifier, setIdentifier] = useState('test@gmail.com');
-  const [password, setPassword] = useState('123456password');
+  const [identifier, setIdentifier] = useState('');
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  
+
   // 2. ข้อมูลสำหรับ Register
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [isRegisterOtpStep, setIsRegisterOtpStep] = useState(false);
   const [registerOtp, setRegisterOtp] = useState('');
-  
+
   // 3. ข้อมูลสำหรับ Forgot Password (OTP 3 ขั้นตอน)
   const [forgotStep, setForgotStep] = useState<1 | 2 | 3>(1);
   const [forgotEmail, setForgotEmail] = useState('');
@@ -46,7 +46,7 @@ export default function App() {
     }
     try {
       const res = await axios.post(`${BASE_URL}/login`, { identifier, password });
-      
+
       if (res.data.require_2fa) {
         Alert.alert('ตรวจสอบ OTP', res.data.message);
         setForgotEmail(res.data.email);
@@ -55,7 +55,7 @@ export default function App() {
       }
 
       setUser(res.data.user);
-      
+
       // บันทึก User ลง AsyncStorage
       if (res.data?.user) {
         await AsyncStorage.setItem('user', JSON.stringify(res.data.user));
@@ -85,7 +85,7 @@ export default function App() {
     }
   };
 
-    const handleRequestRegisterOTP = async () => {
+  const handleRequestRegisterOTP = async () => {
     if (!fullName || !email || !phone || !password) {
       Alert.alert('แจ้งเตือน', 'กรุณากรอกข้อมูลให้ครบทุกช่อง');
       return;
@@ -144,7 +144,7 @@ export default function App() {
     }
   };
 
-  
+
   const handleResetPassword = async () => {
     if (!newPassword) return Alert.alert('แจ้งเตือน', 'กรุณากรอกรหัสผ่านใหม่');
     try {
@@ -167,8 +167,8 @@ export default function App() {
         <Text style={styles.headerTitle}>Smart Deal</Text>
 
         <View style={styles.bannerContainer}>
-          <Image 
-            source={{ uri: 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=800' }} 
+          <Image
+            source={{ uri: 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=800' }}
             style={styles.bannerImage}
           />
         </View>
@@ -181,10 +181,10 @@ export default function App() {
 
             <View style={styles.inputGroup}>
               <Text style={styles.label}>อีเมล หรือ เบอร์โทรศัพท์</Text>
-              <TextInput 
-                style={styles.input} 
-                placeholder="example@email.com" 
-                value={identifier} 
+              <TextInput
+                style={styles.input}
+                placeholder="example@email.com"
+                value={identifier}
                 onChangeText={setIdentifier}
                 autoCapitalize="none"
               />
@@ -193,11 +193,11 @@ export default function App() {
             <View style={styles.inputGroup}>
               <Text style={styles.label}>รหัสผ่าน</Text>
               <View style={styles.passwordWrapper}>
-                <TextInput 
-                  style={[styles.input, { flex: 1, marginBottom: 0 }]} 
-                  placeholder="••••••••" 
-                  secureTextEntry={!showPassword} 
-                  value={password} 
+                <TextInput
+                  style={[styles.input, { flex: 1, marginBottom: 0 }]}
+                  placeholder="••••••••"
+                  secureTextEntry={!showPassword}
+                  value={password}
                   onChangeText={setPassword}
                 />
                 <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeBtn}>
@@ -241,21 +241,21 @@ export default function App() {
 
             <View style={styles.inputGroup}>
               <Text style={styles.label}>รหัส OTP (6 หลัก)</Text>
-              <TextInput 
-                style={[styles.input, { textAlign: 'center', fontSize: 22, letterSpacing: 5 }]} 
-                placeholder="123456" 
-                keyboardType="number-pad" 
-                maxLength={6} 
-                value={otpInput} 
-                onChangeText={setOtpInput} 
+              <TextInput
+                style={[styles.input, { textAlign: 'center', fontSize: 22, letterSpacing: 5 }]}
+                placeholder="123456"
+                keyboardType="number-pad"
+                maxLength={6}
+                value={otpInput}
+                onChangeText={setOtpInput}
               />
             </View>
             <TouchableOpacity style={styles.primaryButton} onPress={handleVerifyLogin2FA}>
               <Text style={styles.primaryButtonText}>ยืนยันเข้าสู่ระบบ</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity 
-              style={{ marginTop: 15, alignSelf: 'center' }} 
+            <TouchableOpacity
+              style={{ marginTop: 15, alignSelf: 'center' }}
               onPress={() => { setScreen('login'); setOtpInput(''); }}
             >
               <Text style={styles.linkText}>← ยกเลิก / กลับไปหน้าเข้าสู่ระบบ</Text>
@@ -299,24 +299,24 @@ export default function App() {
                 </Text>
                 <View style={styles.inputGroup}>
                   <Text style={styles.label}>รหัส OTP (6 หลัก)</Text>
-                  <TextInput 
-                    style={[styles.input, { textAlign: 'center', fontSize: 22, letterSpacing: 5 }]} 
-                    placeholder="123456" 
-                    keyboardType="number-pad" 
-                    maxLength={6} 
-                    value={registerOtp} 
-                    onChangeText={setRegisterOtp} 
+                  <TextInput
+                    style={[styles.input, { textAlign: 'center', fontSize: 22, letterSpacing: 5 }]}
+                    placeholder="123456"
+                    keyboardType="number-pad"
+                    maxLength={6}
+                    value={registerOtp}
+                    onChangeText={setRegisterOtp}
                   />
                 </View>
                 <TouchableOpacity style={styles.primaryButton} onPress={handleRegister}>
                   <Text style={styles.primaryButtonText}>ยืนยันการสมัครสมาชิก</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity 
-                  style={[styles.primaryButton, { backgroundColor: '#f0f0f0', marginTop: 10 }]} 
+                <TouchableOpacity
+                  style={[styles.primaryButton, { backgroundColor: '#f0f0f0', marginTop: 10 }]}
                   onPress={() => setIsRegisterOtpStep(false)}
                 >
-                   <Text style={[styles.primaryButtonText, { color: '#333' }]}>ย้อนกลับแก้ไขข้อมูล</Text>
+                  <Text style={[styles.primaryButtonText, { color: '#333' }]}>ย้อนกลับแก้ไขข้อมูล</Text>
                 </TouchableOpacity>
               </>
             )}
@@ -341,12 +341,12 @@ export default function App() {
                 <Text style={styles.subtitle}>กรอกอีเมลของคุณเพื่อรับรหัสยืนยัน OTP</Text>
                 <View style={styles.inputGroup}>
                   <Text style={styles.label}>อีเมล</Text>
-                  <TextInput 
-                    style={styles.input} 
-                    placeholder="example@gmail.com" 
-                    value={forgotEmail} 
-                    onChangeText={setForgotEmail} 
-                    autoCapitalize="none" 
+                  <TextInput
+                    style={styles.input}
+                    placeholder="example@gmail.com"
+                    value={forgotEmail}
+                    onChangeText={setForgotEmail}
+                    autoCapitalize="none"
                   />
                 </View>
                 <TouchableOpacity style={styles.primaryButton} onPress={handleRequestOTP}>
@@ -360,13 +360,13 @@ export default function App() {
                 <Text style={styles.subtitle}>กรอกรหัส OTP 6 หลักที่ส่งไปที่ {forgotEmail}</Text>
                 <View style={styles.inputGroup}>
                   <Text style={styles.label}>รหัส OTP (6 หลัก)</Text>
-                  <TextInput 
-                    style={[styles.input, { textAlign: 'center', fontSize: 22, letterSpacing: 5 }]} 
-                    placeholder="123456" 
-                    keyboardType="number-pad" 
-                    maxLength={6} 
-                    value={otpInput} 
-                    onChangeText={setOtpInput} 
+                  <TextInput
+                    style={[styles.input, { textAlign: 'center', fontSize: 22, letterSpacing: 5 }]}
+                    placeholder="123456"
+                    keyboardType="number-pad"
+                    maxLength={6}
+                    value={otpInput}
+                    onChangeText={setOtpInput}
                   />
                 </View>
                 <TouchableOpacity style={styles.primaryButton} onPress={handleVerifyOTP}>
@@ -380,12 +380,12 @@ export default function App() {
                 <Text style={styles.subtitle}>กรอกรหัสผ่านใหม่ที่คุณต้องการใช้งาน</Text>
                 <View style={styles.inputGroup}>
                   <Text style={styles.label}>รหัสผ่านใหม่</Text>
-                  <TextInput 
-                    style={styles.input} 
-                    placeholder="••••••••" 
-                    secureTextEntry 
-                    value={newPassword} 
-                    onChangeText={setNewPassword} 
+                  <TextInput
+                    style={styles.input}
+                    placeholder="••••••••"
+                    secureTextEntry
+                    value={newPassword}
+                    onChangeText={setNewPassword}
                   />
                 </View>
                 <TouchableOpacity style={styles.primaryButton} onPress={handleResetPassword}>
@@ -394,8 +394,8 @@ export default function App() {
               </>
             )}
 
-            <TouchableOpacity 
-              style={{ marginTop: 15, alignSelf: 'center' }} 
+            <TouchableOpacity
+              style={{ marginTop: 15, alignSelf: 'center' }}
               onPress={() => { setScreen('login'); setForgotStep(1); }}
             >
               <Text style={styles.linkText}>← ยกเลิก / กลับไปหน้าเข้าสู่ระบบ</Text>
@@ -405,7 +405,7 @@ export default function App() {
 
         <Text style={styles.copyright}>© 2024 Smart Deal. All rights reserved.</Text>
       </ScrollView>
-    
+
 
     </SafeAreaView>
   );

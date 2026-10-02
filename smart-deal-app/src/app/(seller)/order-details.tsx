@@ -8,7 +8,13 @@ import { BASE_URL } from '../../constants/api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function OrderDetailsScreen() {
-  const { orderId } = useLocalSearchParams();
+  const getImageUrl = (imgUrl: string) => {
+    if (!imgUrl) return 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500';
+    if (imgUrl.startsWith('http')) return imgUrl;
+    return `${BASE_URL.replace('/api', '')}${imgUrl}`;
+  };
+
+const { orderId } = useLocalSearchParams();
   const [order, setOrder] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
@@ -54,7 +60,7 @@ export default function OrderDetailsScreen() {
   };
 
   if (loading) {
-    return (
+      return (
       <SafeAreaView style={styles.centerContainer}>
         <ActivityIndicator size="large" color="#2e7a32" />
         <Text style={{ marginTop: 10, color: '#64748b' }}>กำลังโหลดข้อมูล...</Text>
@@ -135,7 +141,7 @@ export default function OrderDetailsScreen() {
           <Text style={styles.sectionTitle}>รายการอาหาร</Text>
           {(order.items || []).map((item: any, idx: number) => (
             <View key={idx} style={styles.itemRow}>
-              <Image source={{ uri: item.product_image || 'https://via.placeholder.com/60' }} style={styles.itemImage} />
+              <Image source={{ uri: getImageUrl(item.product_image || item.image_url) }} style={styles.itemImage} />
               <View style={styles.itemDetails}>
                 <Text style={styles.itemName}>{item.product_name}</Text>
                 <Text style={styles.itemQty}>จำนวน: x{item.quantity}</Text>
@@ -243,8 +249,14 @@ export default function OrderDetailsScreen() {
 
         {order.order_status === 'ready' && (
           <TouchableOpacity 
-            style={styles.actionBtn}
-            onPress={() => handleUpdateStatus('delivering')}
+            style={[styles.actionBtn, !order.rider_name && { backgroundColor: '#94a3b8' }]}
+            onPress={() => {
+              if (!order.rider_name) {
+                Alert.alert('รอดำเนินการ', 'ยังไม่มีคนขับรับงานนี้ กรุณารอคนขับรับงานก่อนกดส่งมอบ');
+                return;
+              }
+              handleUpdateStatus('shipped');
+            }}
           >
             <Text style={styles.actionBtnText}>ส่งมอบให้ไรเดอร์แล้ว</Text>
           </TouchableOpacity>

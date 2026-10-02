@@ -8,7 +8,13 @@ import axios from 'axios';
 import { BASE_URL } from '../../constants/api';
 
 export default function SellerDashboardScreen() {
-  const [loading, setLoading] = useState(true);
+  const getImageUrl = (imgUrl: string) => {
+    if (!imgUrl) return 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500';
+    if (imgUrl.startsWith('http')) return imgUrl;
+    return `${BASE_URL.replace('/api', '')}${imgUrl}`;
+  };
+
+const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [dashboardData, setDashboardData] = useState<any>({
     shop: { name: 'Smart Deal Seller' },
@@ -62,7 +68,7 @@ export default function SellerDashboardScreen() {
     return Number(amount || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   };
 
-  return (
+    return (
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* Header */}
       <View style={styles.header}>
@@ -191,10 +197,7 @@ export default function SellerDashboardScreen() {
                     onPress={() => router.push({ pathname: '/(seller)/order-details', params: { orderId: item.order_id } })}
                   >
                     <View style={styles.recentOrderIcon}>
-                      <Image 
-                        source={{ uri: item.image_url || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=100' }} 
-                        style={styles.recentOrderImg} 
-                      />
+                      <Image source={{ uri: getImageUrl(item.image_url || item.product_image) }} style={styles.recentOrderImg} />
                     </View>
                     <View style={styles.recentOrderInfo}>
                       <Text style={styles.recentOrderName}>รหัสออเดอร์ #{item.order_id}</Text>

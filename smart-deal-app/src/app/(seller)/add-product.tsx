@@ -1,32 +1,98 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, Image, Switch } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as ImagePicker from 'expo-image-picker';
+import DateTimePicker from '@react-native-community/datetimepicker';
+import { Picker } from '@react-native-picker/picker';
 import axios from 'axios';
 import { BASE_URL } from '../../constants/api';
 
 export default function AddProductScreen() {
+  useFocusEffect(
+    useCallback(() => {
+      setName('');
+      setOriginalPrice('');
+      setDiscountPrice('');
+      setStockQuantity('');
+      setDescription('');
+      setImageUri('');
+      setIsAuction(false);
+      setCategoryId('1');
+      setExpiryDate(new Date());
+    }, [])
+  );
+
   const [name, setName] = useState('');
   const [originalPrice, setOriginalPrice] = useState('');
   const [discountPrice, setDiscountPrice] = useState('');
-  const [expiryDate, setExpiryDate] = useState(''); // Simple text input for now
+  const [expiryDate, setExpiryDate] = useState(new Date());
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  
+  const onChangeDate = (event: any, selectedDate?: Date) => {
+    setShowDatePicker(false);
+    if (selectedDate) {
+      setExpiryDate(selectedDate);
+    }
+  };
   const [stockQuantity, setStockQuantity] = useState('');
   const [categoryId, setCategoryId] = useState('1');
   const [description, setDescription] = useState('');
   const [notifyNearby, setNotifyNearby] = useState(true);
   const [isAuction, setIsAuction] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
-  // Mock image
-  const [imageUri, setImageUri] = useState('https://images.unsplash.com/photo-1540420773420-3366772f4999?w=300');
+  const handleToggleAuction = (value: boolean) => {
+    if (value) {
+      Alert.alert(
+        'ยืนยันการตั้งเป็นสินค้าประมูล',
+        'คุณแน่ใจหรือไม่ว่าต้องการตั้งสินค้านี้เข้าสู่ห้องประมูล? (หากตั้งเป็นประมูลแล้ว ระบบจะเปิดให้ลูกค้าประมูลทันทีตามเงื่อนไข)',
+        [
+          { text: 'ยกเลิก', style: 'cancel', onPress: () => setIsAuction(false) },
+          { text: 'ยืนยัน', style: 'destructive', onPress: () => setIsAuction(true) }
+        ]
+      );
+    } else {
+      setIsAuction(false);
+    }
+  };
+
+  const isExpiringSoon = () => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const exp = new Date(expiryDate);
+    exp.setHours(0, 0, 0, 0);
+    const diffTime = exp.getTime() - today.getTime();
+    const diffDays = diffTime / (1000 * 60 * 60 * 24);
+    return diffDays <= 1;
+  };
+
+  const [imageUri, setImageUri] = useState('');
+
+  const pickImage = async () => {
+    let result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [4, 3],
+      quality: 0.8,
+    });
+
+    if (!result.canceled && result.assets && result.assets.length > 0) {
+      setImageUri(result.assets[0].uri);
+    }
+  };
 
   const handleSave = async () => {
+    if (isSaving) return;
+    
     if (!name || !originalPrice || !stockQuantity) {
       Alert.alert('แจ้งเตือน', 'กรุณากรอกข้อมูลที่จำเป็นให้ครบถ้วน');
       return;
     }
 
+    setIsSaving(true);
     try {
       const shopId = await AsyncStorage.getItem('shop_id');
       if (!shopId) {
@@ -36,38 +102,73 @@ export default function AddProductScreen() {
 
       // Helper function to mock expiry time based on date format
       // Ideally we use a proper Date Picker component
-      let parsedExpiry = null;
-      if (expiryDate) {
-        parsedExpiry = new Date(expiryDate);
-        if (isNaN(parsedExpiry.getTime())) {
-          parsedExpiry = new Date(); // fallback to today if invalid
-          parsedExpiry.setHours(parsedExpiry.getHours() + 24);
+      let parsedExpiry = new Date(expiryDate);
+      parsedExpiry.setHours(23, 59, 59, 999);
+
+      const formData = new FormData();
+      formData.append('name', name);
+      formData.append('category_id', categoryId);
+      formData.append('original_price', originalPrice);
+      formData.append('discount_price', discountPrice || '0');
+      formData.append('stock_quantity', stockQuantity);
+      formData.append('description', description);
+      formData.append('is_auction', isAuction ? '1' : '0');
+      if (parsedExpiry) {
+        formData.append('expiry_time', parsedExpiry.toISOString());
+        formData.append('deal_end_time', parsedExpiry.toISOString());
+      }
+      
+      if (imageUri) {
+        if (!imageUri.startsWith('http')) {
+          const filename = imageUri.split('/').pop() || 'product.jpg';
+          const match = /\.(\w+)$/.exec(filename);
+          const type = match ? `image/${match[1]}` : `image/jpeg`;
+          formData.append('image', { uri: imageUri, name: filename, type } as any);
+        } else {
+          formData.append('image_url', imageUri);
         }
       }
 
-      const productData = {
-        name,
-        category_id: parseInt(categoryId),
-        original_price: parseFloat(originalPrice),
-        discount_price: discountPrice ? parseFloat(discountPrice) : null,
-        stock_quantity: parseInt(stockQuantity),
-        description,
-        image_url: imageUri,
-        is_auction: isAuction,
-        expiry_time: parsedExpiry ? parsedExpiry.toISOString() : null,
-        deal_end_time: parsedExpiry ? parsedExpiry.toISOString() : null
-      };
-
-      const res = await axios.post(`${BASE_URL}/shops/${shopId}/products`, productData);
+      const responseData = await new Promise<any>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `${BASE_URL}/shops/${shopId}/products`);
+        xhr.onload = () => {
+          try {
+            const data = JSON.parse(xhr.responseText);
+            if (xhr.status >= 200 && xhr.status < 300) {
+              resolve(data);
+            } else {
+              reject(new Error(data.message || 'เซิร์ฟเวอร์แจ้งข้อผิดพลาด'));
+            }
+          } catch (e) {
+            reject(new Error('เซิร์ฟเวอร์ส่งข้อมูลกลับมาผิดพลาด'));
+          }
+        };
+        xhr.onerror = () => reject(new Error('เกิดข้อผิดพลาดในการเชื่อมต่อเครือข่าย'));
+        xhr.send(formData);
+      });
       
-      if (res.data?.success) {
+      if (responseData?.success) {
+        setName('');
+        setOriginalPrice('');
+        setDiscountPrice('');
+        setStockQuantity('');
+        setDescription('');
+        setImageUri('');
+        setIsAuction(false);
+        setCategoryId('1');
+        
         Alert.alert('สำเร็จ', 'เพิ่มสินค้าใหม่เรียบร้อยแล้ว', [
           { text: 'ตกลง', onPress: () => router.back() }
         ]);
+      } else {
+        Alert.alert('ผิดพลาด', responseData?.message || 'ไม่สามารถเพิ่มสินค้าได้');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Add product error:', error);
-      Alert.alert('ผิดพลาด', 'ไม่สามารถเพิ่มสินค้าได้');
+      Alert.alert('ผิดพลาด', `เกิดข้อผิดพลาด: ${error.message || 'ไม่สามารถเพิ่มสินค้าได้'}`);
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -88,16 +189,18 @@ export default function AddProductScreen() {
         {/* รูปภาพสินค้า */}
         <Text style={styles.sectionLabel}>รูปภาพสินค้า</Text>
         <View style={styles.imageSection}>
-          <TouchableOpacity style={styles.addImageBtn} activeOpacity={0.7}>
+          <TouchableOpacity style={styles.addImageBtn} activeOpacity={0.7} onPress={pickImage}>
             <MaterialIcons name="add-a-photo" size={28} color="#2e7a32" />
             <Text style={styles.addImageText}>เพิ่มรูปภาพ</Text>
           </TouchableOpacity>
-          <View style={styles.imagePreviewWrapper}>
-            <Image source={{ uri: imageUri }} style={styles.imagePreview} />
-            <TouchableOpacity style={styles.removeImageBtn}>
-              <MaterialIcons name="close" size={14} color="#ef4444" />
-            </TouchableOpacity>
-          </View>
+          {imageUri ? (
+            <View style={styles.imagePreviewWrapper}>
+              <Image source={{ uri: imageUri }} style={styles.imagePreview} />
+              <TouchableOpacity style={styles.removeImageBtn} onPress={() => setImageUri('')}>
+                <MaterialIcons name="close" size={14} color="#ef4444" />
+              </TouchableOpacity>
+            </View>
+          ) : null}
         </View>
 
         {/* ชื่อสินค้า */}
@@ -143,15 +246,19 @@ export default function AddProductScreen() {
         <View style={styles.rowGrid}>
           <View style={styles.colHalf}>
             <Text style={styles.inputLabel}>วันหมดอายุของดีล</Text>
-            <View style={styles.inputWithIcon}>
-              <TextInput
-                style={styles.inputField}
-                placeholder="mm/dd/yyyy"
-                value={expiryDate}
-                onChangeText={setExpiryDate}
-              />
+            <TouchableOpacity style={styles.inputWithIcon} onPress={() => setShowDatePicker(true)}>
+              <Text style={{ flex: 1, color: '#0f172a' }}>{expiryDate.toLocaleDateString('th-TH')}</Text>
               <MaterialIcons name="calendar-today" size={18} color="#94a3b8" />
-            </View>
+            </TouchableOpacity>
+            {showDatePicker && (
+              <DateTimePicker
+                value={expiryDate}
+                mode="date"
+                display="default"
+                onChange={onChangeDate}
+                minimumDate={new Date()}
+              />
+            )}
           </View>
           <View style={styles.colHalf}>
             <Text style={styles.inputLabel}>จำนวนสินค้าที่มี</Text>
@@ -167,9 +274,18 @@ export default function AddProductScreen() {
 
         {/* หมวดหมู่ */}
         <Text style={styles.inputLabel}>หมวดหมู่สินค้า</Text>
-        <View style={styles.pickerFake}>
-          <Text style={styles.pickerFakeText}>เลือกหมวดหมู่</Text>
-          <MaterialIcons name="keyboard-arrow-down" size={24} color="#94a3b8" />
+        <View style={[styles.input, { padding: 0, justifyContent: 'center' }]}>
+          <Picker
+            selectedValue={categoryId}
+            onValueChange={(itemValue) => setCategoryId(itemValue)}
+            style={{ width: '100%', color: '#0f172a' }}
+          >
+            <Picker.Item label="เบเกอรี่" value="1" />
+            <Picker.Item label="อาหารมื้อหลัก" value="2" />
+            <Picker.Item label="ผลไม้" value="3" />
+            <Picker.Item label="เครื่องดื่ม" value="4" />
+            <Picker.Item label="ขนมหวาน" value="5" />
+          </Picker>
         </View>
 
         {/* รายละเอียด */}
@@ -192,12 +308,18 @@ export default function AddProductScreen() {
           <View style={styles.notifyTextWrapper}>
             <Text style={styles.notifyTitle}>ส่งเข้าห้องประมูลด่วน</Text>
             <Text style={styles.notifyDesc}>เปิดให้ลูกค้าเสนอราคาประมูลสินค้า</Text>
+            {!isExpiringSoon() && (
+              <Text style={{ fontSize: 12, color: '#ef4444', marginTop: 4 }}>
+                (เฉพาะสินค้าที่จะหมดอายุภายใน 1 วันเท่านั้น)
+              </Text>
+            )}
           </View>
           <Switch
             trackColor={{ false: '#cbd5e1', true: '#d97706' }}
             thumbColor={'#fff'}
-            value={isAuction}
-            onValueChange={setIsAuction}
+            value={isAuction && isExpiringSoon()}
+            onValueChange={handleToggleAuction}
+            disabled={!isExpiringSoon()}
           />
         </View>
 
@@ -219,11 +341,19 @@ export default function AddProductScreen() {
         </View>
 
         {/* ปุ่มบันทึก */}
-        <TouchableOpacity style={styles.saveBtn} onPress={handleSave}>
-          <Text style={styles.saveBtnText}>บันทึกสินค้า</Text>
+        <TouchableOpacity 
+          style={[styles.saveBtn, isSaving && { opacity: 0.7 }]} 
+          onPress={handleSave}
+          disabled={isSaving}
+        >
+          {isSaving ? (
+            <Text style={styles.saveBtnText}>กำลังบันทึก...</Text>
+          ) : (
+            <Text style={styles.saveBtnText}>บันทึกสินค้า</Text>
+          )}
         </TouchableOpacity>
         
-        <TouchableOpacity style={styles.cancelBtn} onPress={() => router.back()}>
+        <TouchableOpacity style={styles.cancelBtn} onPress={() => router.back()} disabled={isSaving}>
           <Text style={styles.cancelBtnText}>ยกเลิก</Text>
         </TouchableOpacity>
 

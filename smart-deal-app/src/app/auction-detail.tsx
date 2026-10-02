@@ -120,12 +120,17 @@ export default function AuctionDetailScreen() {
   // ปิดการประมูลเมื่อหมดเวลา
   const handleAutoClose = async () => {
     try {
+      setAuction((prev: any) => ({ ...prev, auction_status: 'ended' }));
       const res = await axios.post(`${BASE_URL}/auctions/${auctionId}/close`);
       if (res.data.success) {
         setEndResult(res.data);
         setEndModalVisible(true);
       }
-    } catch (e) {}
+      fetchAuctionData();
+    } catch (e) {
+      console.error(e);
+      fetchAuctionData();
+    }
   };
 
   // ดำเนินการเสนอราคา (Quick Bid หรือ Custom Bid)
