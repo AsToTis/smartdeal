@@ -39,6 +39,11 @@ app.use((req, res, next) => {
       if (typeof newObj[key] === 'string' && (key.includes('image') || key.includes('url') || key.includes('avatar') || key.includes('qr') || key.includes('slip'))) {
         if (newObj[key].startsWith('/uploads')) {
           newObj[key] = baseUrl + newObj[key];
+        } else if (newObj[key].match(/^http:\/\/[0-9\.]+:\d+(\/uploads\/.*)/)) {
+          // Fix old IP hardcoded paths like http://172.20.10.2:5000/uploads/...
+          newObj[key] = newObj[key].replace(/^http:\/\/[0-9\.]+:\d+/, baseUrl);
+        } else if (newObj[key].match(/^http:\/\/localhost:\d+(\/uploads\/.*)/)) {
+          newObj[key] = newObj[key].replace(/^http:\/\/localhost:\d+/, baseUrl);
         }
       } else if (typeof newObj[key] === 'object' && newObj[key] !== null) {
         newObj[key] = fixUrls(newObj[key]);
