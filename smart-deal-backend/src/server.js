@@ -25,6 +25,35 @@ const transporter = nodemailer.createTransport({
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Middleware to globally fix relative image paths in API responses
+app.use((req, res, next) => {
+  const originalJson = res.json;
+  const baseUrl = 'https://smartdeal-backend-vhjo.onrender.com';
+  
+  const fixUrls = (obj) => {
+    if (!obj || typeof obj !== 'object') return obj;
+    if (Array.isArray(obj)) return obj.map(fixUrls);
+    const newObj = { ...obj };
+    for (const key in newObj) {
+      if (typeof newObj[key] === 'string' && (key.includes('image') || key.includes('url') || key.includes('avatar') || key.includes('qr') || key.includes('slip'))) {
+        if (newObj[key].startsWith('/uploads')) {
+          newObj[key] = baseUrl + newObj[key];
+        }
+      } else if (typeof newObj[key] === 'object' && newObj[key] !== null) {
+        newObj[key] = fixUrls(newObj[key]);
+      }
+    }
+    return newObj;
+  };
+
+  res.json = function (data) {
+    arguments[0] = fixUrls(data);
+    return originalJson.apply(this, arguments);
+  };
+  next();
+});
+
 app.use('/uploads', express.static(path.join(__dirname, '../../uploads')));
 
 // Ensure uploads directory exists
@@ -3900,7 +3929,7 @@ app.get('/api/admin/riders', async (req, res) => {
         r.real_name, 
         r.name,
         r.phone, 
-        r.license_plate, 
+        r.vehicle_plate as license_plate, 
         r.rider_status,
         r.status,
         r.rating AS average_rating,
