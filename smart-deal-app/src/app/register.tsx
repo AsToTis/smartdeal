@@ -37,7 +37,7 @@ export default function RegisterScreen() {
       const data = await response.json();
 
       if (response.ok) {
-        Alert.alert('สำเร็จ', 'ส่งรหัส OTP ไปยังอีเมลของคุณแล้ว');
+        Alert.alert('สำเร็จ', data.message || 'ส่งรหัส OTP ไปยังอีเมลของคุณแล้ว');
         setIsOtpStep(true);
       } else {
         Alert.alert('ไม่สำเร็จ', data.message || 'เกิดข้อผิดพลาด');

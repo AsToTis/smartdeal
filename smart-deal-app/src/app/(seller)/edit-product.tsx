@@ -91,9 +91,18 @@ export default function EditProductScreen() {
           setIsAuction(p.is_auction === 1);
             setInitialIsAuction(p.is_auction === 1);
           if (p.image_url) setImageUri(p.image_url);
-          if (p.expiry_time) {
-            const date = new Date(p.expiry_time);
-            setExpiryDate(date);
+          if (p.deal_end_time || p.expiry_time) {
+            // Use deal_end_time first because backend formats it correctly, expiry_time may be {}
+            const rawDate = p.deal_end_time || p.expiry_time;
+            const dateStr = typeof rawDate === 'string' ? rawDate.replace(' ', 'T') : rawDate;
+            const date = new Date(dateStr);
+            if (!isNaN(date.getTime())) {
+              setExpiryDate(date);
+            } else {
+              setExpiryDate(new Date());
+            }
+          } else {
+            setExpiryDate(new Date());
           }
         }
       } catch (error) {
@@ -263,12 +272,14 @@ export default function EditProductScreen() {
           <View style={styles.colHalf}>
             <Text style={styles.inputLabel}>วันหมดอายุของดีล</Text>
             <TouchableOpacity style={styles.inputWithIcon} onPress={() => setShowDatePicker(true)}>
-              <Text style={{ flex: 1, color: '#0f172a' }}>{expiryDate.toLocaleDateString('th-TH')}</Text>
+              <Text style={{ flex: 1, color: '#0f172a' }}>
+                {isNaN(expiryDate.getTime()) ? 'เลือกวันที่' : expiryDate.toLocaleDateString('th-TH')}
+              </Text>
               <MaterialIcons name="calendar-today" size={18} color="#94a3b8" />
             </TouchableOpacity>
             {showDatePicker && (
               <DateTimePicker
-                value={expiryDate}
+                value={isNaN(expiryDate.getTime()) ? new Date() : expiryDate}
                 mode="date"
                 display="default"
                 onChange={onChangeDate}
