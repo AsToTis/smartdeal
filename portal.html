@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Deal - App Download Center</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary-color: #2c3e50;
+            --expo-color: #000020;
+            --android-color: #3DDC84;
+            --bg-gradient: linear-gradient(135deg, #f6f8fd 0%, #f1f5f9 100%);
+            --card-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+            --card-shadow-hover: 0 15px 40px rgba(0, 0, 0, 0.12);
+        }
+        body {
+            font-family: 'Prompt', sans-serif;
+            background: var(--bg-gradient);
+            color: #333;
+            margin: 0;
+            padding: 50px 20px;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 50px;
+            max-width: 800px;
+        }
+        .header h1 {
+            color: var(--primary-color);
+            font-size: 2.8rem;
+            font-weight: 700;
+            margin-bottom: 15px;
+            letter-spacing: -0.5px;
+        }
+        .header p {
+            color: #64748b;
+            font-size: 1.15rem;
+            line-height: 1.6;
+        }
+        .cards-container {
+            display: flex;
+            gap: 35px;
+            justify-content: center;
+            flex-wrap: wrap;
+            max-width: 1000px;
+            width: 100%;
+            margin-bottom: 60px;
+        }
+        .app-card {
+            background: #ffffff;
+            border-radius: 24px;
+            padding: 40px 30px;
+            flex: 1;
+            min-width: 320px;
+            max-width: 420px;
+            box-shadow: var(--card-shadow);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            box-sizing: border-box;
+        }
+        .app-card:hover {
+            transform: translateY(-8px);
+            box-shadow: var(--card-shadow-hover);
+        }
+        .app-card h2 {
+            color: var(--primary-color);
+            font-size: 1.6rem;
+            margin: 0 0 10px 0;
+            text-align: center;
+        }
+        .app-card p.desc {
+            color: #64748b;
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 1rem;
+            line-height: 1.6;
+            min-height: 48px;
+        }
+        .qr-wrapper {
+            background: #fff;
+            padding: 15px;
+            border-radius: 20px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+            margin-bottom: 35px;
+            border: 1px solid #f1f5f9;
+        }
+        .qr-code {
+            width: 200px;
+            height: 200px;
+            display: block;
+        }
+        .btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            padding: 16px 20px;
+            border-radius: 14px;
+            text-decoration: none;
+            font-weight: 600;
+            margin-bottom: 15px;
+            transition: all 0.2s ease;
+            font-size: 1.05rem;
+            border: none;
+            cursor: pointer;
+            box-sizing: border-box;
+        }
+        .btn:hover {
+            transform: scale(1.03);
+        }
+        .btn:active {
+            transform: scale(0.98);
+        }
+        .btn-expo {
+            background-color: var(--expo-color);
+            color: white;
+            box-shadow: 0 4px 15px rgba(0, 0, 32, 0.2);
+        }
+        .btn-expo:hover {
+            background-color: #1a1a3a;
+        }
+        .btn-apk {
+            background-color: var(--android-color);
+            color: #000;
+            box-shadow: 0 4px 15px rgba(61, 220, 132, 0.3);
+        }
+        .btn-apk:hover {
+            background-color: #2ebd6f;
+            color: white;
+        }
+        .icon {
+            margin-right: 12px;
+            font-size: 1.3rem;
+        }
+        
+        .guide-section {
+            background: #ffffff;
+            border-radius: 24px;
+            padding: 45px;
+            max-width: 850px;
+            width: 100%;
+            box-shadow: var(--card-shadow);
+            box-sizing: border-box;
+        }
+        .guide-section h3 {
+            color: var(--primary-color);
+            font-size: 1.5rem;
+            margin-top: 0;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        .guide-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+        }
+        .guide-step {
+            background: #f8fafc;
+            padding: 30px;
+            border-radius: 20px;
+            border: 1px solid #e2e8f0;
+        }
+        .guide-step h4 {
+            color: var(--primary-color);
+            margin-top: 0;
+            margin-bottom: 15px;
+            font-size: 1.2rem;
+            display: flex;
+            align-items: center;
+        }
+        .guide-step p {
+            color: #475569;
+            font-size: 1rem;
+            line-height: 1.7;
+            margin: 0;
+        }
+        
+        @media (max-width: 768px) {
+            .cards-container {
+                flex-direction: column;
+                align-items: center;
+                gap: 25px;
+            }
+            .guide-grid {
+                grid-template-columns: 1fr;
+            }
+            .header h1 {
+                font-size: 2.2rem;
+            }
+            .app-card {
+                width: 100%;
+                min-width: unset;
+                padding: 35px 20px;
+            }
+            .guide-section {
+                padding: 30px 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h1>Smart Deal</h1>
+        <p>แพลตฟอร์มสั่งอาหารและดีลสุดคุ้ม ช่วยลดขยะอาหาร พร้อมจัดส่งถึงมือคุณ</p>
+    </div>
+
+    <div class="cards-container">
+        <!-- Smart Deal App Card -->
+        <div class="app-card">
+            <h2>Smart Deal</h2>
+            <p class="desc">สำหรับลูกค้าสั่งอาหาร และร้านค้าจัดการสินค้า<br>เลือกช้อปดีลสุดคุ้มได้ในแอปเดียว</p>
+            
+            <div class="qr-wrapper">
+                <img src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=exp://u.expo.dev/278922e5-c9fe-4303-8fbc-f169699c0b8e/group/fdf785c0-50b5-47fb-80f7-54566dcd1716" alt="Smart Deal QR Code" class="qr-code" />
+            </div>
+
+            <a href="exp://u.expo.dev/278922e5-c9fe-4303-8fbc-f169699c0b8e/group/fdf785c0-50b5-47fb-80f7-54566dcd1716" class="btn btn-expo">
+                <span class="icon">🍎</span> เปิดบน iOS / Expo Go
+            </a>
+            <a href="/244/smartdeal.apk" class="btn btn-apk">
+                <span class="icon">🤖</span> ดาวน์โหลด .APK สำหรับ Android
+            </a>
+        </div>
+
+        <!-- Rider App Card -->
+        <div class="app-card">
+            <h2>Smart Deal Rider</h2>
+            <p class="desc">แอปพลิเคชันสำหรับพาร์ทเนอร์คนขับ<br>รับงานส่งอาหาร สร้างรายได้พิเศษได้ทุกวัน</p>
+            
+            <div class="qr-wrapper">
+                <img src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=exp://u.expo.dev/8d20f4ca-8a45-4d08-8442-7d0ecf48efd6/group/6e6dcb32-3225-4224-8f2b-6c5abd1b78de" alt="Smart Deal Rider QR Code" class="qr-code" />
+            </div>
+
+            <a href="exp://u.expo.dev/8d20f4ca-8a45-4d08-8442-7d0ecf48efd6/group/6e6dcb32-3225-4224-8f2b-6c5abd1b78de" class="btn btn-expo">
+                <span class="icon">🍎</span> เปิดบน iOS / Expo Go
+            </a>
+            <a href="/244/smartdealrider.apk" class="btn btn-apk">
+                <span class="icon">🤖</span> ดาวน์โหลด .APK สำหรับ Android
+            </a>
+        </div>
+    </div>
+
+    <div class="guide-section">
+        <h3>📖 วิธีการติดตั้งแอปพลิเคชัน</h3>
+        <div class="guide-grid">
+            <div class="guide-step">
+                <h4>🍎 วิธีที่ 1: สำหรับ iOS (iPhone)</h4>
+                <p>1. ดาวน์โหลดแอป <b>Expo Go</b> จาก App Store<br>
+                   2. เปิดกล้องมือถือแล้วสแกน <b>QR Code</b> ด้านบน<br>
+                   3. แอปจะถูกโหลดและเปิดขึ้นมาใช้งานได้ทันที</p>
+            </div>
+            <div class="guide-step">
+                <h4>🤖 วิธีที่ 2: สำหรับ Android</h4>
+                <p>1. กดปุ่ม <b>"ดาวน์โหลด .APK"</b> เพื่อโหลดไฟล์ลงเครื่อง<br>
+                   2. เปิดไฟล์ที่ดาวน์โหลดเสร็จแล้ว กดยืนยัน <b>"Install" (ติดตั้ง)</b><br>
+                   3. เข้าใช้งานแอปผ่านไอคอนบนหน้าจอโทรศัพท์ได้เลย</p>
+            </div>
+        </div>
+    </div>
+
+</body>
+</html>
