@@ -1662,7 +1662,7 @@ app.put('/api/orders/:orderId/complete', async (req, res) => {
 app.get(['/api/auctions', '/api/auctions/active'], async (req, res) => {
   try {
     const [auctions] = await db.execute(`
-      SELECT a.*,
+      SELECT a.*, CAST(a.end_time AS CHAR) AS end_time_str,
         (SELECT COUNT(*) FROM auction_bids WHERE auction_id = a.auction_id) AS total_bids
       FROM auctions a
       WHERE a.auction_status = 'active'
@@ -1671,7 +1671,10 @@ app.get(['/api/auctions', '/api/auctions/active'], async (req, res) => {
 
     const now = new Date();
     const result = auctions.map(a => {
-      const endTime = new Date(a.end_time);
+      let endTimeStr = a.end_time_str;
+      if (!endTimeStr && a.end_time) { endTimeStr = typeof a.end_time === 'string' ? a.end_time : (JSON.stringify(a.end_time) === '{}' ? '' : a.end_time.toString()); }
+      let endTime = endTimeStr ? new Date(endTimeStr.replace(/ /g, 'T')) : new Date(0);
+      if (isNaN(endTime.getTime())) endTime = new Date(0);
       const diff = endTime - now;
       const hours = Math.floor(diff / (1000 * 60 * 60));
       const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
@@ -1720,7 +1723,7 @@ app.get('/api/auctions/:auctionId', async (req, res) => {
 
   try {
     let [rows] = await db.execute(`
-      SELECT a.*,
+      SELECT a.*, CAST(a.end_time AS CHAR) AS end_time_str,
         (SELECT COUNT(*) FROM auction_bids WHERE auction_id = a.auction_id) AS total_bids
       FROM auctions a
       WHERE a.auction_id = ?
@@ -1729,8 +1732,8 @@ app.get('/api/auctions/:auctionId', async (req, res) => {
     // หากไม่พบ ID ที่ระบุ ให้ fallback ไปยังห้องประมูลที่เปิดอยู่ หรือห้องแรกสุด
     if (rows.length === 0) {
       const [fallback] = await db.execute(`
-        SELECT a.*,
-          (SELECT COUNT(*) FROM auction_bids WHERE auction_id = a.auction_id) AS total_bids
+        SELECT a.*, CAST(a.end_time AS CHAR) AS end_time_str,
+        (SELECT COUNT(*) FROM auction_bids WHERE auction_id = a.auction_id) AS total_bids
         FROM auctions a
         WHERE a.auction_status = 'active'
         ORDER BY a.auction_id ASC
@@ -1741,8 +1744,8 @@ app.get('/api/auctions/:auctionId', async (req, res) => {
         targetId = fallback[0].auction_id;
       } else {
         const [anyRows] = await db.execute(`
-          SELECT a.*,
-            (SELECT COUNT(*) FROM auction_bids WHERE auction_id = a.auction_id) AS total_bids
+          SELECT a.*, CAST(a.end_time AS CHAR) AS end_time_str,
+        (SELECT COUNT(*) FROM auction_bids WHERE auction_id = a.auction_id) AS total_bids
           FROM auctions a
           ORDER BY a.auction_id ASC
           LIMIT 1
