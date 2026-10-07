@@ -81,7 +81,15 @@ export default function OrderTrackingScreen() {
   };
 
   const handleChat = () => {
-    Alert.alert('แชทกับคนขับ', 'ระบบแชทสดกำลังเปิดให้บริการกับไรเดอร์ของคุณ');
+    router.push({
+      pathname: '/order-chat',
+      params: {
+        order_id: orderId,
+        role: 'buyer',
+        user_id: tracking?.user_id || 2,
+        target: 'rider'
+      }
+    });
   };
 
   return (

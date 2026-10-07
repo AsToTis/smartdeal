@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
-  View, Text, StyleSheet, TextInput, TouchableOpacity, FlatList, KeyboardAvoidingView, Platform, ActivityIndicator 
+  View, Text, StyleSheet, TextInput, TouchableOpacity, FlatList, KeyboardAvoidingView, Platform, ActivityIndicator, Image 
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons, Ionicons } from '@expo/vector-icons';
@@ -70,16 +70,38 @@ export default function OrderChatScreen() {
   };
 
   const renderMessage = ({ item }: { item: any }) => {
-    // Determine if message is from self
     const isSelf = item.sender_type === role;
+    const isRider = item.sender_type === 'rider';
+    const isSeller = item.sender_type === 'seller';
+    const isBuyer = item.sender_type === 'buyer';
+
+    const roleTag = isRider ? '🛵 ไรเดอร์' : isSeller ? '🏪 ร้านค้า' : '👤 ลูกค้า';
 
     return (
       <View style={[styles.messageRow, isSelf ? styles.messageRowSelf : styles.messageRowOther]}>
-        <View style={[styles.messageBubble, isSelf ? styles.messageBubbleSelf : styles.messageBubbleOther]}>
-          <Text style={[styles.messageText, isSelf ? styles.messageTextSelf : styles.messageTextOther]}>
-            {item.message}
+        <View style={[
+          styles.messageBubble, 
+          isSelf ? styles.messageBubbleSelf : isRider ? styles.messageBubbleRider : styles.messageBubbleOther
+        ]}>
+          <Text style={[styles.senderRoleText, isSelf ? styles.senderRoleSelf : isRider ? styles.senderRoleRider : styles.senderRoleOther]}>
+            {isSelf ? 'คุณ' : roleTag}
           </Text>
-          <Text style={[styles.messageTime, isSelf ? styles.messageTimeSelf : styles.messageTimeOther]}>
+
+          {item.image_url && (
+            <Image 
+              source={{ uri: item.image_url }} 
+              style={styles.attachedImage} 
+              resizeMode="cover" 
+            />
+          )}
+
+          {!!item.message && (
+            <Text style={[styles.messageText, isSelf ? styles.messageTextSelf : isRider ? styles.messageTextRider : styles.messageTextOther]}>
+              {item.message}
+            </Text>
+          )}
+
+          <Text style={[styles.messageTime, isSelf ? styles.messageTimeSelf : isRider ? styles.messageTimeRider : styles.messageTimeOther]}>
             {new Date(item.created_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })}
           </Text>
         </View>
@@ -176,6 +198,28 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 20,
+  },
+  messageBubbleRider: {
+    backgroundColor: '#ecfdf5',
+    borderWidth: 1.5,
+    borderColor: '#a7f3d0',
+    borderBottomLeftRadius: 4,
+  },
+  senderRoleText: {
+    fontSize: 11,
+    fontWeight: '800',
+    marginBottom: 2,
+  },
+  senderRoleSelf: { color: '#bbf7d0' },
+  senderRoleRider: { color: '#059669' },
+  senderRoleOther: { color: '#0284c7' },
+  messageTextRider: { color: '#064e3b', fontWeight: '500' },
+  messageTimeRider: { color: '#059669', fontSize: 10, alignSelf: 'flex-end', marginTop: 4 },
+  attachedImage: {
+    width: 200,
+    height: 150,
+    borderRadius: 12,
+    marginVertical: 4,
   },
   messageBubbleSelf: {
     backgroundColor: '#16a34a',

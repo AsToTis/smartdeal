@@ -185,6 +185,38 @@ const initOrderMessagesTable = async () => {
 };
 initOrderMessagesTable();
 
+// Initialize & update order_messages and deliveries columns
+const initExtendedChatAndProofTables = async () => {
+  try {
+    // 1. order_messages table
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS order_messages (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        order_id INT NOT NULL,
+        sender_id INT NOT NULL,
+        sender_type VARCHAR(50) NOT NULL,
+        receiver_type VARCHAR(50) DEFAULT 'all',
+        message TEXT NULL,
+        image_url LONGTEXT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    try { await db.execute('ALTER TABLE order_messages MODIFY sender_type VARCHAR(50)'); } catch(e) {}
+    try { await db.execute('ALTER TABLE order_messages ADD COLUMN receiver_type VARCHAR(50) DEFAULT "all"'); } catch(e) {}
+    try { await db.execute('ALTER TABLE order_messages ADD COLUMN image_url LONGTEXT NULL'); } catch(e) {}
+
+    // 2. deliveries table proof columns
+    try { await db.execute('ALTER TABLE deliveries ADD COLUMN pickup_proof_image LONGTEXT NULL'); } catch(e) {}
+    try { await db.execute('ALTER TABLE deliveries MODIFY proof_image LONGTEXT NULL'); } catch(e) {}
+    try { await db.execute('ALTER TABLE deliveries ADD COLUMN pickup_at DATETIME NULL'); } catch(e) {}
+    console.log('✅ Extended chat and proof tables initialized successfully');
+  } catch (err) {
+    console.error('Table init error:', err.message);
+  }
+};
+initExtendedChatAndProofTables();
+
+
 const initComplaintsTable = async () => {
   try {
     await db.execute(`
@@ -4175,6 +4207,47 @@ app.put('/api/rider/deliveries/:order_id/status', async (req, res) => {
     if (connection) await connection.rollback();
     console.error('Update delivery status error:', error);
     res.status(500).json({ success: false, message: 'เกิดข้อผิดพลาดเซิร์ฟเวอร์' });
+  } finally {
+    if (connection) connection.release();
+  }
+});
+
+
+// 4.1 Proof of Pickup (Rider receives food from Shop with photo verification)
+app.post('/api/rider/deliveries/:order_id/pickup', upload.single('pickup_image'), async (req, res) => {
+  const orderId = req.params.order_id;
+  const { rider_id, pickup_proof_image } = req.body;
+  const uploadedImage = req.file ? `/uploads/${req.file.filename}` : (pickup_proof_image || '');
+
+  let connection;
+  try {
+    connection = await db.getConnection();
+    await connection.beginTransaction();
+
+    await connection.query(
+      'UPDATE deliveries SET status = "delivering", pickup_proof_image = ?, pickup_at = NOW() WHERE order_id = ? AND rider_id = ?',
+      [uploadedImage, orderId, rider_id]
+    );
+
+    await connection.query(
+      'UPDATE orders SET order_status = "delivering" WHERE order_id = ?',
+      [orderId]
+    );
+
+    // Auto post system chat message notifying shop and buyer that food is picked up
+    try {
+      await connection.query(
+        'INSERT INTO order_messages (order_id, sender_id, sender_type, receiver_type, message, image_url) VALUES (?, ?, "rider", "all", ?, ?)',
+        [orderId, rider_id, '🛵 [ยืนยันรับสินค้าแล้ว] ไรเดอร์ได้รับสินค้าจากร้านค้าเรียบร้อยแล้ว กำลังเดินทางไปส่งครับ', uploadedImage || null]
+      );
+    } catch(e) {}
+
+    await connection.commit();
+    res.json({ success: true, message: 'ยืนยันรับสินค้าเรียบร้อย กำลังเริ่มจัดส่ง' });
+  } catch (error) {
+    if (connection) await connection.rollback();
+    console.error('Pickup delivery error:', error);
+    res.status(500).json({ success: false, message: 'เกิดข้อผิดพลาดในการบันทึกการรับสินค้า' });
   } finally {
     if (connection) connection.release();
   }
