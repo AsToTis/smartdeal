@@ -48,6 +48,7 @@ export default function CheckoutScreen() {
   const [couponCodeInput, setCouponCodeInput] = useState('');
   const [showCouponModal, setShowCouponModal] = useState(false);
   const [loadingCoupons, setLoadingCoupons] = useState(false);
+  const [systemFare, setSystemFare] = useState({ baseFee: 35, perKmFee: 8 });
 
   // ดึงข้อมูลที่อยู่และคูปองจริงเมื่อเปิดหน้า
   useFocusEffect(
@@ -88,11 +89,26 @@ export default function CheckoutScreen() {
 
       // ดึงคูปองสะสมของผู้ใช้
       await loadUserCoupons(userId);
+      await fetchSystemFareSettings();
     } catch (error) {
       console.log('Error initializing checkout data:', error);
     } finally {
       setLoadingAddress(false);
     }
+  };
+
+  const fetchSystemFareSettings = async () => {
+    try {
+      const res = await axios.get(`${BASE_URL}/admin/settings`);
+      if (res.data?.success && Array.isArray(res.data.settings)) {
+        const b = res.data.settings.find((s: any) => s.setting_key === 'base_delivery_fee');
+        const p = res.data.settings.find((s: any) => s.setting_key === 'per_km_fee');
+        setSystemFare({
+          baseFee: parseFloat(b?.setting_value) || 35,
+          perKmFee: parseFloat(p?.setting_value) || 8,
+        });
+      }
+    } catch (e) {}
   };
 
   const loadUserCoupons = async (userId: number) => {
@@ -142,10 +158,8 @@ export default function CheckoutScreen() {
   }, 0);
 
   // โครงสร้างค่าจัดส่งตาม System Control Panel (เริ่มต้น ฿35 + ฿8/กม. ระยะทางประมาณ 2.5 กม. = ฿55.00)
-  const baseDeliveryFare = 35;
-  const perKmFare = 8;
   const estimatedDistanceKm = 2.5;
-  const calculatedDeliveryFare = Math.round(baseDeliveryFare + (estimatedDistanceKm * perKmFare));
+  const calculatedDeliveryFare = Math.round(systemFare.baseFee + (estimatedDistanceKm * systemFare.perKmFee));
   const deliveryFee = deliveryMethod === 'delivery' ? calculatedDeliveryFare : 0;
 
   // คำนวณส่วนลดตามคูปองที่เลือก
