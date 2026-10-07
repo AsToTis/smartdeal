@@ -3848,23 +3848,18 @@ const PORT = process.env.PORT || 5000;
 // ==========================================
 app.get('/api/orders/:order_id/messages', async (req, res) => {
   const orderId = req.params.order_id;
-  const target = req.query.target || req.query.channel; // 'seller' | 'rider' | 'buyer'
-  const role = req.query.role; // 'seller' | 'rider' | 'buyer'
+  const target = req.query.target || req.query.channel; // 'seller' or 'buyer'
   try {
     let query = 'SELECT id, order_id, sender_id, sender_type, receiver_type, message, image_url, created_at FROM order_messages WHERE order_id = ?';
     const params = [orderId];
 
-    // Channel 3: ร้านค้า ↔ ไรเดอร์ (Shop <-> Rider)
-    if ((role === 'seller' && target === 'rider') || (role === 'rider' && target === 'seller')) {
-      query += ' AND ((sender_type = "seller" AND receiver_type = "rider") OR (sender_type = "rider" AND receiver_type IN ("seller", "rider")))';
-    } 
-    // Channel 2: ลูกค้า ↔ ไรเดอร์ (Customer <-> Rider)
-    else if ((role === 'buyer' && target === 'rider') || (role === 'rider' && target === 'buyer') || target === 'rider') {
-      query += ' AND ((sender_type = "buyer" AND receiver_type = "rider") OR (sender_type = "rider" AND receiver_type IN ("buyer", "rider", "all")))';
-    } 
-    // Channel 1: ลูกค้า ↔ ร้านค้า (Customer <-> Shop)
-    else {
-      query += ' AND ((sender_type = "buyer" AND receiver_type = "seller") OR (sender_type = "seller" AND receiver_type IN ("buyer", "seller", "all")))';
+    // แยกช่องทางแชทอย่างเด็ดขาด 100% ไม่ปะปนกัน
+    if (target === 'seller') {
+      // ช่องทางร้านค้า ↔ ไรเดอร์ (แสดงเฉพาะข้อความระหว่างร้านค้ากับไรเดอร์เท่านั้น)
+      query += ' AND ((sender_type = "seller" AND receiver_type != "buyer") OR (sender_type = "rider" AND receiver_type = "seller") OR (receiver_type = "seller" AND sender_type != "buyer"))';
+    } else if (target === 'buyer' || target === 'rider') {
+      // ช่องทางลูกค้า ↔ ไรเดอร์ (แสดงเฉพาะข้อความระหว่างลูกค้ากับไรเดอร์เท่านั้น)
+      query += ' AND ((sender_type = "buyer" AND receiver_type != "seller") OR (sender_type = "rider" AND receiver_type IN ("buyer", "rider", "all")) OR (receiver_type = "buyer" AND sender_type != "seller"))';
     }
 
     query += ' ORDER BY created_at ASC';
@@ -4346,6 +4341,22 @@ app.post('/api/rider/deliveries/:order_id/pickup', upload.single('pickup_image')
     connection = await db.getConnection();
     await connection.beginTransaction();
 
+    // 🔒 ตรวจสอบว่าร้านค้ากดยืนยันพร้อมส่งสินค้าแล้วหรือยัง (Step 1 -> Step 2)
+    const [orderRows] = await connection.query('SELECT order_status FROM orders WHERE order_id = ? FOR UPDATE', [orderId]);
+    if (orderRows.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({ success: false, message: 'ไม่พบข้อมูลคำสั่งซื้อ' });
+    }
+
+    const currentOrderStatus = orderRows[0].order_status;
+    if (currentOrderStatus !== 'ready' && currentOrderStatus !== 'delivering') {
+      await connection.rollback();
+      return res.status(400).json({ 
+        success: false, 
+        message: 'ร้านค้ายังเตรียมสินค้าไม่เสร็จ หรือยังไม่ได้กดยืนยันพร้อมส่งสินค้า กรุณารอสักครู่' 
+      });
+    }
+
     await connection.query(
       'UPDATE deliveries SET status = "delivering", pickup_proof_image = ?, pickup_at = NOW() WHERE order_id = ? AND rider_id = ?',
       [uploadedImage, orderId, rider_id]
@@ -4362,20 +4373,22 @@ app.post('/api/rider/deliveries/:order_id/pickup', upload.single('pickup_image')
         'INSERT INTO order_messages (order_id, sender_id, sender_type, receiver_type, message, image_url) VALUES (?, ?, "rider", "buyer", ?, ?)',
         [orderId, rider_id, '🛵 [ยืนยันรับสินค้าแล้ว] ไรเดอร์ได้รับสินค้าจากร้านค้าเรียบร้อยแล้ว กำลังเดินทางไปส่งให้คุณลูกค้าครับ', uploadedImage || null]
       );
-    } catch(e) {}
+    } catch(e) {
+      console.error('Error auto-posting pickup proof to chat:', e);
+    }
 
     await connection.commit();
-    res.json({ success: true, message: 'ยืนยันรับสินค้าเรียบร้อย กำลังเริ่มจัดส่ง' });
+    res.json({ success: true, message: 'ยืนยันการรับสินค้าสำเร็จ' });
   } catch (error) {
     if (connection) await connection.rollback();
-    console.error('Pickup delivery error:', error);
-    res.status(500).json({ success: false, message: 'เกิดข้อผิดพลาดในการบันทึกการรับสินค้า' });
+    console.error('Pickup error:', error);
+    res.status(500).json({ success: false, message: 'เกิดข้อผิดพลาดเซิร์ฟเวอร์' });
   } finally {
     if (connection) connection.release();
   }
 });
 
-// 5. Proof & Confirm (Complete Delivery)
+// 6. Rider Complete & Confirm (Complete Delivery)
 app.post('/api/rider/deliveries/:order_id/complete', upload.single('proof_image'), async (req, res) => {
   const orderId = req.params.order_id;
   const { rider_id, proof_image_base64 } = req.body;
