@@ -3,6 +3,8 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Switch, Image, Al
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import MapView, { Marker } from 'react-native-maps';
+import DateTimePicker from '@react-native-community/datetimepicker';
+import * as Location from 'expo-location';
 import { router, useFocusEffect } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
@@ -16,6 +18,8 @@ export default function SellerSettingsScreen() {
   const [ownerName, setOwnerName] = useState('เจ้าของร้าน');
   const [userId, setUserId] = useState<string | null>(null);
   const [mapRegion, setMapRegion] = useState({ latitude: 13.7563, longitude: 100.5018, latitudeDelta: 0.01, longitudeDelta: 0.01 });
+  const [showTimePicker, setShowTimePicker] = useState(false);
+  const [timeMode, setTimeMode] = useState<'opening' | 'closing'>('opening');
   const [tempLocation, setTempLocation] = useState({ latitude: 13.7563, longitude: 100.5018 });
   const [isLoading, setIsLoading] = useState(false);
 
@@ -59,6 +63,29 @@ export default function SellerSettingsScreen() {
     } catch (error) {
       console.error('Error saving shop data:', error);
       Alert.alert('ข้อผิดพลาด', 'เกิดข้อผิดพลาดในการเชื่อมต่อ');
+    }
+  };
+
+  
+  const getCurrentLocation = async () => {
+    try {
+      let { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('แจ้งเตือน', 'กรุณาอนุญาตการเข้าถึงตำแหน่งที่ตั้ง (GPS)');
+        return;
+      }
+      let location = await Location.getCurrentPositionAsync({});
+      const region = {
+        latitude: location.coords.latitude,
+        longitude: location.coords.longitude,
+        latitudeDelta: 0.005,
+        longitudeDelta: 0.005
+      };
+      setMapRegion(region);
+      setTempLocation({ latitude: region.latitude, longitude: region.longitude });
+    } catch(err) {
+      console.log(err);
+      Alert.alert('ข้อผิดพลาด', 'ไม่สามารถดึงตำแหน่งปัจจุบันได้');
     }
   };
 
@@ -224,16 +251,27 @@ export default function SellerSettingsScreen() {
           </TouchableOpacity>
           <View style={styles.divider} />
 
-          <TouchableOpacity style={styles.settingItem} activeOpacity={0.7} onPress={() => openEdit('opening_hours', 'เวลาเปิด-ปิด')}>
-            <View style={[styles.iconCircle, { backgroundColor: '#f1f5f9' }]}>
-              <MaterialIcons name="access-time" size={20} color="#2e7a32" />
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', padding: 15, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <View style={[styles.iconCircle, { backgroundColor: '#f1f5f9', marginRight: 15 }]}>
+                <MaterialIcons name="access-time" size={20} color="#2e7a32" />
+              </View>
+              <View>
+                <Text style={styles.settingLabel}>เวลาเปิด</Text>
+                <TouchableOpacity onPress={() => { setTimeMode('opening'); setShowTimePicker(true); }}>
+                  <Text style={[styles.settingValue, { color: '#3b82f6', fontWeight: 'bold' }]}>{formData.opening_time ? formData.opening_time.substring(0,5) : '08:00'}</Text>
+                </TouchableOpacity>
+              </View>
             </View>
-            <View style={styles.settingInfo}>
-              <Text style={styles.settingLabel}>เวลาเปิด-ปิด</Text>
-              <Text style={styles.settingValue}>{formData.opening_hours || 'ทุกวัน 08:00 - 20:00'}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <View>
+                <Text style={styles.settingLabel}>เวลาปิด</Text>
+                <TouchableOpacity onPress={() => { setTimeMode('closing'); setShowTimePicker(true); }}>
+                  <Text style={[styles.settingValue, { color: '#ef4444', fontWeight: 'bold' }]}>{formData.closing_time ? formData.closing_time.substring(0,5) : '20:00'}</Text>
+                </TouchableOpacity>
+              </View>
             </View>
-            <MaterialIcons name="chevron-right" size={24} color="#cbd5e1" />
-          </TouchableOpacity>
+          </View>
         </View>
 
         {/* การเงินและการตั้งค่า */}
@@ -330,6 +368,13 @@ export default function SellerSettingsScreen() {
                 >
                   <Marker coordinate={tempLocation} />
                 </MapView>
+                <TouchableOpacity 
+                  style={{ position: 'absolute', bottom: 20, right: 10, backgroundColor: '#fff', padding: 10, borderRadius: 25, elevation: 3, shadowColor: '#000', shadowOffset: {width: 0, height: 2}, shadowOpacity: 0.2 }}
+                  onPress={getCurrentLocation}
+                >
+                  <MaterialIcons name="my-location" size={24} color="#3b82f6" />
+                </TouchableOpacity>
+
                 <View style={{ position: 'absolute', top: 10, left: 10, backgroundColor: 'rgba(255,255,255,0.8)', padding: 4, borderRadius: 4 }}>
                   <Text style={{ fontSize: 10 }}>เลื่อนแผนที่เพื่อปักหมุด</Text>
                 </View>
@@ -353,6 +398,64 @@ export default function SellerSettingsScreen() {
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+    
+      
+      {showTimePicker && Platform.OS === 'android' && (
+        <DateTimePicker
+          value={(() => {
+            const timeStr = timeMode === 'opening' ? (formData.opening_time || '08:00') : (formData.closing_time || '20:00');
+            const d = new Date();
+            d.setHours(parseInt(timeStr.split(':')[0]));
+            d.setMinutes(parseInt(timeStr.split(':')[1] || '0'));
+            return d;
+          })()}
+          mode="time"
+          is24Hour={true}
+          display="default"
+          onChange={(event, selectedDate) => {
+            setShowTimePicker(false);
+            if (event.type === 'set' && selectedDate) {
+              const h = selectedDate.getHours().toString().padStart(2, '0');
+              const m = selectedDate.getMinutes().toString().padStart(2, '0');
+              setFormData(prev => ({ ...prev, [timeMode === 'opening' ? 'opening_time' : 'closing_time']: `${h}:${m}:00` }));
+            }
+          }}
+        />
+      )}
+
+      {showTimePicker && Platform.OS === 'ios' && (
+        <Modal transparent animationType="slide">
+          <View style={{flex:1, justifyContent:'flex-end', backgroundColor:'rgba(0,0,0,0.5)'}}>
+            <View style={{backgroundColor:'white', padding: 20, paddingBottom: 40}}>
+              <View style={{flexDirection:'row', justifyContent:'flex-end', marginBottom: 10}}>
+                <TouchableOpacity onPress={() => setShowTimePicker(false)}>
+                  <Text style={{color:'#16a34a', fontWeight:'bold', fontSize: 18}}>เสร็จสิ้น</Text>
+                </TouchableOpacity>
+              </View>
+              <DateTimePicker
+                value={(() => {
+                  const timeStr = timeMode === 'opening' ? (formData.opening_time || '08:00') : (formData.closing_time || '20:00');
+                  const d = new Date();
+                  d.setHours(parseInt(timeStr.split(':')[0]));
+                  d.setMinutes(parseInt(timeStr.split(':')[1] || '0'));
+                  return d;
+                })()}
+                mode="time"
+                display="spinner"
+                onChange={(event, selectedDate) => {
+                  if (selectedDate) {
+                    const h = selectedDate.getHours().toString().padStart(2, '0');
+                    const m = selectedDate.getMinutes().toString().padStart(2, '0');
+                    setFormData(prev => ({ ...prev, [timeMode === 'opening' ? 'opening_time' : 'closing_time']: `${h}:${m}:00` }));
+                  }
+                }}
+              />
+            </View>
+          </View>
+        </Modal>
+      )}
+
 
     </SafeAreaView>
   );

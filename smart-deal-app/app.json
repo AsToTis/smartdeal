@@ -42,6 +42,19 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "278922e5-c9fe-4303-8fbc-f169699c0b8e"
+      }
+    },
+    "owner": "astotis",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/278922e5-c9fe-4303-8fbc-f169699c0b8e"
     }
   }
 }

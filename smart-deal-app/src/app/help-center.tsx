@@ -2,13 +2,14 @@ import React, { useState } from 'react';
 import { StyleSheet, Text, View, ScrollView, TouchableOpacity, TextInput, Alert, Image, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons, Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { BASE_URL } from '../constants/api';
 
 export default function HelpCenterScreen() {
+  const { order_id } = useLocalSearchParams();
   const [subject, setSubject] = useState('');
   const [message, setMessage] = useState('');
   const [imageUri, setImageUri] = useState<string | null>(null);
@@ -40,6 +41,9 @@ export default function HelpCenterScreen() {
 
       const formData = new FormData();
       formData.append('user_id', String(userId));
+      if (order_id) {
+        formData.append('order_id', String(order_id));
+      }
       formData.append('subject', subject.trim());
       formData.append('message', message.trim());
       
@@ -87,7 +91,9 @@ export default function HelpCenterScreen() {
 
         <ScrollView style={styles.content}>
           <Text style={styles.description}>
-            หากคุณพบปัญหาในการใช้งานแอปพลิเคชัน ร้านค้า สินค้า หรือบริการ สามารถแจ้งให้เราทราบผ่านแบบฟอร์มด้านล่างนี้
+            {order_id 
+              ? `แจ้งปัญหาสำหรับคำสั่งซื้อ #${order_id}\nโปรดระบุรายละเอียดปัญหาที่พบ เพื่อให้เราตรวจสอบและช่วยเหลือคุณ`
+              : 'หากคุณพบปัญหาในการใช้งานแอปพลิเคชัน ร้านค้า สินค้า หรือบริการ สามารถแจ้งให้เราทราบผ่านแบบฟอร์มด้านล่างนี้'}
           </Text>
 
           <Text style={styles.label}>หัวข้อร้องเรียน <Text style={{ color: '#ef4444' }}>*</Text></Text>

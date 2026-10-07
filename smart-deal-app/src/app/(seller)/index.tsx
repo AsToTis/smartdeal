@@ -142,12 +142,16 @@ const [loading, setLoading] = useState(true);
               
               <View style={styles.dummyChartSpace}>
                 {/* Dummy Chart Bars */}
-                {['จ.', 'อ.', 'พ.', 'พฤ.', 'ศ.', 'ส.', 'อา.'].map((day, i) => (
-                  <View key={i} style={styles.chartCol}>
-                    <View style={[styles.chartBar, { height: Math.random() * 80 + 20, backgroundColor: i === 3 ? '#16a34a' : '#e2e8f0' }]} />
-                    <Text style={[styles.chartDayText, i === 3 && { fontWeight: 'bold', color: '#0f172a' }]}>{day}</Text>
-                  </View>
-                ))}
+                {['จ.', 'อ.', 'พ.', 'พฤ.', 'ศ.', 'ส.', 'อา.'].map((day, i) => {
+                  const todayIndex = (new Date().getDay() + 6) % 7;
+                  const isToday = i === todayIndex;
+                  return (
+                    <View key={i} style={styles.chartCol}>
+                      <View style={[styles.chartBar, { height: isToday ? 80 : Math.random() * 50 + 20, backgroundColor: isToday ? '#16a34a' : '#e2e8f0' }]} />
+                      <Text style={[styles.chartDayText, isToday && { fontWeight: 'bold', color: '#0f172a' }]}>{day}</Text>
+                    </View>
+                  );
+                })}
               </View>
 
               <View style={styles.chartFooter}>

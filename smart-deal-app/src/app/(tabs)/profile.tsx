@@ -174,22 +174,27 @@ export default function ProfileScreen() {
 
       if (editAvatar && editAvatar.startsWith('file://')) {
         try {
-          // Fetch the local file as a Blob
-          const fileRes = await fetch(editAvatar);
-          const blob = await fileRes.blob();
-          
           const formData = new FormData();
-          formData.append('avatar', blob, 'avatar.jpg');
+            formData.append('avatar', {
+              uri: editAvatar,
+              name: 'avatar.jpg',
+              type: 'image/jpeg'
+            } as any);
 
-          const uploadRes = await fetch(`${BASE_URL}/users/${userId}/avatar`, {
-            method: 'POST',
-            body: formData,
-            headers: {
-              'Accept': 'application/json',
-            }
+                    const uploadData = await new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', `${BASE_URL}/users/${userId}/avatar`);
+            xhr.onload = () => {
+              try {
+                const data = JSON.parse(xhr.responseText);
+                resolve(data);
+              } catch (e) {
+                reject(e);
+              }
+            };
+            xhr.onerror = () => reject(new Error('Network error'));
+            xhr.send(formData);
           });
-          
-          const uploadData = await uploadRes.json();
           if (uploadData?.success) {
             finalAvatarUrl = uploadData.avatar_url;
           } else {

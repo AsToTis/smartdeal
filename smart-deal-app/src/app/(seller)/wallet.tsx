@@ -50,7 +50,9 @@ export default function SellerWalletScreen() {
         
         // Format history
         const formattedHistory = (res.data.history || []).map((item: any, index: number) => {
-           let dateObj = new Date(item.created_at);
+           let safeDateString = typeof item.created_at === 'string' ? item.created_at.replace(' ', 'T') : item.created_at;
+           if (typeof safeDateString === 'string' && !safeDateString.includes('Z')) safeDateString += 'Z';
+           let dateObj = new Date(safeDateString);
            let formattedDate = `${dateObj.getDate()} ${['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'][dateObj.getMonth()]} ${dateObj.getFullYear()} • ${dateObj.getHours().toString().padStart(2,'0')}:${dateObj.getMinutes().toString().padStart(2,'0')}`;
            return {
              id: item.id || index,
