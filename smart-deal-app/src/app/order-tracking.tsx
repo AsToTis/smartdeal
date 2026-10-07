@@ -56,6 +56,34 @@ export default function OrderTrackingScreen() {
     return () => clearInterval(interval);
   }, [tracking]);
 
+  const [confirming, setConfirming] = useState(false);
+
+  const handleConfirmReceipt = async () => {
+    try {
+      setConfirming(true);
+      const res = await axios.put(`${BASE_URL}/orders/${orderId}/complete`);
+      if (res.data?.success) {
+        Alert.alert('ยินดีด้วย 🎉', 'คุณได้ยืนยันการรับสินค้าเรียบร้อยแล้ว ขอบคุณที่ใช้บริการ Smart Deal ครับ', [
+          { text: 'ให้คะแนนความพึงพอใจ', onPress: () => router.push({
+            pathname: '/review',
+            params: {
+              order_id: orderId,
+              shop_name: tracking?.shop_name,
+              product_name: tracking?.items?.[0]?.product_name || 'อาหารจานโปรด'
+            }
+          }) }
+        ]);
+        fetchTrackingData();
+      } else {
+        throw new Error(res.data?.message || 'ยืนยันไม่สำเร็จ');
+      }
+    } catch (e: any) {
+      Alert.alert('ผิดพลาด', e.response?.data?.message || e.message || 'ไม่สามารถยืนยันรับสินค้าได้');
+    } finally {
+      setConfirming(false);
+    }
+  };
+
   const fetchTrackingData = async () => {
     try {
       setLoading(true);
@@ -235,6 +263,69 @@ export default function OrderTrackingScreen() {
               })}
             </View>
           </View>
+
+          
+          {/* Customer Confirmation Card when Delivered */}
+          {((tracking?.order_status === 'delivered' || tracking?.order_status === 'completed' || tracking?.proof_image)) && (
+            <View style={{
+              backgroundColor: '#ffffff',
+              borderRadius: 20,
+              padding: 18,
+              marginBottom: 16,
+              borderWidth: 2,
+              borderColor: tracking?.order_status === 'completed' ? '#86efac' : '#16a34a',
+              shadowColor: '#16a34a',
+              shadowOffset: { width: 0, height: 3 },
+              shadowOpacity: 0.1,
+              shadowRadius: 8,
+              elevation: 4
+            }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10, gap: 8 }}>
+                <MaterialIcons name="verified" size={22} color="#16a34a" />
+                <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#0f172a' }}>
+                  {tracking?.order_status === 'completed' ? 'คำสั่งซื้อเสร็จสมบูรณ์' : 'ไรเดอร์ส่งมอบสินค้าเรียบร้อยแล้ว'}
+                </Text>
+              </View>
+
+              {tracking?.proof_image && (
+                <View style={{ marginBottom: 14 }}>
+                  <Text style={{ fontSize: 12, color: '#64748b', marginBottom: 6 }}>หลักฐานรูปถ่ายส่งมอบสินค้าจากไรเดอร์:</Text>
+                  <Image 
+                    source={{ uri: tracking.proof_image.startsWith('http') || tracking.proof_image.startsWith('data:') ? tracking.proof_image : `https://smartdeal-backend-vhjo.onrender.com${tracking.proof_image}` }} 
+                    style={{ width: '100%', height: 180, borderRadius: 14 }} 
+                    resizeMode="cover"
+                  />
+                </View>
+              )}
+
+              {tracking?.order_status === 'delivered' && (
+                <TouchableOpacity
+                  disabled={confirming}
+                  style={{
+                    backgroundColor: '#16a34a',
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    paddingVertical: 14,
+                    borderRadius: 14,
+                    gap: 8
+                  }}
+                  onPress={handleConfirmReceipt}
+                >
+                  {confirming ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <>
+                      <MaterialIcons name="check-circle" size={20} color="#fff" />
+                      <Text style={{ color: '#fff', fontSize: 15, fontWeight: 'bold' }}>
+                        ฉันได้รับสินค้าเรียบร้อยแล้ว (ยืนยันรับสินค้า)
+                      </Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
 
           {/* 4. Rider Profile Card */}
           <View style={styles.riderCard}>

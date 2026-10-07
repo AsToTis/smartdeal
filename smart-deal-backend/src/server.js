@@ -1309,11 +1309,21 @@ app.get('/api/orders/:id/tracking', async (req, res) => {
     const [orders] = await db.execute(`
       SELECT o.*, DATE_FORMAT(o.created_at, '%Y-%m-%dT%H:%i:%s') AS created_at, 
              s.latitude as shop_lat, s.longitude as shop_lng, s.name as shop_name, s.address as shop_address,
-             r.name as rider_name, r.phone as rider_phone, r.vehicle_plate, r.rating as rider_rating,
-             r.current_lat as rider_lat, r.current_lng as rider_lng
+             COALESCE(u_rider.full_name, r.name) as rider_name, 
+             COALESCE(u_rider.phone, r.phone) as rider_phone, 
+             r.vehicle_plate, r.rating as rider_rating,
+             r.current_lat as rider_lat, r.current_lng as rider_lng,
+             del.status as delivery_status,
+             del.pickup_proof_image,
+             del.proof_image as delivery_proof_image,
+             del.proof_image,
+             del.pickup_at,
+             del.completed_at as delivery_completed_at
       FROM orders o
       LEFT JOIN shops s ON o.shop_id = s.shop_id
-      LEFT JOIN riders r ON o.rider_id = r.rider_id
+      LEFT JOIN deliveries del ON o.order_id = del.order_id
+      LEFT JOIN riders r ON (o.rider_id = r.rider_id OR del.rider_id = r.rider_id)
+      LEFT JOIN users u_rider ON r.user_id = u_rider.user_id
       WHERE o.order_id = ?
     `, [orderId]);
 
@@ -1327,17 +1337,22 @@ app.get('/api/orders/:id/tracking', async (req, res) => {
       order: {
         order_id: o.order_id,
         status: o.order_status,
+        delivery_status: o.delivery_status,
         created_at: o.created_at,
         prepared_at: o.prepared_at,
-        picked_up_at: o.picked_up_at,
-        delivered_at: o.delivered_at,
+        picked_up_at: o.picked_up_at || o.pickup_at,
+        pickup_at: o.pickup_at || o.picked_up_at,
+        delivered_at: o.delivered_at || o.delivery_completed_at,
+        pickup_proof_image: o.pickup_proof_image,
+        proof_image: o.proof_image || o.delivery_proof_image,
+        delivery_proof_image: o.delivery_proof_image || o.proof_image,
         delivery_lat: o.delivery_lat ? parseFloat(o.delivery_lat) : null,
         delivery_lng: o.delivery_lng ? parseFloat(o.delivery_lng) : null,
         shipping_address: o.shipping_address,
-          receiver_name: o.receiver_name,
-          receiver_phone: o.receiver_phone,
-          note_for_rider: o.note_for_rider
-        },
+        receiver_name: o.receiver_name,
+        receiver_phone: o.receiver_phone,
+        note_for_rider: o.note_for_rider
+      },
       shop: {
         name: o.shop_name,
         address: o.shop_address,
@@ -1387,15 +1402,21 @@ app.get('/api/orders/user/:userId', async (req, res) => {
       SELECT orders.*, DATE_FORMAT(orders.created_at, '%Y-%m-%dT%H:%i:%s') AS created_at, 
         shops.name AS shop_name,
         shops.image_url AS shop_image,
-        del.status,
-        u_rider.full_name AS rider_name,
-        u_rider.phone AS rider_phone,
+        del.status AS delivery_status,
+        del.pickup_proof_image,
+        del.proof_image AS delivery_proof_image,
+        del.proof_image,
+        del.pickup_at,
+        del.completed_at AS delivery_completed_at,
+        COALESCE(u_rider.full_name, r.name) AS rider_name,
+        COALESCE(u_rider.phone, r.phone) AS rider_phone,
+        r.vehicle_plate AS rider_vehicle_plate,
         u_customer.full_name AS customer_name,
         u_customer.phone AS customer_phone
       FROM orders
       LEFT JOIN shops ON orders.shop_id = shops.shop_id
       LEFT JOIN deliveries del ON orders.order_id = del.order_id
-      LEFT JOIN riders r ON del.rider_id = r.rider_id
+      LEFT JOIN riders r ON (orders.rider_id = r.rider_id OR del.rider_id = r.rider_id)
       LEFT JOIN users u_rider ON r.user_id = u_rider.user_id
       LEFT JOIN users u_customer ON orders.user_id = u_customer.user_id
       WHERE orders.user_id = ?
@@ -1468,15 +1489,21 @@ app.get('/api/orders/:orderId', async (req, res) => {
         orders.*, 
         shops.name AS shop_name,
         shops.image_url AS shop_image,
-        del.status,
-        u_rider.full_name AS rider_name,
-        u_rider.phone AS rider_phone,
+        del.status AS delivery_status,
+        del.pickup_proof_image,
+        del.proof_image AS delivery_proof_image,
+        del.proof_image,
+        del.pickup_at,
+        del.completed_at AS delivery_completed_at,
+        COALESCE(u_rider.full_name, r.name) AS rider_name,
+        COALESCE(u_rider.phone, r.phone) AS rider_phone,
+        r.vehicle_plate AS rider_vehicle_plate,
         u_customer.full_name AS customer_name,
         u_customer.phone AS customer_phone
       FROM orders
       LEFT JOIN shops ON orders.shop_id = shops.shop_id
       LEFT JOIN deliveries del ON orders.order_id = del.order_id
-      LEFT JOIN riders r ON del.rider_id = r.rider_id
+      LEFT JOIN riders r ON (orders.rider_id = r.rider_id OR del.rider_id = r.rider_id)
       LEFT JOIN users u_rider ON r.user_id = u_rider.user_id
       LEFT JOIN users u_customer ON orders.user_id = u_customer.user_id
       WHERE orders.order_id = ?
@@ -2530,6 +2557,8 @@ app.get('/api/orders/:orderId/tracking', async (req, res) => {
         del.status,
         del.assigned_at,
         del.delivered_at,
+        del.proof_image,
+        del.pickup_proof_image,
         u_rider.full_name AS rider_name,
         u_rider.phone AS rider_phone,
         r.vehicle_type,
@@ -2567,6 +2596,8 @@ app.get('/api/orders/:orderId/tracking', async (req, res) => {
       shop_name: order.shop_name || 'ร้านอาหารไทยรสเด็ด',
       shop_image: order.shop_image,
       shipping_address: order.shipping_address,
+      proof_image: order.proof_image || null,
+      pickup_proof_image: order.pickup_proof_image || null,
       receiver_name: order.receiver_name,
       receiver_phone: order.receiver_phone,
       rider: {
@@ -3080,12 +3111,19 @@ app.get('/api/shops/:shopId/orders', async (req, res) => {
         u.full_name AS customer_name,
         u.phone AS customer_phone,
         u.email AS customer_email,
-        u_rider.full_name AS rider_name,
-        u_rider.phone AS rider_phone
+        d.status AS delivery_status,
+        d.pickup_proof_image,
+        d.proof_image AS delivery_proof_image,
+        d.proof_image,
+        d.pickup_at,
+        d.completed_at AS delivery_completed_at,
+        COALESCE(u_rider.full_name, r.name) AS rider_name,
+        COALESCE(u_rider.phone, r.phone) AS rider_phone,
+        r.vehicle_plate AS rider_vehicle_plate
       FROM orders o
       LEFT JOIN users u ON o.user_id = u.user_id
       LEFT JOIN deliveries d ON o.order_id = d.order_id
-      LEFT JOIN riders r ON d.rider_id = r.rider_id
+      LEFT JOIN riders r ON (o.rider_id = r.rider_id OR d.rider_id = r.rider_id)
       LEFT JOIN users u_rider ON r.user_id = u_rider.user_id
       WHERE o.shop_id = ?
     `;
@@ -3782,20 +3820,39 @@ app.get('/api/orders/:order_id/messages', async (req, res) => {
   }
 });
 
-app.post('/api/orders/:order_id/messages', async (req, res) => {
+app.post('/api/orders/:order_id/messages', upload.single('image'), async (req, res) => {
   const orderId = req.params.order_id;
   const { sender_id, sender_type, message } = req.body;
+  const receiver_type = req.body.receiver_type || 'all';
+  let image_url = req.body.image_url || '';
+  if (req.file) {
+    image_url = `/uploads/${req.file.filename}`;
+  }
   
-  if (!sender_id || !sender_type || !message) {
-    return res.status(400).json({ success: false, message: 'ข้อมูลไม่ครบถ้วน' });
+  if (!sender_id || !sender_type || (!message && !image_url)) {
+    return res.status(400).json({ success: false, message: 'ข้อมูลไม่ครบถ้วน (ต้องมีข้อความหรือรูปภาพ)' });
   }
   
   try {
     const [result] = await db.query(
-      'INSERT INTO order_messages (order_id, sender_id, sender_type, message) VALUES (?, ?, ?, ?)',
-      [orderId, sender_id, sender_type, message]
+      'INSERT INTO order_messages (order_id, sender_id, sender_type, receiver_type, message, image_url) VALUES (?, ?, ?, ?, ?, ?)',
+      [orderId, sender_id, sender_type, receiver_type, message || '', image_url || null]
     );
-    res.json({ success: true, message: 'ส่งข้อความสำเร็จ', message_id: result.insertId });
+    res.json({ 
+      success: true, 
+      message: 'ส่งข้อความสำเร็จ', 
+      message_id: result.insertId,
+      data: {
+        id: result.insertId,
+        order_id: orderId,
+        sender_id,
+        sender_type,
+        receiver_type,
+        message: message || '',
+        image_url: image_url || null,
+        created_at: new Date()
+      }
+    });
   } catch (error) {
     console.error('Error sending order message:', error);
     res.status(500).json({ success: false, message: 'ไม่สามารถส่งข้อความได้' });
@@ -4265,9 +4322,15 @@ app.post('/api/rider/deliveries/:order_id/complete', upload.single('proof_image'
       [proof_image, orderId, rider_id]
     );
 
-    // Don't mark order as completed yet, wait for user to confirm receipt via escrow, or auto complete it?
-    // Based on food delivery standard, rider delivers -> status = delivered/shipped. User confirms -> completed.
     await db.query('UPDATE orders SET order_status = "delivered", delivered_at = CURRENT_TIMESTAMP WHERE order_id = ?', [orderId]);
+
+    // Auto post delivery proof message to chat
+    try {
+      await db.query(
+        'INSERT INTO order_messages (order_id, sender_id, sender_type, receiver_type, message, image_url) VALUES (?, ?, "rider", "all", ?, ?)',
+        [orderId, rider_id, '📸 [ส่งมอบสำเร็จ] ไรเดอร์ได้นำส่งสินค้าให้ลูกค้าเรียบร้อยแล้วครับ', proof_image || null]
+      );
+    } catch(e) {}
 
     res.json({ success: true, message: 'ยืนยันการจัดส่งสำเร็จ' });
   } catch (error) {
