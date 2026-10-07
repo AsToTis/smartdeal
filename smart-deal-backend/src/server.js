@@ -3553,7 +3553,7 @@ app.get('/api/admin/complaints', async (req, res) => {
       SELECT c.*, DATE_FORMAT(c.created_at, '%Y-%m-%dT%T.000Z') as created_at_str, u.full_name as user_name, u.email, u.phone FROM complaints c LEFT JOIN users u ON c.user_id = u.user_id ORDER BY c.created_at DESC
     `);
     const formattedComplaints = complaints.map(c => ({ ...c, created_at: c.created_at_str || c.created_at }));
-    res.json({ success: true, data: formattedComplaints });
+    res.json(formattedComplaints);
   } catch (error) {
     console.error('Error fetching complaints:', error);
     res.status(500).json({ success: false, message: 'Internal server error' });
