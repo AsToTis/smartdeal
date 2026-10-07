@@ -5,13 +5,39 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons, Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
+import axios from 'axios';
+import { BASE_URL } from '../constants/api';
 import { useCart, parseItemPrice, parseItemStock } from '../context/CartContext';
 
 export default function CartScreen() {
-  const { cart, updateQuantity, removeFromCart, clearCart, totalAmount } = useCart();
+    const { cart, updateQuantity, removeFromCart, clearCart, totalAmount } = useCart();
   const [promoCode, setPromoCode] = useState('');
   const [discount, setDiscount] = useState(0);
+  const [deliveryFee, setDeliveryFee] = useState<number>(25);
+  const [minOrderValue, setMinOrderValue] = useState<number>(50);
+
+  // ดึงการตั้งค่าค่าจัดส่งจากระบบ
+  useFocusEffect(
+    React.useCallback(() => {
+      const fetchSettings = async () => {
+        try {
+          const res = await axios.get(`${BASE_URL}/settings`);
+          if (res.data?.success) {
+            if (res.data.base_delivery_fee !== undefined) {
+              setDeliveryFee(Number(res.data.base_delivery_fee));
+            }
+            if (res.data.minimum_order_value !== undefined) {
+              setMinOrderValue(Number(res.data.minimum_order_value));
+            }
+          }
+        } catch (e) {
+          console.log('Fetch settings in cart error:', e);
+        }
+      };
+      fetchSettings();
+    }, [])
+  );
 
   const handleApplyPromo = () => {
     if (!promoCode.trim()) {
@@ -29,7 +55,7 @@ export default function CartScreen() {
   // คำนวณยอดเงินอย่างปลอดภัย (ป้องกัน NaN 100%)
   const safeTotalAmount = isNaN(totalAmount) ? 0 : totalAmount;
   const safeDiscount = isNaN(discount) ? 0 : discount;
-  const deliveryFee = 15; // ค่าจัดส่งโดยไรเดอร์
+  // ค่าจัดส่งดึงตามการตั้งค่าระบบ
   const finalTotal = Math.max(0, safeTotalAmount + deliveryFee - safeDiscount);
 
   // ตรวจสอบและไปหน้าชำระเงิน

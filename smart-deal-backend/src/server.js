@@ -4104,8 +4104,6 @@ app.get('/api/rider/jobs', async (req, res) => {
     res.status(500).json({ success: false, message: 'เกิดข้อผิดพลาดเซิร์ฟเวอร์' });
   }
 });
-  }
-});
 
 // 4. Update Delivery Status (Accept Job, Picking up, Delivering)
 app.put('/api/rider/deliveries/:order_id/status', async (req, res) => {
@@ -4575,6 +4573,51 @@ app.put('/api/admin/tickets/:id/status', async (req, res) => {
 // ==========================================
 // System Settings (God Mode)
 // ==========================================
+// Public System Settings API for Mobile Apps
+app.get('/api/settings', async (req, res) => {
+  try {
+    const [rows] = await db.execute('SELECT setting_key, setting_value FROM system_settings');
+    const settings = {};
+    rows.forEach(r => {
+      settings[r.setting_key] = r.setting_value;
+    });
+    res.json({
+      success: true,
+      settings,
+      base_delivery_fee: parseFloat(settings.base_delivery_fee) || 25,
+      per_km_fee: parseFloat(settings.per_km_fee) || 8,
+      minimum_order_value: parseFloat(settings.minimum_order_value) || 50,
+      platform_fee_percent: parseFloat(settings.platform_fee_percent) || 15,
+      rider_commission_percent: parseFloat(settings.rider_commission_percent) || 90
+    });
+  } catch (error) {
+    console.error('API /api/settings Error:', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/system-settings', async (req, res) => {
+  try {
+    const [rows] = await db.execute('SELECT setting_key, setting_value FROM system_settings');
+    const settings = {};
+    rows.forEach(r => {
+      settings[r.setting_key] = r.setting_value;
+    });
+    res.json({
+      success: true,
+      settings,
+      base_delivery_fee: parseFloat(settings.base_delivery_fee) || 25,
+      per_km_fee: parseFloat(settings.per_km_fee) || 8,
+      minimum_order_value: parseFloat(settings.minimum_order_value) || 50,
+      platform_fee_percent: parseFloat(settings.platform_fee_percent) || 15,
+      rider_commission_percent: parseFloat(settings.rider_commission_percent) || 90
+    });
+  } catch (error) {
+    console.error('API /api/system-settings Error:', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 app.get('/api/admin/settings', async (req, res) => {
   try {
     const [settings] = await db.execute('SELECT * FROM system_settings');

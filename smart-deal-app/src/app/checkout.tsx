@@ -41,6 +41,8 @@ export default function CheckoutScreen() {
   const [deliveryNote, setDeliveryNote] = useState('');
   const [address, setAddress] = useState<any>(null);
   const [currentUserId, setCurrentUserId] = useState<number>(2);
+  const [systemBaseDeliveryFee, setSystemBaseDeliveryFee] = useState<number>(25);
+  const [systemMinOrderValue, setSystemMinOrderValue] = useState<number>(50);
 
   // Coupons State
   const [coupons, setCoupons] = useState<any[]>([]);
@@ -48,7 +50,7 @@ export default function CheckoutScreen() {
   const [couponCodeInput, setCouponCodeInput] = useState('');
   const [showCouponModal, setShowCouponModal] = useState(false);
   const [loadingCoupons, setLoadingCoupons] = useState(false);
-  const [systemFare, setSystemFare] = useState({ baseFee: 35, perKmFee: 8 });
+  const [systemFare, setSystemFare] = useState({ baseFee: 25, perKmFee: 8 });
 
   // ดึงข้อมูลที่อยู่และคูปองจริงเมื่อเปิดหน้า
   useFocusEffect(
@@ -86,6 +88,20 @@ export default function CheckoutScreen() {
       } catch (e) {
         setAddress(null);
       }
+
+            // ดึงการตั้งค่าระบบ (ค่าจัดส่งเริ่มต้น)
+      try {
+        const settingsRes = await axios.get(`${BASE_URL}/settings`);
+        if (settingsRes.data?.success) {
+          const base = Number(settingsRes.data.base_delivery_fee) || 25;
+          const perKm = Number(settingsRes.data.per_km_fee) || 8;
+          setSystemFare({ baseFee: base, perKmFee: perKm });
+          setSystemBaseDeliveryFee(base);
+          if (settingsRes.data.minimum_order_value !== undefined) {
+            setSystemMinOrderValue(Number(settingsRes.data.minimum_order_value));
+          }
+        }
+      } catch (e) {}
 
       // ดึงคูปองสะสมของผู้ใช้
       await loadUserCoupons(userId);
@@ -159,7 +175,7 @@ export default function CheckoutScreen() {
 
   // โครงสร้างค่าจัดส่งตาม System Control Panel (เริ่มต้น ฿35 + ฿8/กม. ระยะทางประมาณ 2.5 กม. = ฿55.00)
   const estimatedDistanceKm = 2.5;
-  const calculatedDeliveryFare = Math.round(systemFare.baseFee + (estimatedDistanceKm * systemFare.perKmFee));
+  const calculatedDeliveryFare = Math.round(systemFare.baseFee);
   const deliveryFee = deliveryMethod === 'delivery' ? calculatedDeliveryFare : 0;
 
   // คำนวณส่วนลดตามคูปองที่เลือก
@@ -203,7 +219,7 @@ export default function CheckoutScreen() {
       setCouponCodeInput('');
       Alert.alert('สำเร็จ 🎉', 'ใช้โค้ดส่วนลด 50 บาท เรียบร้อยแล้ว');
     } else if (trimmed === 'FREEDEL') {
-      setSelectedCoupon({ code: 'FREEDEL', title: 'คูปองส่งฟรี', type: 'free_delivery', value: 15 });
+      setSelectedCoupon({ code: 'FREEDEL', title: 'คูปองส่งฟรี', type: 'free_delivery', value: deliveryFee });
       setShowCouponModal(false);
       setCouponCodeInput('');
       Alert.alert('สำเร็จ 🎉', 'ใช้คูปองส่งฟรีเรียบร้อยแล้ว');
@@ -386,7 +402,7 @@ export default function CheckoutScreen() {
                   <Text style={styles.activeCouponTitle}>{selectedCoupon.title || selectedCoupon.code}</Text>
                   <Text style={styles.activeCouponSub}>
                     {selectedCoupon.type === 'free_delivery' 
-                      ? 'ส่งฟรี (ลดค่าส่ง ฿15)' 
+                      ? `ส่งฟรี (ลดค่าส่ง ฿${deliveryFee.toFixed(2)})` 
                       : `ลดทันที ฿${selectedCoupon.value || 50}`}
                   </Text>
                 </View>
