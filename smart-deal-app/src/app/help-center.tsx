@@ -97,12 +97,26 @@ export default function HelpCenterScreen() {
           </Text>
 
           <Text style={styles.label}>หัวข้อร้องเรียน <Text style={{ color: '#ef4444' }}>*</Text></Text>
-          <TextInput
-            style={styles.input}
-            placeholder="เช่น อาหารได้ไม่ครบ, อาหารมีสิ่งเจือปน, พฤติกรรมคนขับ"
-            value={subject}
-            onChangeText={setSubject}
-          />
+          {order_id ? (
+            <View style={styles.topicOptions}>
+              {['ได้รับอาหารไม่ครบ', 'อาหารเสียหาย', 'ไรเดอร์บริการไม่ดี', 'รอนานผิดปกติ', 'อื่นๆ'].map(topic => (
+                <TouchableOpacity 
+                  key={topic}
+                  style={[styles.topicBtn, subject === topic && styles.topicBtnActive]}
+                  onPress={() => setSubject(topic)}
+                >
+                  <Text style={[styles.topicBtnText, subject === topic && styles.topicBtnTextActive]}>{topic}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          ) : (
+            <TextInput
+              style={styles.input}
+              placeholder="เช่น อาหารได้ไม่ครบ, อาหารมีสิ่งเจือปน, พฤติกรรมคนขับ"
+              value={subject}
+              onChangeText={setSubject}
+            />
+          )}
 
           <Text style={styles.label}>รายละเอียดเพิ่มเติม <Text style={{ color: '#ef4444' }}>*</Text></Text>
           <TextInput
@@ -255,5 +269,31 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  topicOptions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 20,
+  },
+  topicBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: '#f1f5f9',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  topicBtnActive: {
+    backgroundColor: '#fee2e2',
+    borderColor: '#fca5a5',
+  },
+  topicBtnText: {
+    fontSize: 13,
+    color: '#64748b',
+  },
+  topicBtnTextActive: {
+    color: '#ef4444',
+    fontWeight: '600',
   }
 });
