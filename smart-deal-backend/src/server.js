@@ -3853,13 +3853,13 @@ app.get('/api/orders/:order_id/messages', async (req, res) => {
     let query = 'SELECT id, order_id, sender_id, sender_type, receiver_type, message, image_url, created_at FROM order_messages WHERE order_id = ?';
     const params = [orderId];
 
-    // แยกช่องทางแชทอย่างเด็ดขาด 100%
+    // แยกช่องทางแชทอย่างเด็ดขาด 100% ไม่ปนกัน
     if (target === 'seller') {
-      // ช่องทางร้านค้า ↔ ไรเดอร์: แสดงเฉพาะข้อความระหว่างร้านค้าและไรเดอร์เท่านั้น (ไม่ปนกับลูกค้า)
-      query += ' AND (receiver_type = "seller" OR sender_type = "seller")';
+      // ช่องทางร้านค้า ↔ ไรเดอร์ (แสดงเฉพาะข้อความระหว่างร้านค้ากับไรเดอร์)
+      query += ' AND (sender_type = "seller" OR receiver_type = "seller")';
     } else if (target === 'buyer' || target === 'rider') {
-      // ช่องทางลูกค้า ↔ ไรเดอร์: แสดงเฉพาะข้อความระหว่างลูกค้าและไรเดอร์เท่านั้น (ไม่ปนกับร้านค้า)
-      query += ' AND (receiver_type = "buyer" OR sender_type = "buyer" OR receiver_type = "rider")';
+      // ช่องทางลูกค้า ↔ ไรเดอร์ (แสดงเฉพาะข้อความระหว่างลูกค้ากับไรเดอร์)
+      query += ' AND (sender_type = "buyer" OR receiver_type = "buyer")';
     }
 
     query += ' ORDER BY created_at ASC';
@@ -3869,6 +3869,8 @@ app.get('/api/orders/:order_id/messages', async (req, res) => {
   } catch (error) {
     console.error('Error fetching order messages:', error);
     res.status(500).json({ success: false, message: 'ไม่สามารถดึงข้อความได้' });
+  }
+});
   }
 });
 
@@ -4343,18 +4345,11 @@ app.post('/api/rider/deliveries/:order_id/pickup', upload.single('pickup_image')
       [orderId]
     );
 
-    // Auto post separate chat messages & photos to Shop and Buyer
+    // Auto post delivery update & photo to Customer (Buyer <-> Rider channel)
     try {
-      // 1. ส่งรูปและแจ้งเตือนเข้าช่องแชทร้านค้า
-      await connection.query(
-        'INSERT INTO order_messages (order_id, sender_id, sender_type, receiver_type, message, image_url) VALUES (?, ?, "rider", "seller", ?, ?)',
-        [orderId, rider_id, '🛵 [ยืนยันรับสินค้าแล้ว] ไรเดอร์ได้รับสินค้าจากทางร้านเรียบร้อยแล้ว กำลังเดินทางไปส่งลูกค้าครับ', uploadedImage || null]
-      );
-
-      // 2. ส่งรูปและแจ้งเตือนเข้าช่องแชทลูกค้า
       await connection.query(
         'INSERT INTO order_messages (order_id, sender_id, sender_type, receiver_type, message, image_url) VALUES (?, ?, "rider", "buyer", ?, ?)',
-        [orderId, rider_id, '🍱 [ร้านเตรียมสินค้าเสร็จแล้ว] ไรเดอร์รับสินค้าจากร้านค้าเรียบร้อยแล้ว กำลังเดินทางไปส่งให้คุณครับ', uploadedImage || null]
+        [orderId, rider_id, '🛵 [ยืนยันรับสินค้าแล้ว] ไรเดอร์ได้รับสินค้าจากร้านค้าเรียบร้อยแล้ว กำลังเดินทางไปส่งให้คุณลูกค้าครับ', uploadedImage || null]
       );
     } catch(e) {}
 
@@ -4372,8 +4367,8 @@ app.post('/api/rider/deliveries/:order_id/pickup', upload.single('pickup_image')
 // 5. Proof & Confirm (Complete Delivery)
 app.post('/api/rider/deliveries/:order_id/complete', upload.single('proof_image'), async (req, res) => {
   const orderId = req.params.order_id;
-  const { rider_id } = req.body;
-  const proof_image = req.file ? `/uploads/${req.file.filename}` : '';
+  const { rider_id, proof_image_base64 } = req.body;
+  const proof_image = req.file ? `/uploads/${req.file.filename}` : (proof_image_base64 || req.body.proof_image || '');
 
   try {
     await db.query(
@@ -4383,18 +4378,22 @@ app.post('/api/rider/deliveries/:order_id/complete', upload.single('proof_image'
 
     await db.query('UPDATE orders SET order_status = "delivered", delivered_at = CURRENT_TIMESTAMP WHERE order_id = ?', [orderId]);
 
-    // Auto post delivery proof message to chat
+    // Auto post delivery proof message & photo to Customer (Buyer <-> Rider channel)
     try {
       await db.query(
-        'INSERT INTO order_messages (order_id, sender_id, sender_type, receiver_type, message, image_url) VALUES (?, ?, "rider", "all", ?, ?)',
-        [orderId, rider_id, '📸 [ส่งมอบสำเร็จ] ไรเดอร์ได้นำส่งสินค้าให้ลูกค้าเรียบร้อยแล้วครับ', proof_image || null]
+        'INSERT INTO order_messages (order_id, sender_id, sender_type, receiver_type, message, image_url) VALUES (?, ?, "rider", "buyer", ?, ?)',
+        [orderId, rider_id, '📸 [ส่งมอบสำเร็จ] ไรเดอร์ได้นำส่งสินค้าให้คุณลูกค้าเรียบร้อยแล้วครับ ขอบคุณที่ใช้บริการ SmartDeal ครับ', proof_image || null]
       );
-    } catch(e) {}
+    } catch(e) {
+      console.error('Error auto-posting dropoff proof to chat:', e);
+    }
 
     res.json({ success: true, message: 'ยืนยันการจัดส่งสำเร็จ' });
   } catch (error) {
     console.error('Complete delivery error:', error);
     res.status(500).json({ success: false, message: 'เกิดข้อผิดพลาดเซิร์ฟเวอร์' });
+  }
+});
   }
 });
 
