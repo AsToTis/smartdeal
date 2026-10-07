@@ -1275,7 +1275,7 @@ app.get('/api/orders/:id/tracking', async (req, res) => {
   const orderId = req.params.id;
   try {
     const [orders] = await db.execute(`
-      SELECT o.*, 
+      SELECT o.*, DATE_FORMAT(o.created_at, '%Y-%m-%dT%H:%i:%s') AS created_at, 
              s.latitude as shop_lat, s.longitude as shop_lng, s.name as shop_name, s.address as shop_address,
              r.name as rider_name, r.phone as rider_phone, r.vehicle_plate, r.rating as rider_rating,
              r.current_lat as rider_lat, r.current_lng as rider_lng
@@ -1352,8 +1352,7 @@ app.get('/api/orders/user/:userId', async (req, res) => {
 
   try {
     const sql = `
-      SELECT 
-        orders.*, 
+      SELECT orders.*, DATE_FORMAT(orders.created_at, '%Y-%m-%dT%H:%i:%s') AS created_at, 
         shops.name AS shop_name,
         shops.image_url AS shop_image,
         del.status,
@@ -3451,7 +3450,7 @@ app.get('/api/seller/dashboard/:owner_id', async (req, res) => {
 
     // 3. Get Recent Orders
     const [recentOrders] = await db.execute(`
-      SELECT o.order_id, (o.subtotal * (1 - (SELECT setting_value FROM system_settings WHERE setting_key='platform_fee_percent') / 100)) as total_amount, o.order_status, o.created_at, oi.product_id, COALESCE(p.image_url, (SELECT image_url FROM auctions WHERE title COLLATE utf8mb4_unicode_ci = oi.product_name COLLATE utf8mb4_unicode_ci LIMIT 1)) as image_url, COALESCE(p.name, oi.product_name) as product_name
+      SELECT o.order_id, (o.subtotal * (1 - (SELECT setting_value FROM system_settings WHERE setting_key='platform_fee_percent') / 100)) as total_amount, o.order_status, DATE_FORMAT(o.created_at, '%Y-%m-%dT%H:%i:%s') AS created_at, oi.product_id, COALESCE(p.image_url, (SELECT image_url FROM auctions WHERE title COLLATE utf8mb4_unicode_ci = oi.product_name COLLATE utf8mb4_unicode_ci LIMIT 1)) as image_url, COALESCE(p.name, oi.product_name) as product_name
         FROM orders o
       LEFT JOIN order_items oi ON o.order_id = oi.order_id
       LEFT JOIN products p ON oi.product_id = p.product_id

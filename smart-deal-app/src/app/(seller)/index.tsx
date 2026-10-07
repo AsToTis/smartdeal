@@ -8,10 +8,12 @@ import axios from 'axios';
 import { BASE_URL } from '../../constants/api';
 
 export default function SellerDashboardScreen() {
-  const getImageUrl = (imgUrl: string) => {
+  const getImageUrl = (imgUrl?: string) => {
     if (!imgUrl) return 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500';
-    if (imgUrl.startsWith('http')) return imgUrl;
-    return `${BASE_URL.replace('/api', '')}${imgUrl}`;
+    if (imgUrl.startsWith('data:') || imgUrl.startsWith('http://') || imgUrl.startsWith('https://') || imgUrl.startsWith('file://')) {
+      return imgUrl;
+    }
+    return `${BASE_URL.replace('/api', '')}${imgUrl.startsWith('/') ? '' : '/'}${imgUrl}`;
   };
 
   const [loading, setLoading] = useState(true);

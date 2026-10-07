@@ -8,10 +8,12 @@ import { BASE_URL } from '../../constants/api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function OrderDetailsScreen() {
-  const getImageUrl = (imgUrl: string) => {
+  const getImageUrl = (imgUrl?: string) => {
     if (!imgUrl) return 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500';
-    if (imgUrl.startsWith('http')) return imgUrl;
-    return `${BASE_URL.replace('/api', '')}${imgUrl}`;
+    if (imgUrl.startsWith('data:') || imgUrl.startsWith('http://') || imgUrl.startsWith('https://') || imgUrl.startsWith('file://')) {
+      return imgUrl;
+    }
+    return `${BASE_URL.replace('/api', '')}${imgUrl.startsWith('/') ? '' : '/'}${imgUrl}`;
   };
 
 const { orderId } = useLocalSearchParams();
@@ -80,11 +82,17 @@ const { orderId } = useLocalSearchParams();
     );
   }
 
-  const formatThaiDateTime = (dateStr: string) => {
-    if (!dateStr) return '';
-    const date = new Date(dateStr);
-    const thaiMonthsShort = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
-    return `${date.getDate()} ${thaiMonthsShort[date.getMonth()]} ${date.getFullYear() + 543} • ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+  const formatThaiDateTime = (dateStr: any) => {
+    if (!dateStr || typeof dateStr === 'object' && Object.keys(dateStr).length === 0) return 'เมื่อสักครู่';
+    try {
+      const cleanStr = typeof dateStr === 'string' ? dateStr.replace(' ', 'T') : dateStr;
+      const date = new Date(cleanStr);
+      if (isNaN(date.getTime())) return 'เมื่อสักครู่';
+      const thaiMonthsShort = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+      return `${date.getDate()} ${thaiMonthsShort[date.getMonth()]} ${date.getFullYear() + 543} • ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+    } catch (e) {
+      return 'เมื่อสักครู่';
+    }
   };
 
   const getStatusDisplay = (status: string) => {
