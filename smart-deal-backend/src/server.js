@@ -85,6 +85,26 @@ const storage = multer.diskStorage({
 const upload = multer({ storage: storage });
 
 // ==========================================
+
+// === BASE64 IMAGE SUPPORT ===
+const initBase64ImageSupport = async () => {
+  try {
+    console.log('Altering tables for LONGTEXT images...');
+    await db.execute('ALTER TABLE products MODIFY image_url LONGTEXT');
+    await db.execute('ALTER TABLE shops MODIFY image_url LONGTEXT');
+    await db.execute('ALTER TABLE auctions MODIFY image_url LONGTEXT');
+    await db.execute('ALTER TABLE users MODIFY avatar_url LONGTEXT');
+    await db.execute('ALTER TABLE banners MODIFY image_url LONGTEXT');
+    await db.execute('ALTER TABLE complaints MODIFY image_url LONGTEXT');
+    try { await db.execute('ALTER TABLE complaints ADD COLUMN order_id INT NULL AFTER user_id'); } catch (e) {}
+
+    console.log('✅ Tables altered for LONGTEXT images successfully.');
+  } catch (err) {
+    console.error('❌ Error altering tables for LONGTEXT:', err.message);
+  }
+};
+initBase64ImageSupport();
+
 // 0. DATABASE INITIALIZATION
 // ==========================================
 const initNotificationsTable = async () => {
@@ -169,6 +189,7 @@ const initComplaintsTable = async () => {
       CREATE TABLE IF NOT EXISTS complaints (
         id INT AUTO_INCREMENT PRIMARY KEY,
         user_id INT NOT NULL,
+        order_id INT NULL,
         subject VARCHAR(255) NOT NULL,
         message TEXT NOT NULL,
         image_url VARCHAR(255),
@@ -2678,7 +2699,7 @@ app.post('/api/shops/:shopId/products', upload.single('image'), async (req, res)
         discount_price || 0,
         calculatedDiscountPercent || 0,
         expiry_text || 'หมดอายุในวันนี้',
-        req.file ? `http://${req.get('host')}/uploads/${req.file.filename}` : (image_url || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500'),
+        req.file ? `data:${req.file.mimetype};base64,${fs.readFileSync(req.file.path).toString('base64')}` : (image_url || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500'),
         description || '',
         freshness || 'ทำสดใหม่ทุกเช้า',
         shipping_type || 'ควบคุมอุณหภูมิ',
@@ -2702,7 +2723,7 @@ app.post('/api/shops/:shopId/products', upload.single('image'), async (req, res)
       `, [
         name,
         description || '',
-        req.file ? `http://${req.get('host')}/uploads/${req.file.filename}` : (image_url || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500'),
+        req.file ? `data:${req.file.mimetype};base64,${fs.readFileSync(req.file.path).toString('base64')}` : (image_url || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500'),
         shopId,
         shopName,
         Math.floor((discount_price || original_price || 0) * 0.3),
@@ -2778,7 +2799,7 @@ app.post('/api/shops/:shopId/products/:productId', upload.single('image'), async
         discount_price ?? null,
         calculatedDiscountPercent ?? null,
         expiry_text ?? null,
-        req.file ? `http://${req.get('host')}/uploads/${req.file.filename}` : (image_url ?? null),
+        req.file ? `data:${req.file.mimetype};base64,${fs.readFileSync(req.file.path).toString('base64')}` : (image_url ?? null),
         description ?? null,
         freshness ?? null,
         shipping_type ?? null,
@@ -3450,6 +3471,60 @@ app.put('/api/seller/settings/:shop_id', async (req, res) => {
     res.json({ success: true, message: 'บันทึกข้อมูลสำเร็จ' });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+
+// ==========================================
+// COMPLAINTS (Help Center)
+// ==========================================
+
+app.post('/api/complaints', upload.single('image'), async (req, res) => {
+  const { user_id, subject, message, order_id } = req.body;
+  
+  if (!user_id || !subject || !message) {
+    return res.status(400).json({ success: false, message: 'Missing required fields' });
+  }
+
+  try {
+    const imageUrl = req.file ? `data:${req.file.mimetype};base64,${fs.readFileSync(req.file.path).toString('base64')}` : null;
+
+    const [result] = await db.execute(
+      `INSERT INTO complaints (user_id, order_id, subject, message, image_url, status) VALUES (?, ?, ?, ?, ?, 'pending')`,
+      [user_id, order_id || null, subject, message, imageUrl]
+    );
+
+    res.status(201).json({ success: true, message: 'Complaint submitted successfully', complaint_id: result.insertId });
+  } catch (error) {
+    console.error('Error submitting complaint:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
+app.get('/api/admin/complaints', async (req, res) => {
+  try {
+    const [complaints] = await db.execute(`
+      SELECT c.*, u.full_name as user_name, u.email, u.phone
+      FROM complaints c
+      LEFT JOIN users u ON c.user_id = u.user_id
+      ORDER BY c.created_at DESC
+    `);
+    res.json({ success: true, data: complaints });
+  } catch (error) {
+    console.error('Error fetching complaints:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
+app.put('/api/admin/complaints/:id/status', async (req, res) => {
+  const { id } = req.params;
+  const { status } = req.body;
+  try {
+    await db.execute('UPDATE complaints SET status = ? WHERE id = ?', [status, id]);
+    res.json({ success: true, message: 'Status updated' });
+  } catch (error) {
+    console.error('Error updating complaint status:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
   }
 });
 
