@@ -34,6 +34,7 @@ export default function OrdersScreen() {
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null);
 
   // States for Report Issue
+  const [issueTargetOrder, setIssueTargetOrder] = useState<any | null>(null);
   const [issueModalVisible, setIssueModalVisible] = useState(false);
   const [issueTopic, setIssueTopic] = useState('');
   const [issueDetail, setIssueDetail] = useState('');
@@ -323,7 +324,7 @@ export default function OrdersScreen() {
         if (user?.user_id) currentUserId = user.user_id;
       }
       
-      const res = await axios.post(`${BASE_URL}/orders/${selectedOrder.order_id}/issues`, {
+      const res = await axios.post(`${BASE_URL}/orders/${issueTargetOrder?.order_id}/issues`, {
         user_id: currentUserId,
         issue_topic: issueTopic,
         issue_detail: issueDetail
@@ -711,7 +712,9 @@ export default function OrdersScreen() {
                   <TouchableOpacity 
                     style={[styles.reviewOrderBtn, { backgroundColor: '#fef2f2', borderColor: '#fecaca' }]}
                     onPress={() => {
-                      setIssueModalVisible(true);
+                      setIssueTargetOrder(selectedOrder);
+                      setSelectedOrder(null);
+                      setTimeout(() => setIssueModalVisible(true), 400);
                     }}
                   >
                     <MaterialIcons name="report-problem" size={16} color="#ef4444" />
@@ -735,7 +738,7 @@ export default function OrdersScreen() {
         <View style={styles.modalBackdrop}>
           <View style={styles.issueModalContainer}>
             <View style={styles.issueModalHeader}>
-              <Text style={styles.issueModalTitle}>แจ้งปัญหาคำสั่งซื้อ #{selectedOrder?.order_id}</Text>
+              <Text style={styles.issueModalTitle}>แจ้งปัญหาคำสั่งซื้อ #{issueTargetOrder?.order_id}</Text>
               <TouchableOpacity onPress={() => setIssueModalVisible(false)}>
                 <MaterialIcons name="close" size={24} color="#64748b" />
               </TouchableOpacity>
