@@ -3537,6 +3537,16 @@ app.post('/api/complaints', upload.single('image'), async (req, res) => {
   }
 });
 
+
+app.get('/api/admin/migrate-shops', async (req, res) => {
+  try {
+    await db.execute('ALTER TABLE shops ADD COLUMN opening_time TIME DEFAULT "08:00:00", ADD COLUMN closing_time TIME DEFAULT "20:00:00"');
+    res.json({ success: true, message: "Migrated successfully!" });
+  } catch(e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
 app.get('/api/admin/complaints', async (req, res) => {
   try {
     const [complaints] = await db.execute(`
