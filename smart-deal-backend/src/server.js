@@ -1310,8 +1310,8 @@ app.get('/api/orders/:id/tracking', async (req, res) => {
     const [orders] = await db.execute(`
       SELECT o.*, DATE_FORMAT(o.created_at, '%Y-%m-%dT%H:%i:%s') AS created_at, 
              s.latitude as shop_lat, s.longitude as shop_lng, s.name as shop_name, s.address as shop_address,
-             COALESCE(u_rider.full_name, r.name) as rider_name, 
-             COALESCE(u_rider.phone, r.phone) as rider_phone, 
+             u_rider.full_name as rider_name, 
+             u_rider.phone as rider_phone, 
              r.vehicle_plate, r.rating as rider_rating,
              r.current_lat as rider_lat, r.current_lng as rider_lng,
              del.status as delivery_status,
@@ -1409,8 +1409,8 @@ app.get('/api/orders/user/:userId', async (req, res) => {
         del.proof_image,
         del.pickup_at,
         del.completed_at AS delivery_completed_at,
-        COALESCE(u_rider.full_name, r.name) AS rider_name,
-        COALESCE(u_rider.phone, r.phone) AS rider_phone,
+        u_rider.full_name AS rider_name,
+        u_rider.phone AS rider_phone,
         r.vehicle_plate AS rider_vehicle_plate,
         u_customer.full_name AS customer_name,
         u_customer.phone AS customer_phone
@@ -1450,13 +1450,19 @@ app.get('/api/orders/user/:userId', async (req, res) => {
     let itemsByOrderId = {};
     if (orderIds.length > 0) {
       const placeholders = orderIds.map(() => '?').join(',');
-      const [allItems] = await db.execute(
-        `SELECT oi.*, p.name AS db_product_name, p.image_url AS product_image
-         FROM order_items oi
-         LEFT JOIN products p ON oi.product_id = p.product_id
-         WHERE oi.order_id IN (${placeholders})`,
-        orderIds
-      );
+      let allItems = [];
+      try {
+        const [rows] = await db.query(
+          `SELECT oi.*, p.name AS db_product_name, p.image_url AS product_image
+           FROM order_items oi
+           LEFT JOIN products p ON oi.product_id = p.product_id
+           WHERE oi.order_id IN (${placeholders})`,
+          orderIds
+        );
+        allItems = rows || [];
+      } catch (itemErr) {
+        console.error('Error fetching order items:', itemErr.message);
+      }
       allItems.forEach(item => {
         if (!itemsByOrderId[item.order_id]) itemsByOrderId[item.order_id] = [];
         itemsByOrderId[item.order_id].push(item);
@@ -1507,8 +1513,8 @@ app.get('/api/orders/:orderId', async (req, res) => {
         del.proof_image,
         del.pickup_at,
         del.completed_at AS delivery_completed_at,
-        COALESCE(u_rider.full_name, r.name) AS rider_name,
-        COALESCE(u_rider.phone, r.phone) AS rider_phone,
+        u_rider.full_name AS rider_name,
+        u_rider.phone AS rider_phone,
         r.vehicle_plate AS rider_vehicle_plate,
         u_customer.full_name AS customer_name,
         u_customer.phone AS customer_phone
@@ -3145,8 +3151,8 @@ app.get('/api/shops/:shopId/orders', async (req, res) => {
         d.proof_image,
         d.pickup_at,
         d.completed_at AS delivery_completed_at,
-        COALESCE(u_rider.full_name, r.name) AS rider_name,
-        COALESCE(u_rider.phone, r.phone) AS rider_phone,
+        u_rider.full_name AS rider_name,
+        u_rider.phone AS rider_phone,
         r.vehicle_plate AS rider_vehicle_plate
       FROM orders o
       LEFT JOIN users u ON o.user_id = u.user_id
@@ -3842,11 +3848,23 @@ const PORT = process.env.PORT || 5000;
 // ==========================================
 app.get('/api/orders/:order_id/messages', async (req, res) => {
   const orderId = req.params.order_id;
+  const target = req.query.target || req.query.channel; // 'seller' or 'buyer'
   try {
-    const [messages] = await db.query(
-      'SELECT * FROM order_messages WHERE order_id = ? ORDER BY created_at ASC',
-      [orderId]
-    );
+    let query = 'SELECT id, order_id, sender_id, sender_type, receiver_type, message, image_url, created_at FROM order_messages WHERE order_id = ?';
+    const params = [orderId];
+
+    // แยกช่องทางแชทอย่างเด็ดขาด 100%
+    if (target === 'seller') {
+      // ช่องทางร้านค้า ↔ ไรเดอร์: แสดงเฉพาะข้อความระหว่างร้านค้าและไรเดอร์เท่านั้น (ไม่ปนกับลูกค้า)
+      query += ' AND (receiver_type = "seller" OR sender_type = "seller")';
+    } else if (target === 'buyer' || target === 'rider') {
+      // ช่องทางลูกค้า ↔ ไรเดอร์: แสดงเฉพาะข้อความระหว่างลูกค้าและไรเดอร์เท่านั้น (ไม่ปนกับร้านค้า)
+      query += ' AND (receiver_type = "buyer" OR sender_type = "buyer" OR receiver_type = "rider")';
+    }
+
+    query += ' ORDER BY created_at ASC';
+
+    const [messages] = await db.query(query, params);
     res.json({ success: true, messages });
   } catch (error) {
     console.error('Error fetching order messages:', error);
@@ -4325,11 +4343,18 @@ app.post('/api/rider/deliveries/:order_id/pickup', upload.single('pickup_image')
       [orderId]
     );
 
-    // Auto post system chat message notifying shop and buyer that food is picked up
+    // Auto post separate chat messages & photos to Shop and Buyer
     try {
+      // 1. ส่งรูปและแจ้งเตือนเข้าช่องแชทร้านค้า
       await connection.query(
-        'INSERT INTO order_messages (order_id, sender_id, sender_type, receiver_type, message, image_url) VALUES (?, ?, "rider", "all", ?, ?)',
-        [orderId, rider_id, '🛵 [ยืนยันรับสินค้าแล้ว] ไรเดอร์ได้รับสินค้าจากร้านค้าเรียบร้อยแล้ว กำลังเดินทางไปส่งครับ', uploadedImage || null]
+        'INSERT INTO order_messages (order_id, sender_id, sender_type, receiver_type, message, image_url) VALUES (?, ?, "rider", "seller", ?, ?)',
+        [orderId, rider_id, '🛵 [ยืนยันรับสินค้าแล้ว] ไรเดอร์ได้รับสินค้าจากทางร้านเรียบร้อยแล้ว กำลังเดินทางไปส่งลูกค้าครับ', uploadedImage || null]
+      );
+
+      // 2. ส่งรูปและแจ้งเตือนเข้าช่องแชทลูกค้า
+      await connection.query(
+        'INSERT INTO order_messages (order_id, sender_id, sender_type, receiver_type, message, image_url) VALUES (?, ?, "rider", "buyer", ?, ?)',
+        [orderId, rider_id, '🍱 [ร้านเตรียมสินค้าเสร็จแล้ว] ไรเดอร์รับสินค้าจากร้านค้าเรียบร้อยแล้ว กำลังเดินทางไปส่งให้คุณครับ', uploadedImage || null]
       );
     } catch(e) {}
 
