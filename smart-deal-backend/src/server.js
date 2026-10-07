@@ -43,17 +43,18 @@ app.use((req, res, next) => {
     if (Array.isArray(obj)) return obj.map(fixUrls);
     const newObj = { ...obj };
     for (const key in newObj) {
-      if (typeof newObj[key] === 'string' && (key.includes('image') || key.includes('url') || key.includes('avatar') || key.includes('qr') || key.includes('slip'))) {
-        if (newObj[key].startsWith('/uploads')) {
-          newObj[key] = baseUrl + newObj[key];
-        } else if (newObj[key].match(/^http:\/\/[0-9\.]+:\d+(\/uploads\/.*)/)) {
-          // Fix old IP hardcoded paths like http://172.20.10.2:5000/uploads/...
-          newObj[key] = newObj[key].replace(/^http:\/\/[0-9\.]+:\d+/, baseUrl);
-        } else if (newObj[key].match(/^http:\/\/localhost:\d+(\/uploads\/.*)/)) {
-          newObj[key] = newObj[key].replace(/^http:\/\/localhost:\d+/, baseUrl);
+      const val = newObj[key];
+      if (typeof val === 'string') {
+        if (val.length > 500 || val.startsWith('data:')) continue;
+        if (key.includes('image') || key.includes('url') || key.includes('avatar') || key.includes('qr') || key.includes('slip')) {
+          if (val.startsWith('/uploads')) {
+            newObj[key] = baseUrl + val;
+          } else if (val.startsWith('http://') && (val.includes(':5000/uploads') || val.includes('localhost'))) {
+            newObj[key] = val.replace(/^http:\/\/[^/]+/, baseUrl);
+          }
         }
-      } else if (typeof newObj[key] === 'object' && newObj[key] !== null) {
-        newObj[key] = fixUrls(newObj[key]);
+      } else if (typeof val === 'object' && val !== null) {
+        newObj[key] = fixUrls(val);
       }
     }
     return newObj;
@@ -1416,7 +1417,7 @@ app.get('/api/orders/user/:userId', async (req, res) => {
       FROM orders
       LEFT JOIN shops ON orders.shop_id = shops.shop_id
       LEFT JOIN deliveries del ON orders.order_id = del.order_id
-      LEFT JOIN riders r ON (orders.rider_id = r.rider_id OR del.rider_id = r.rider_id)
+      LEFT JOIN riders r ON r.rider_id = COALESCE(del.rider_id, orders.rider_id)
       LEFT JOIN users u_rider ON r.user_id = u_rider.user_id
       LEFT JOIN users u_customer ON orders.user_id = u_customer.user_id
       WHERE orders.user_id = ?
@@ -1444,15 +1445,26 @@ app.get('/api/orders/user/:userId', async (req, res) => {
       pickup: 'รับที่ร้าน'
     };
 
-    const formattedOrders = await Promise.all(orders.map(async (order) => {
-      const [items] = await db.execute(
-        `SELECT oi.*, p.name AS db_product_name, COALESCE(p.image_url, (SELECT image_url FROM auctions WHERE title COLLATE utf8mb4_unicode_ci = oi.product_name COLLATE utf8mb4_unicode_ci LIMIT 1)) AS product_image
+    // Batch fetch all items in 1 single fast query
+    const orderIds = orders.map(o => o.order_id);
+    let itemsByOrderId = {};
+    if (orderIds.length > 0) {
+      const placeholders = orderIds.map(() => '?').join(',');
+      const [allItems] = await db.execute(
+        `SELECT oi.*, p.name AS db_product_name, p.image_url AS product_image
          FROM order_items oi
          LEFT JOIN products p ON oi.product_id = p.product_id
-         WHERE oi.order_id = ?`,
-        [order.order_id]
+         WHERE oi.order_id IN (${placeholders})`,
+        orderIds
       );
+      allItems.forEach(item => {
+        if (!itemsByOrderId[item.order_id]) itemsByOrderId[item.order_id] = [];
+        itemsByOrderId[item.order_id].push(item);
+      });
+    }
 
+    const formattedOrders = orders.map((order) => {
+      const items = itemsByOrderId[order.order_id] || [];
       const primaryItem = items && items.length > 0 ? items[0] : null;
       const displayTitle = primaryItem ? (primaryItem.product_name || primaryItem.db_product_name || order.shop_name) : (order.shop_name || 'ร้านค้า');
       const displayImage = (primaryItem && primaryItem.product_image) || order.shop_image || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500';
@@ -1470,7 +1482,7 @@ app.get('/api/orders/user/:userId', async (req, res) => {
         status_text: statusThai[order.order_status] || order.order_status,
         delivery_type_text: deliveryTypeThai[order.delivery_type] || order.delivery_type
       };
-    }));
+    });
 
     res.json({ success: true, data: formattedOrders });
 
@@ -1848,10 +1860,11 @@ app.put('/api/orders/:orderId/complete', async (req, res) => {
       return res.status(400).json({ success: false, message: 'คำสั่งซื้อนี้เสร็จสมบูรณ์ไปแล้ว' });
     }
 
-    // 1. อัปเดตสถานะเป็น completed
+    // 1. อัปเดตสถานะคำสั่งซื้อและการจัดส่งเป็น completed (เสร็จสมบูรณ์ 100%)
     await connection.query('UPDATE orders SET order_status = "completed", delivered_at = NOW() WHERE order_id = ?', [orderId]);
+    await connection.query('UPDATE deliveries SET status = "completed", completed_at = NOW() WHERE order_id = ?', [orderId]);
 
-    // 2. คำนวณยอดเงินร้านค้าและโอนเข้า Wallet
+    // 2. คำนวณและโอนเงินเข้ากระเป๋าร้านค้า (Merchant Escrow Release)
     const shopId = order.shop_id;
     const totalAmount = parseFloat(order.total_amount) || 0;
     const deliveryFee = parseFloat(order.delivery_fee) || 0;
@@ -1867,6 +1880,21 @@ app.put('/api/orders/:orderId/complete', async (req, res) => {
         INSERT INTO wallet_transactions (user_type, target_id, order_id, amount, type, description)
         VALUES ('shop', ?, ?, ?, 'credit', ?)
       `, [shopId, orderId, shopAmount, `รายรับจากออเดอร์ #${orderId}`]);
+    }
+
+    // 3. ปล่อยเงินค่ารอบเข้ากระเป๋าไรเดอร์เมื่อลูกค้ายืนยันรับสินค้าแล้วเท่านั้น (Rider Escrow Release)
+    const [delRows] = await connection.query('SELECT rider_id FROM deliveries WHERE order_id = ?', [orderId]);
+    if (delRows.length > 0 && delRows[0].rider_id && deliveryFee > 0) {
+      const riderId = delRows[0].rider_id;
+      await connection.query(`
+        INSERT INTO rider_wallets (rider_id, balance) VALUES (?, ?)
+        ON DUPLICATE KEY UPDATE balance = balance + VALUES(balance)
+      `, [riderId, deliveryFee]);
+
+      await connection.query(`
+        INSERT INTO wallet_transactions (user_type, target_id, order_id, amount, type, description)
+        VALUES ('rider', ?, ?, ?, 'credit', ?)
+      `, [riderId, orderId, deliveryFee, `ค่ารอบจัดส่งออเดอร์ #${orderId} (ลูกค้ายืนยันรับสินค้าแล้ว)`]);
     }
 
     await connection.commit();
@@ -3138,25 +3166,31 @@ app.get('/api/shops/:shopId/orders', async (req, res) => {
 
     const [orders] = await db.execute(query, params);
 
-    // ดึง order_items สำหรับแต่ละออเดอร์
-    const formattedOrders = [];
-    for (const order of orders) {
-      const [items] = await db.execute(
-        `SELECT oi.*, p.name AS db_product_name, COALESCE(p.image_url, (SELECT image_url FROM auctions WHERE title COLLATE utf8mb4_unicode_ci = oi.product_name COLLATE utf8mb4_unicode_ci LIMIT 1)) AS product_image
+    // Batch fetch all items in 1 query
+    const orderIds = orders.map(o => o.order_id);
+    let itemsByOrderId = {};
+    if (orderIds.length > 0) {
+      const placeholders = orderIds.map(() => '?').join(',');
+      const [allItems] = await db.execute(
+        `SELECT oi.*, p.name AS db_product_name, p.image_url AS product_image
          FROM order_items oi
          LEFT JOIN products p ON oi.product_id = p.product_id
-         WHERE oi.order_id = ?`,
-        [order.order_id]
+         WHERE oi.order_id IN (${placeholders})`,
+        orderIds
       );
-
-      formattedOrders.push({
-        ...order,
-        items: items.map(item => ({
-          ...item,
-          product_name: item.product_name || item.db_product_name || 'สินค้า'
-        }))
+      allItems.forEach(item => {
+        if (!itemsByOrderId[item.order_id]) itemsByOrderId[item.order_id] = [];
+        itemsByOrderId[item.order_id].push(item);
       });
     }
+
+    const formattedOrders = orders.map(order => ({
+      ...order,
+      items: (itemsByOrderId[order.order_id] || []).map(item => ({
+        ...item,
+        product_name: item.product_name || item.db_product_name || 'สินค้า'
+      }))
+    }));
 
     res.json({ success: true, orders: formattedOrders });
   } catch (error) {
@@ -3479,7 +3513,7 @@ app.get('/api/admin/users/:id/details', async (req, res) => {
       const [riderRows] = await db.execute(`SELECT rider_id FROM riders WHERE user_id = ? LIMIT 1`, [userId]);
       if (riderRows.length > 0) {
         const riderId = riderRows[0].rider_id;
-        const [s] = await db.execute(`SELECT COUNT(d.id) AS total_orders, SUM(o.delivery_fee) AS total_spent, AVG(o.delivery_fee) AS avg_order_value FROM deliveries d JOIN orders o ON d.order_id = o.order_id WHERE d.rider_id = ? AND d.status = 'delivered'`, [riderId]);
+        const [s] = await db.execute(`SELECT COUNT(d.id) AS total_orders, SUM(o.delivery_fee) AS total_spent, AVG(o.delivery_fee) AS avg_order_value FROM deliveries d JOIN orders o ON d.order_id = o.order_id WHERE d.rider_id = ? AND (d.status = 'completed' OR o.order_status = 'completed')`, [riderId]);
         stats = { total_orders: s[0].total_orders || 0, total_spent: s[0].total_spent || 0, avg_order_value: s[0].avg_order_value || 0 };
         const [ro] = await db.execute(`SELECT o.order_id, o.delivery_fee as total_amount, d.status as order_status, d.completed_at as created_at FROM deliveries d JOIN orders o ON d.order_id = o.order_id WHERE d.rider_id = ? ORDER BY d.completed_at DESC LIMIT 5`, [riderId]);
         recent_orders = ro;
@@ -4350,7 +4384,8 @@ app.get('/api/rider/wallet', async (req, res) => {
     if (wallets.length > 0) {
       balance = wallets[0].balance;
     } else {
-      const [delivs] = await db.query("SELECT SUM(o.delivery_fee) as earned FROM deliveries d JOIN orders o ON d.order_id = o.order_id WHERE d.rider_id = ? AND d.status = 'delivered'", [riderId]);
+      // รายได้ที่เงินเข้ากระเป๋าใช้ได้จริง: นับเฉพาะออเดอร์ที่ลูกค้ายืนยันรับของแล้วเท่านั้น (completed)
+      const [delivs] = await db.query("SELECT SUM(o.delivery_fee) as earned FROM deliveries d JOIN orders o ON d.order_id = o.order_id WHERE d.rider_id = ? AND (d.status = 'completed' OR o.order_status = 'completed')", [riderId]);
       const [withdraws] = await db.query("SELECT SUM(amount) as withdrawn FROM wallet_transactions WHERE user_type = 'rider' AND target_id = ? AND type = 'debit'", [riderId]);
       const [pendingW] = await db.query("SELECT SUM(amount) as p_amount FROM withdrawals WHERE user_type = 'rider' AND rider_id = ? AND status = 'pending'", [riderId]);
       const pendingWithdrawn = pendingW[0]?.p_amount || 0;
@@ -4360,11 +4395,15 @@ app.get('/api/rider/wallet', async (req, res) => {
       balance = Number(earned) - Number(withdrawn);
     }
 
-    const [todayStats] = await db.query("SELECT COUNT(d.id) as jobs, SUM(o.delivery_fee) as income FROM deliveries d JOIN orders o ON d.order_id = o.order_id WHERE d.rider_id = ? AND d.status = 'delivered' AND DATE(d.completed_at) = CURRENT_DATE()", [riderId]);
+    // ยอดเงินที่ส่งมอบแล้วแต่รอลูกค้ายืนยัน (Pending Customer Confirmation)
+    const [pendingDelivs] = await db.query("SELECT SUM(o.delivery_fee) as pending_income, COUNT(d.id) as pending_jobs FROM deliveries d JOIN orders o ON d.order_id = o.order_id WHERE d.rider_id = ? AND d.status = 'delivered' AND o.order_status = 'delivered'", [riderId]);
+    const pendingIncome = pendingDelivs[0]?.pending_income || 0;
+
+    const [todayStats] = await db.query("SELECT COUNT(d.id) as jobs, SUM(o.delivery_fee) as income FROM deliveries d JOIN orders o ON d.order_id = o.order_id WHERE d.rider_id = ? AND (d.status = 'completed' OR o.order_status = 'completed') AND DATE(d.completed_at) = CURRENT_DATE()", [riderId]);
     const todayJobs = todayStats[0].jobs || 0;
     const todayIncome = todayStats[0].income || 0;
 
-    const [deliveries] = await db.query("SELECT d.id, d.completed_at as created_at, o.delivery_fee as amount, 'credit' as type, s.name as description FROM deliveries d JOIN orders o ON d.order_id = o.order_id JOIN shops s ON o.shop_id = s.shop_id WHERE d.rider_id = ? AND d.status = 'delivered' ORDER BY d.completed_at DESC LIMIT 15", [riderId]);
+    const [deliveries] = await db.query("SELECT d.id, d.completed_at as created_at, o.delivery_fee as amount, 'credit' as type, s.name as description, d.status as delivery_status, o.order_status FROM deliveries d JOIN orders o ON d.order_id = o.order_id JOIN shops s ON o.shop_id = s.shop_id WHERE d.rider_id = ? AND (d.status = 'delivered' OR d.status = 'completed') ORDER BY d.completed_at DESC LIMIT 15", [riderId]);
     
     const [walletTx] = await db.query("SELECT id, created_at, amount, type, description FROM wallet_transactions WHERE user_type = 'rider' AND target_id = ? ORDER BY created_at DESC LIMIT 15", [riderId]);
 
@@ -4372,7 +4411,7 @@ app.get('/api/rider/wallet', async (req, res) => {
     history.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).reverse();
     history = history.slice(0, 20);
 
-    res.json({ success: true, balance, todayIncome, todayJobs, history });
+    res.json({ success: true, balance, todayIncome, todayJobs, pendingIncome, history });
   } catch (error) {
     console.error('Wallet API error:', error);
     res.status(500).json({ success: false, message: 'Server error' });
