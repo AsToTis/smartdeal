@@ -74,13 +74,34 @@ export default function AuctionDetailScreen() {
     }
   };
 
+  const parseSafeDate = (val: any) => {
+    if (!val) return 0;
+    if (typeof val === 'number') return val;
+    const str = String(val).trim();
+    const isoStr = str.includes('T') ? str : str.replace(' ', 'T');
+    const d = new Date(isoStr).getTime();
+    if (!isNaN(d)) return d;
+    const d2 = new Date(str).getTime();
+    if (!isNaN(d2)) return d2;
+    return 0;
+  };
+
   // Real-time Countdown Timer
   useEffect(() => {
-    if (!auction?.end_time) return;
+    if (!auction?.end_time) {
+      setTimeLeft({ hours: '00', minutes: '00', seconds: '00' });
+      return;
+    }
 
     const tick = () => {
       const now = new Date().getTime();
-      const end = new Date(auction.end_time).getTime();
+      const end = parseSafeDate(auction.end_time);
+
+      if (end <= 0) {
+        setTimeLeft({ hours: '00', minutes: '00', seconds: '00' });
+        return;
+      }
+
       const diff = end - now;
 
       if (diff <= 0) {
@@ -96,9 +117,9 @@ export default function AuctionDetailScreen() {
       const s = Math.floor((diff % (1000 * 60)) / 1000);
 
       setTimeLeft({
-        hours: h < 10 ? `0${h}` : `${h}`,
-        minutes: m < 10 ? `0${m}` : `${m}`,
-        seconds: s < 10 ? `0${s}` : `${s}`,
+        hours: isNaN(h) ? '00' : (h < 10 ? `0${h}` : `${h}`),
+        minutes: isNaN(m) ? '00' : (m < 10 ? `0${m}` : `${m}`),
+        seconds: isNaN(s) ? '00' : (s < 10 ? `0${s}` : `${s}`),
       });
     };
 

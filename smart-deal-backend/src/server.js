@@ -1852,6 +1852,7 @@ app.get('/api/auctions/:auctionId', async (req, res) => {
       success: true,
       auction: {
         ...auction,
+        end_time: auction.end_time ? new Date(auction.end_time).toISOString() : null,
         start_price: startPrice,
         original_price: originalPrice,
         discount_percent: discountPercent,

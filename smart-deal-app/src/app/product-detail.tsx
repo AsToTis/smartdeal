@@ -55,13 +55,35 @@ export default function ProductDetailScreen() {
     }
   };
 
+  const parseSafeDate = (val: any) => {
+    if (!val) return 0;
+    if (typeof val === 'number') return val;
+    const str = String(val).trim();
+    const isoStr = str.includes('T') ? str : str.replace(' ', 'T');
+    const d = new Date(isoStr).getTime();
+    if (!isNaN(d)) return d;
+    const d2 = new Date(str).getTime();
+    if (!isNaN(d2)) return d2;
+    return 0;
+  };
+
   // นับเวลาถอยหลัง Real-time
   useEffect(() => {
-    if (!product?.deal_end_time) return;
+    const rawEnd = product?.deal_end_time || product?.expiry_time;
+    if (!rawEnd) {
+      setTimeLeft({ hours: '00', minutes: '00', seconds: '00' });
+      return;
+    }
 
     const calculateTime = () => {
       const now = new Date().getTime();
-      const endTime = new Date(product.deal_end_time).getTime();
+      const endTime = parseSafeDate(rawEnd);
+
+      if (endTime <= 0) {
+        setTimeLeft({ hours: '00', minutes: '00', seconds: '00' });
+        return;
+      }
+
       const diff = endTime - now;
 
       if (diff > 0) {
@@ -70,9 +92,9 @@ export default function ProductDetailScreen() {
         const s = Math.floor((diff % (1000 * 60)) / 1000);
 
         setTimeLeft({
-          hours: h < 10 ? `0${h}` : `${h}`,
-          minutes: m < 10 ? `0${m}` : `${m}`,
-          seconds: s < 10 ? `0${s}` : `${s}`,
+          hours: isNaN(h) ? '00' : (h < 10 ? `0${h}` : `${h}`),
+          minutes: isNaN(m) ? '00' : (m < 10 ? `0${m}` : `${m}`),
+          seconds: isNaN(s) ? '00' : (s < 10 ? `0${s}` : `${s}`),
         });
       } else {
         setTimeLeft({ hours: '00', minutes: '00', seconds: '00' });
