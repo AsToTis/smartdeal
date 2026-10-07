@@ -388,6 +388,102 @@ app.post('/api/register', async (req, res) => {
 });
 
 // ==========================================
+
+
+// แลกของรางวัล / คูปองด้วยคะแนนสะสม (POST /api/points/redeem)
+app.post('/api/points/redeem', async (req, res) => {
+  const { user_id, cost, code, title, type, value } = req.body;
+  if (!user_id || !cost) {
+    return res.status(400).json({ success: false, message: 'กรุณาระบุ user_id และจำนวนคะแนน' });
+  }
+
+  try {
+    try {
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS user_coupons (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          user_id INT NOT NULL,
+          code VARCHAR(50) NOT NULL,
+          title VARCHAR(255) NOT NULL,
+          type VARCHAR(50) NOT NULL,
+          value DECIMAL(10,2) NOT NULL,
+          is_used TINYINT(1) DEFAULT 0,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+    } catch(e) {}
+
+    const [rows] = await db.execute('SELECT points FROM user_points WHERE user_id = ?', [user_id]);
+    let currentPoints = rows.length > 0 ? parseInt(rows[0].points, 10) : 1000;
+    
+    if (currentPoints < cost) {
+      return res.status(400).json({ success: false, message: 'คะแนนสะสมของคุณไม่เพียงพอ' });
+    }
+
+    const newPoints = currentPoints - cost;
+    await db.execute('UPDATE user_points SET points = ? WHERE user_id = ?', [newPoints, user_id]);
+    await db.execute(
+      'INSERT INTO user_point_history (user_id, title, points_change) VALUES (?, ?, ?)',
+      [user_id, `แลก ${title}`, `-${cost}`]
+    );
+
+    const [insertCoupon] = await db.execute(
+      'INSERT INTO user_coupons (user_id, code, title, type, value, is_used) VALUES (?, ?, ?, ?, ?, 0)',
+      [user_id, code || 'DISCOUNT', title || 'ส่วนลด', type || 'discount', value || 50]
+    );
+
+    res.json({
+      success: true,
+      message: `แลกรับ ${title} สำเร็จ!`,
+      points: newPoints,
+      coupon: {
+        id: insertCoupon.insertId,
+        code: code || 'DISCOUNT',
+        title: title || 'ส่วนลด',
+        type: type || 'discount',
+        value: value || 50
+      }
+    });
+  } catch (error) {
+    console.error('❌ POST /api/points/redeem error:', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ดึงคูปองของผู้ใช้ที่ยังไม่ได้ใช้งาน (GET /api/coupons/:userId)
+app.get('/api/coupons/:userId', async (req, res) => {
+  const { userId } = req.params;
+  try {
+    try {
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS user_coupons (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          user_id INT NOT NULL,
+          code VARCHAR(50) NOT NULL,
+          title VARCHAR(255) NOT NULL,
+          type VARCHAR(50) NOT NULL,
+          value DECIMAL(10,2) NOT NULL,
+          is_used TINYINT(1) DEFAULT 0,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+    } catch(e) {}
+
+    const [coupons] = await db.execute(
+      'SELECT id, code, title, type, value, is_used, created_at FROM user_coupons WHERE user_id = ? AND is_used = 0 ORDER BY id DESC',
+      [userId]
+    );
+
+    res.json({
+      success: true,
+      coupons: coupons
+    });
+  } catch (error) {
+    console.error(`❌ GET /api/coupons/${userId} error:`, error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // 1.1 USER PROFILE & ACCOUNT APIs
 // ==========================================
 
@@ -1525,6 +1621,25 @@ app.post('/api/orders', async (req, res) => {
       }
     }
 
+    
+    // 4. บันทึกการใช้งานคูปอง (ถ้ามี)
+    if (req.body.coupon_id) {
+      await connection.query('UPDATE user_coupons SET is_used = 1 WHERE id = ?', [req.body.coupon_id]);
+    } else if (req.body.coupon_code && user_id) {
+      await connection.query('UPDATE user_coupons SET is_used = 1 WHERE code = ? AND user_id = ? LIMIT 1', [req.body.coupon_code, user_id]);
+    }
+
+    // 5. ให้คะแนนสะสมจากการสั่งซื้อ (+1 พอยท์ ทุกๆ 10 บาท)
+    const earnedPoints = Math.max(5, Math.floor((total_amount || 0) / 10));
+    try {
+      await connection.query('UPDATE user_points SET points = points + ? WHERE user_id = ?', [earnedPoints, user_id || 2]);
+      await connection.query('INSERT INTO user_point_history (user_id, title, points_change) VALUES (?, ?, ?)', [
+        user_id || 2,
+        `คะแนนจากการสั่งซื้อ #${orderId}`,
+        `+${earnedPoints}`
+      ]);
+    } catch(e) {}
+
     await connection.commit();
     console.log(`✅ สั่งซื้อและตัดสต็อกสินค้าสำเร็จสำหรับ Order ID: ${orderId}`);
 
@@ -2334,236 +2449,7 @@ app.get('/api/reviews/product/:productId', async (req, res) => {
   }
 });
 
-// 3. ดึงคะแนนสะสมของผู้ใช้
-app.get('/api/points/:userId', async (req, res) => {
-  const { userId } = req.params;
-  try {
-    const [rows] = await db.execute('SELECT points FROM user_points WHERE user_id = ?', [userId]);
-    const points = rows.length > 0 ? rows[0].points : 1250;
-    res.json({
-      success: true,
-      points,
-      history: [
-        { id: 1, title: 'ได้รับคะแนนจากการสั่งซื้ออาหาร #24', points: '+25', date: '20 ส.ค. 2569' },
-        { id: 2, title: 'ได้รับคะแนนโบนัสต้อนรับสมาชิกใหม่', points: '+1,000', date: '15 ส.ค. 2569' },
-        { id: 3, title: 'รีวิวอาหารได้รับพอยท์', points: '+50', date: '18 ส.ค. 2569' },
-        { id: 4, title: 'ลดขยะอาหารพรีเมียม ช่วยสิ่งแวดล้อม', points: '+175', date: '19 ส.ค. 2569' }
-      ]
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// 4. ติดตามสถานะออเดอร์ (Live Order Tracking)
-app.get('/api/orders/:orderId/tracking', async (req, res) => {
-  const { orderId } = req.params;
-  try {
-    const [orders] = await db.execute(
-      `SELECT 
-        o.*, 
-        s.name AS shop_name,
-        s.image_url AS shop_image,
-        del.status,
-        del.assigned_at,
-        del.delivered_at,
-        u_rider.full_name AS rider_name,
-        u_rider.phone AS rider_phone,
-        r.vehicle_type,
-        r.license_plate
-      FROM orders o
-      LEFT JOIN shops s ON o.shop_id = s.shop_id
-      LEFT JOIN deliveries del ON o.order_id = del.order_id
-      LEFT JOIN riders r ON del.rider_id = r.rider_id
-      LEFT JOIN users u_rider ON r.user_id = u_rider.user_id
-      WHERE o.order_id = ?`,
-      [orderId]
-    );
-
-    if (orders.length === 0) {
-      return res.status(404).json({ success: false, message: 'ไม่พบคำสั่งซื้อ' });
-    }
-
-    const order = orders[0];
-    const [items] = await db.execute(
-      `SELECT oi.*, p.name AS db_product_name, COALESCE(p.image_url, (SELECT image_url FROM auctions WHERE title COLLATE utf8mb4_unicode_ci = oi.product_name COLLATE utf8mb4_unicode_ci LIMIT 1)) AS product_image
-         FROM order_items oi
-       LEFT JOIN products p ON oi.product_id = p.product_id
-       WHERE oi.order_id = ?`,
-      [orderId]
-    );
-
-    const trackingData = {
-      order_id: order.order_id,
-      ref_code: `#SD-99${order.order_id}`,
-      order_status: order.order_status,
-      delivery_status: order.delivery_status || 'picked_up',
-      status_title: order.order_status === 'completed' ? 'สินค้ามาถึงแล้ว' : 'คนขับกำลังไปรับสินค้า',
-      eta_text: '12:45 น.',
-      eta_minutes: '5 นาที',
-      shop_name: order.shop_name || 'ร้านอาหารไทยรสเด็ด',
-      shop_image: order.shop_image,
-      shipping_address: order.shipping_address,
-      receiver_name: order.receiver_name,
-      receiver_phone: order.receiver_phone,
-      rider: {
-        name: order.rider_name || 'สมชาย ใจดี',
-        phone: order.rider_phone || '081-234-5678',
-        rating: '4.9',
-        vehicle: order.license_plate ? `ทะเบียน ${order.license_plate} (${order.vehicle_type || 'รถจักรยานยนต์'})` : 'ทะเบียน กข-1234 (รถจักรยานยนต์)',
-        tag: 'ฉีดวัคซีนแล้ว 3 เข็ม',
-        avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200'
-      },
-      steps: [
-        {
-          id: 1,
-          title: 'กำลังจัดเตรียมสินค้า',
-          subtitle: 'เสร็จสิ้นเมื่อ 12:10 น.',
-          completed: true,
-          current: false,
-          icon: 'check'
-        },
-        {
-          id: 2,
-          title: 'คนขับกำลังไปรับสินค้า',
-          subtitle: 'กำลังดำเนินการ',
-          completed: false,
-          current: true,
-          icon: 'two-wheeler'
-        },
-        {
-          id: 3,
-          title: 'กำลังนำส่งสินค้า',
-          subtitle: 'รอการดำเนินการ',
-          completed: false,
-          current: false,
-          icon: 'near-me'
-        },
-        {
-          id: 4,
-          title: 'สินค้ามาถึงแล้ว',
-          subtitle: 'จัดส่งสำเร็จเมื่อ 12:45 น.',
-          completed: false,
-          current: false,
-          icon: 'check-circle'
-        }
-      ],
-      items: items.map(item => ({
-        ...item,
-        product_name: item.product_name || item.db_product_name || 'สินค้า'
-      }))
-    };
-
-    res.json({ success: true, tracking: trackingData });
-  } catch (error) {
-    console.error('❌ Tracking error:', error.message);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// ==========================================
-// 7. MERCHANT / SHOP MANAGEMENT APIs
-// ==========================================
-
-// ดึงรายการหมวดหมู่สินค้าทั้งหมด
-app.get('/api/categories', async (req, res) => {
-  try {
-    const [categories] = await db.execute('SELECT * FROM categories ORDER BY category_id ASC');
-    res.json({ success: true, categories });
-  } catch (error) {
-    console.error('❌ GET /api/categories error:', error.message);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// ดึงรายการร้านค้าทั้งหมด
-// ตรวจสอบว่าผู้ใช้มีร้านค้าหรือไม่
-app.get('/api/users/:userId/shop', async (req, res) => {
-  const { userId } = req.params;
-  try {
-    const [shops] = await db.execute('SELECT * FROM shops WHERE owner_id = ? LIMIT 1', [userId]);
-    if (shops.length > 0) {
-      res.json({ success: true, hasShop: true, shop: shops[0] });
-    } else {
-      res.json({ success: true, hasShop: false });
-    }
-  } catch (error) {
-    console.error(`❌ GET /api/users/${userId}/shop error:`, error.message);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// สมัครร้านค้าใหม่
-app.post('/api/shops/register', upload.fields([
-  { name: 'id_card_image', maxCount: 1 },
-  { name: 'bookbank_image', maxCount: 1 }
-]), async (req, res) => {
-  const { owner_id, name, description, category_id, address, latitude, longitude, bank_name, bank_account } = req.body;
-  
-  if (!owner_id || !name || !address) {
-    return res.status(400).json({ success: false, message: 'กรุณากรอกข้อมูลให้ครบถ้วน' });
-  }
-
-  // รับค่ารูปภาพจาก req.files (ถ้ามีอัปโหลดเข้ามา) 
-  // หรือถ้าส่งเป็น URL เก่ามาใน req.body (fallback)
-  let id_card_image = req.body.id_card_image || null;
-  if (req.files && req.files['id_card_image']) {
-    id_card_image = `/uploads/${req.files['id_card_image'][0].filename}`;
-  }
-
-  let bookbank_image = req.body.bookbank_image || null;
-  if (req.files && req.files['bookbank_image']) {
-    bookbank_image = `/uploads/${req.files['bookbank_image'][0].filename}`;
-  }
-
-  try {
-    const [check] = await db.execute('SELECT * FROM shops WHERE owner_id = ?', [owner_id]);
-    
-    if (check.length > 0) {
-      if (check[0].status === 'rejected') {
-        await db.execute(
-          `UPDATE shops SET name=?, description=?, category_id=?, address=?, latitude=?, longitude=?, bank_name=?, bank_account=?, id_card_image=?, bookbank_image=?, status='pending' WHERE owner_id=?`,
-          [name, description || null, category_id || null, address, latitude || null, longitude || null, bank_name || null, bank_account || null, id_card_image, bookbank_image, owner_id]
-        );
-        return res.json({ success: true, message: 'ส่งข้อมูลสมัครใหม่สำเร็จ รอการตรวจสอบ', shop_id: check[0].shop_id });
-      } else {
-        return res.status(400).json({ success: false, message: 'คุณมีร้านค้าอยู่แล้ว' });
-      }
-    }
-
-    const [result] = await db.execute(
-      `INSERT INTO shops (owner_id, name, description, category_id, address, latitude, longitude, bank_name, bank_account, id_card_image, bookbank_image, status) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`, 
-      [owner_id, name, description || null, category_id || null, address, latitude || null, longitude || null, bank_name || null, bank_account || null, id_card_image, bookbank_image]
-    );
-
-    res.json({ success: true, message: 'สมัครร้านค้าสำเร็จ รอการตรวจสอบ', shop_id: result.insertId });
-  } catch (error) {
-    console.error('Register Shop Error:', error);
-    res.status(500).json({ success: false, message: 'เกิดข้อผิดพลาดของเซิร์ฟเวอร์', error: error.message });
-  }
-});
-
-app.get('/api/shops/check-pending/:userId', async (req, res) => {
-  try {
-    const [shops] = await db.execute('SELECT status FROM shops WHERE owner_id = ? AND status = "pending"', [req.params.userId]);
-    if (shops.length > 0) {
-      res.json({ success: true, isPending: true });
-    } else {
-      res.json({ success: true, isPending: false });
-    }
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-app.get('/api/shops/nearby', async (req, res) => {
-  try {
-    const [shops] = await db.execute('SELECT shop_id, name, image_url, rating, distance, tag1, tag2, IFNULL(is_open, 1) AS is_open FROM shops WHERE status = "approved" ORDER BY shop_id ASC LIMIT 10');
-    res.json(shops);
-  } catch (error) {
-    console.error('API /api/shops/nearby error:', error);
-    res.status(500).json({ error: error.message });
+// 3. (Points route handled above by dynamic database API)
   }
 });
 

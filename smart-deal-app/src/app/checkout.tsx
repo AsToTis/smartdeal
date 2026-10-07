@@ -1,10 +1,10 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { 
   StyleSheet, Text, View, ScrollView, TouchableOpacity, 
-  Image, ActivityIndicator, Alert, TextInput 
+  Image, ActivityIndicator, Alert, TextInput, Modal, Pressable 
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { MaterialIcons } from '@expo/vector-icons';
+import { MaterialIcons, Ionicons, FontAwesome5 } from '@expo/vector-icons';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import axios from 'axios';
 import { useCart, parseItemPrice } from '../context/CartContext';
@@ -42,14 +42,21 @@ export default function CheckoutScreen() {
   const [address, setAddress] = useState<any>(null);
   const [currentUserId, setCurrentUserId] = useState<number>(2);
 
-  // ดึงข้อมูลที่อยู่จริงเมื่อเปิดหน้า หรือเมื่อย้อนกลับมาจากหน้าจัดการที่อยู่
+  // Coupons State
+  const [coupons, setCoupons] = useState<any[]>([]);
+  const [selectedCoupon, setSelectedCoupon] = useState<any | null>(null);
+  const [couponCodeInput, setCouponCodeInput] = useState('');
+  const [showCouponModal, setShowCouponModal] = useState(false);
+  const [loadingCoupons, setLoadingCoupons] = useState(false);
+
+  // ดึงข้อมูลที่อยู่และคูปองจริงเมื่อเปิดหน้า
   useFocusEffect(
     useCallback(() => {
-      fetchUserAddress();
+      fetchUserAddressAndCoupons();
     }, [])
   );
 
-  const fetchUserAddress = async () => {
+  const fetchUserAddressAndCoupons = async () => {
     try {
       setLoadingAddress(true);
       let userId = 2;
@@ -64,19 +71,65 @@ export default function CheckoutScreen() {
         }
       } catch (e) {}
 
-      const res = await axios.get(`${BASE_URL}/users/${userId}/address`);
-      if (res.data && (res.data.title || res.data.address_detail)) {
-        setAddress(res.data);
-        if (res.data.note_for_rider && !deliveryNote) {
-          setDeliveryNote(res.data.note_for_rider);
+      // ดึงที่อยู่
+      try {
+        const res = await axios.get(`${BASE_URL}/users/${userId}/address`);
+        if (res.data && (res.data.title || res.data.address_detail)) {
+          setAddress(res.data);
+          if (res.data.note_for_rider && !deliveryNote) {
+            setDeliveryNote(res.data.note_for_rider);
+          }
+        } else {
+          setAddress(null);
         }
-      } else {
+      } catch (e) {
         setAddress(null);
       }
+
+      // ดึงคูปองสะสมของผู้ใช้
+      await loadUserCoupons(userId);
     } catch (error) {
-      setAddress(null);
+      console.log('Error initializing checkout data:', error);
     } finally {
       setLoadingAddress(false);
+    }
+  };
+
+  const loadUserCoupons = async (userId: number) => {
+    try {
+      setLoadingCoupons(true);
+      let combinedCoupons: any[] = [];
+
+      // 1. ดึงจาก Server / DB
+      try {
+        const res = await axios.get(`${BASE_URL}/coupons/${userId}`);
+        if (res.data && res.data.success && Array.isArray(res.data.coupons)) {
+          combinedCoupons = [...res.data.coupons];
+        }
+      } catch (err) {
+        console.log('Error fetching coupons from backend:', err);
+      }
+
+      // 2. ดึงจาก AsyncStorage สำรอง
+      try {
+        const saved = await AsyncStorage.getItem('savedCoupons');
+        if (saved) {
+          const localCoupons = JSON.parse(saved);
+          if (Array.isArray(localCoupons)) {
+            for (const lc of localCoupons) {
+              if (!combinedCoupons.some(c => c.code === lc.code)) {
+                combinedCoupons.push(lc);
+              }
+            }
+          }
+        }
+      } catch (err) {}
+
+      setCoupons(combinedCoupons);
+    } catch (e) {
+      console.log('Error loading coupons:', e);
+    } finally {
+      setLoadingCoupons(false);
     }
   };
 
@@ -89,9 +142,56 @@ export default function CheckoutScreen() {
   }, 0);
 
   const deliveryFee = deliveryMethod === 'delivery' ? 15 : 0;
-  const discount = 0;
+
+  // คำนวณส่วนลดตามคูปองที่เลือก
+  let discount = 0;
+  if (selectedCoupon) {
+    if (selectedCoupon.type === 'free_delivery') {
+      discount = deliveryFee;
+    } else if (selectedCoupon.type === 'discount') {
+      discount = Math.min(Number(selectedCoupon.value || 0), subtotal);
+    } else if (selectedCoupon.type === 'percent') {
+      discount = Math.min((subtotal * Number(selectedCoupon.value || 0)) / 100, subtotal);
+    } else {
+      discount = Math.min(Number(selectedCoupon.value || 0), subtotal);
+    }
+  }
+
   const grandTotal = Math.max(0, subtotal + deliveryFee - discount);
   const deliveryFeeText = deliveryMethod === 'delivery' ? '฿15.00' : 'ฟรี (รับเองที่ร้าน)';
+
+  const handleApplyCustomCode = () => {
+    const trimmed = couponCodeInput.trim().toUpperCase();
+    if (!trimmed) {
+      Alert.alert('แจ้งเตือน', 'กรุณากรอกโค้ดส่วนลด');
+      return;
+    }
+
+    // ตรวจสอบในคูปองที่มี
+    const matched = coupons.find(c => c.code?.toUpperCase() === trimmed);
+    if (matched) {
+      setSelectedCoupon(matched);
+      setShowCouponModal(false);
+      setCouponCodeInput('');
+      Alert.alert('สำเร็จ 🎉', `ใช้คูปอง "${matched.title}" เรียบร้อยแล้ว`);
+      return;
+    }
+
+    // โค้ดมาตรฐานของระบบ
+    if (trimmed === 'DISCOUNT50') {
+      setSelectedCoupon({ code: 'DISCOUNT50', title: 'ส่วนลด 50 บาท', type: 'discount', value: 50 });
+      setShowCouponModal(false);
+      setCouponCodeInput('');
+      Alert.alert('สำเร็จ 🎉', 'ใช้โค้ดส่วนลด 50 บาท เรียบร้อยแล้ว');
+    } else if (trimmed === 'FREEDEL') {
+      setSelectedCoupon({ code: 'FREEDEL', title: 'คูปองส่งฟรี', type: 'free_delivery', value: 15 });
+      setShowCouponModal(false);
+      setCouponCodeInput('');
+      Alert.alert('สำเร็จ 🎉', 'ใช้คูปองส่งฟรีเรียบร้อยแล้ว');
+    } else {
+      Alert.alert('ไม่พบคูปอง', 'โค้ดส่วนลดไม่ถูกต้อง หรือยังไม่ได้แลกรับคูปองนี้');
+    }
+  };
 
   const handlePlaceOrder = async () => {
     if (cartItems.length === 0) {
@@ -112,6 +212,8 @@ export default function CheckoutScreen() {
         order_status: 'pending',
         delivery_type: deliveryMethod,
         payment_method: paymentMethod,
+        coupon_id: selectedCoupon?.id || null,
+        coupon_code: selectedCoupon?.code || null,
         receiver_name: address?.receiver_name || 'ผู้รับ',
         receiver_phone: address?.receiver_phone || '',
         shipping_address: address ? `${address.title || ''} ${address.address_detail || ''}` : 'ไม่ระบุที่อยู่',
@@ -133,10 +235,17 @@ export default function CheckoutScreen() {
         const createdOrderId = res.data?.order_id || res.data?.id || res.data?.insertId || 1;
         const currentShopId = cartItems[0]?.shop_id || 1;
 
-        // ❌ ปิดการทำงานของ clearCart(); ไว้ชั่วคราว สินค้าจะถูกล้างต่อเมื่อชำระเงินในหน้า payment.tsx สำเร็จเท่านั้น
-        // if (!buyNowItems && typeof clearCart === 'function') {
-        //   clearCart();
-        // }
+        // ลบคูปองที่ใช้แล้วออกจาก local storage
+        if (selectedCoupon?.code) {
+          try {
+            const saved = await AsyncStorage.getItem('savedCoupons');
+            if (saved) {
+              const localCoupons = JSON.parse(saved);
+              const updated = localCoupons.filter((c: any) => c.code !== selectedCoupon.code);
+              await AsyncStorage.setItem('savedCoupons', JSON.stringify(updated));
+            }
+          } catch (e) {}
+        }
 
         // เปลี่ยนเส้นทางไปยังหน้า Payment
         router.replace({
@@ -151,7 +260,6 @@ export default function CheckoutScreen() {
     } catch (error: any) {
       const errorMessage = error.response?.data?.message || error.response?.data || error.message;
       console.log('Order Error Details:', errorMessage);
-      
       Alert.alert('แจ้งเตือนการสั่งซื้อ', typeof errorMessage === 'string' ? errorMessage : 'เกิดข้อผิดพลาดในการสั่งซื้อ');
     } finally {
       setLoading(false);
@@ -229,6 +337,60 @@ export default function CheckoutScreen() {
               <Text style={[styles.tabText, deliveryMethod === 'pickup' && styles.tabTextActive]}>รับที่ร้านเอง</Text>
             </TouchableOpacity>
           </View>
+        </View>
+
+        {/* คูปองส่วนลด / แลกของรางวัล */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <MaterialIcons name="local-offer" size={18} color="#e11d48" />
+              <Text style={styles.sectionTitle}>คูปองส่วนลด / พอยท์</Text>
+            </View>
+            <TouchableOpacity onPress={() => setShowCouponModal(true)}>
+              <Text style={styles.editBtnText}>
+                {selectedCoupon ? 'เปลี่ยนคูปอง' : 'เลือกคูปอง'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {selectedCoupon ? (
+            <View style={styles.activeCouponCard}>
+              <View style={styles.activeCouponLeft}>
+                <View style={styles.couponIconCircle}>
+                  <MaterialIcons 
+                    name={selectedCoupon.type === 'free_delivery' ? 'local-shipping' : 'discount'} 
+                    size={20} 
+                    color="#e11d48" 
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.activeCouponTitle}>{selectedCoupon.title || selectedCoupon.code}</Text>
+                  <Text style={styles.activeCouponSub}>
+                    {selectedCoupon.type === 'free_delivery' 
+                      ? 'ส่งฟรี (ลดค่าส่ง ฿15)' 
+                      : `ลดทันที ฿${selectedCoupon.value || 50}`}
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity 
+                style={styles.removeCouponBtn}
+                onPress={() => setSelectedCoupon(null)}
+              >
+                <MaterialIcons name="close" size={18} color="#94a3b8" />
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <TouchableOpacity 
+              style={styles.selectCouponBtn}
+              onPress={() => setShowCouponModal(true)}
+            >
+              <MaterialIcons name="confirmation-number" size={20} color="#64748b" />
+              <Text style={styles.selectCouponBtnText}>
+                {coupons.length > 0 ? `มีคูปองใช้ได้ ${coupons.length} ใบ แตะเพื่อเลือก` : 'ใส่โค้ดส่วนลด หรือเลือกคูปอง'}
+              </Text>
+              <MaterialIcons name="chevron-right" size={20} color="#94a3b8" />
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* วิธีการชำระเงิน */}
@@ -310,8 +472,11 @@ export default function CheckoutScreen() {
             </View>
             {discount > 0 && (
               <View style={styles.summaryRow}>
-                <Text style={[styles.summaryLabel, { color: '#2e7a32', fontWeight: 'bold' }]}>ส่วนลด Smart Deal</Text>
-                <Text style={[styles.summaryVal, { color: '#2e7a32', fontWeight: 'bold' }]}>-฿{discount.toFixed(2)}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                  <MaterialIcons name="local-offer" size={14} color="#e11d48" />
+                  <Text style={[styles.summaryLabel, { color: '#e11d48', fontWeight: 'bold' }]}>ส่วนลดคูปอง</Text>
+                </View>
+                <Text style={[styles.summaryVal, { color: '#e11d48', fontWeight: 'bold' }]}>-฿{discount.toFixed(2)}</Text>
               </View>
             )}
 
@@ -325,6 +490,99 @@ export default function CheckoutScreen() {
         </View>
 
       </ScrollView>
+
+      {/* Modal เลือกคูปอง */}
+      <Modal
+        visible={showCouponModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowCouponModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>เลือกคูปองส่วนลด 🎟️</Text>
+              <TouchableOpacity onPress={() => setShowCouponModal(false)}>
+                <MaterialIcons name="close" size={24} color="#64748b" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Input โค้ดส่วนลด */}
+            <View style={styles.codeInputContainer}>
+              <TextInput
+                style={styles.couponInput}
+                placeholder="กรอกโค้ดส่วนลด (เช่น DISCOUNT50)"
+                value={couponCodeInput}
+                onChangeText={setCouponCodeInput}
+                autoCapitalize="characters"
+              />
+              <TouchableOpacity style={styles.applyBtn} onPress={handleApplyCustomCode}>
+                <Text style={styles.applyBtnText}>ใช้โค้ด</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* รายการคูปองที่แลกไว้ */}
+            <Text style={{ fontSize: 13, fontWeight: 'bold', color: '#475569', marginBottom: 10 }}>
+              คูปองของฉัน ({coupons.length})
+            </Text>
+
+            <ScrollView style={{ maxHeight: 280 }} showsVerticalScrollIndicator={false}>
+              {coupons.length > 0 ? (
+                coupons.map((coupon, idx) => {
+                  const isSelected = selectedCoupon?.code === coupon.code || (selectedCoupon?.id && selectedCoupon.id === coupon.id);
+                  return (
+                    <TouchableOpacity
+                      key={coupon.id || idx}
+                      style={[styles.couponItemCard, isSelected && styles.couponItemCardActive]}
+                      onPress={() => {
+                        setSelectedCoupon(coupon);
+                        setShowCouponModal(false);
+                      }}
+                    >
+                      <View style={[styles.couponItemIcon, { backgroundColor: coupon.type === 'free_delivery' ? '#eff6ff' : '#fff1f2' }]}>
+                        <MaterialIcons 
+                          name={coupon.type === 'free_delivery' ? 'local-shipping' : 'local-offer'} 
+                          size={24} 
+                          color={coupon.type === 'free_delivery' ? '#2563eb' : '#e11d48'} 
+                        />
+                      </View>
+                      <View style={{ flex: 1, marginLeft: 12 }}>
+                        <Text style={styles.couponItemTitle}>{coupon.title || coupon.code}</Text>
+                        <Text style={styles.couponItemSub}>
+                          {coupon.type === 'free_delivery' 
+                            ? 'โค้ดส่งฟรี สำหรับการจัดส่งเดลิเวอรี่' 
+                            : `ส่วนลด ฿${coupon.value || 50} สำหรับทุกคำสั่งซื้อ`}
+                        </Text>
+                        <Text style={styles.couponItemCode}>รหัส: {coupon.code}</Text>
+                      </View>
+                      <MaterialIcons 
+                        name={isSelected ? 'check-circle' : 'radio-button-unchecked'} 
+                        size={22} 
+                        color={isSelected ? '#16a34a' : '#cbd5e1'} 
+                      />
+                    </TouchableOpacity>
+                  );
+                })
+              ) : (
+                <View style={{ paddingVertical: 30, alignItems: 'center' }}>
+                  <MaterialIcons name="sentiment-dissatisfied" size={40} color="#cbd5e1" />
+                  <Text style={{ color: '#94a3b8', marginTop: 8, fontSize: 13 }}>คุณยังไม่มีคูปองที่แลกไว้</Text>
+                  <Text style={{ color: '#64748b', fontSize: 11, marginTop: 4 }}>
+                    สามารถใช้พอยท์แลกคูปองได้ที่หน้า "โปรไฟล์"
+                  </Text>
+                </View>
+              )}
+            </ScrollView>
+
+            <TouchableOpacity 
+              style={styles.closeModalBtn}
+              onPress={() => setShowCouponModal(false)}
+            >
+              <Text style={styles.closeModalBtnText}>ตกลง</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       {/* ปุ่มสั่งซื้อด้านล่าง */}
       <View style={styles.bottomBar}>
@@ -363,7 +621,7 @@ const styles = StyleSheet.create({
   },
   backBtn: { padding: 4 },
   headerTitle: { fontSize: 16, fontWeight: 'bold', color: '#111' },
-  scrollContent: { padding: 16, paddingBottom: 100 },
+  scrollContent: { padding: 16, paddingBottom: 110 },
 
   section: { marginBottom: 20 },
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
@@ -409,6 +667,43 @@ const styles = StyleSheet.create({
   tabBtnActive: { backgroundColor: '#e8f5e9' },
   tabText: { fontSize: 13, fontWeight: '600', color: '#666' },
   tabTextActive: { color: '#2e7a32', fontWeight: 'bold' },
+
+  // Coupons UI
+  selectCouponBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    marginTop: 4
+  },
+  selectCouponBtnText: { flex: 1, marginLeft: 10, fontSize: 13, color: '#475569' },
+  activeCouponCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#fff1f2',
+    padding: 12,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#fecdd3',
+    marginTop: 4
+  },
+  activeCouponLeft: { flexDirection: 'row', alignItems: 'center', flex: 1 },
+  couponIconCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#ffe4e6',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10
+  },
+  activeCouponTitle: { fontSize: 13, fontWeight: 'bold', color: '#9f1239' },
+  activeCouponSub: { fontSize: 11, color: '#e11d48', marginTop: 2 },
+  removeCouponBtn: { padding: 6 },
 
   paymentCard: {
     flexDirection: 'row',
@@ -470,5 +765,82 @@ const styles = StyleSheet.create({
     justifyContent: 'center'
   },
   btnContent: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  submitBtnText: { color: '#fff', fontSize: 15, fontWeight: 'bold' }
+  submitBtnText: { color: '#fff', fontSize: 15, fontWeight: 'bold' },
+
+  // Coupon Modal Styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end'
+  },
+  modalContent: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+    maxHeight: '80%'
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16
+  },
+  modalTitle: { fontSize: 17, fontWeight: 'bold', color: '#0f172a' },
+  codeInputContainer: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 16
+  },
+  couponInput: {
+    flex: 1,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontSize: 13,
+    color: '#0f172a'
+  },
+  applyBtn: {
+    backgroundColor: '#2e7a32',
+    paddingHorizontal: 18,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center'
+  },
+  applyBtnText: { color: '#fff', fontSize: 13, fontWeight: 'bold' },
+  couponItemCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f8fafc',
+    padding: 12,
+    borderRadius: 14,
+    marginBottom: 8,
+    borderWidth: 1.5,
+    borderColor: '#e2e8f0'
+  },
+  couponItemCardActive: {
+    borderColor: '#16a34a',
+    backgroundColor: '#f0fdf4'
+  },
+  couponItemIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center'
+  },
+  couponItemTitle: { fontSize: 14, fontWeight: 'bold', color: '#0f172a' },
+  couponItemSub: { fontSize: 11, color: '#64748b', marginTop: 2 },
+  couponItemCode: { fontSize: 10, color: '#94a3b8', marginTop: 4, fontWeight: '600' },
+  closeModalBtn: {
+    backgroundColor: '#0f172a',
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginTop: 14
+  },
+  closeModalBtnText: { color: '#fff', fontSize: 14, fontWeight: 'bold' }
 });

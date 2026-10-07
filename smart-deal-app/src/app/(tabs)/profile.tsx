@@ -288,19 +288,47 @@ export default function ProfileScreen() {
         text: 'แลกของรางวัล',
         onPress: async () => {
           try {
-            // หักคะแนน
-            setPoints(prev => prev - cost);
-            
-            // บันทึกคูปองลง AsyncStorage
-            const existingCouponsStr = await AsyncStorage.getItem('savedCoupons');
-            let coupons = existingCouponsStr ? JSON.parse(existingCouponsStr) : [];
-            coupons.push({ code, title, type, value, expiry: new Date(Date.now() + 86400000 * 7).toISOString() }); // หมดอายุใน 7 วัน
-            await AsyncStorage.setItem('savedCoupons', JSON.stringify(coupons));
-            
-            Alert.alert('สำเร็จ', `แลกของรางวัลสำเร็จ! โค้ด ${code} ถูกบันทึกเก็บไว้ในระบบ คุณสามารถใช้ได้ในหน้าชำระเงิน`);
-          } catch (e) {
+            const userId = user?.user_id || 2;
+            const res = await axios.post(`${BASE_URL}/points/redeem`, {
+              user_id: userId,
+              cost,
+              code,
+              title,
+              type,
+              value
+            });
+
+            if (res.data && res.data.success) {
+              if (res.data.points !== undefined) {
+                setPoints(res.data.points);
+              } else {
+                setPoints(prev => prev - cost);
+              }
+
+              // บันทึกคูปองลง AsyncStorage สำรองไว้
+              const existingCouponsStr = await AsyncStorage.getItem('savedCoupons');
+              let coupons = existingCouponsStr ? JSON.parse(existingCouponsStr) : [];
+              const couponObj = res.data.coupon || { code, title, type, value };
+              coupons.push({ ...couponObj, expiry: new Date(Date.now() + 86400000 * 7).toISOString() });
+              await AsyncStorage.setItem('savedCoupons', JSON.stringify(coupons));
+
+              // โหลดประวัติพอยท์ใหม่
+              try {
+                const pointsRes = await axios.get(`${BASE_URL}/points/${userId}`);
+                if (pointsRes.data?.success) {
+                  setPoints(pointsRes.data.points);
+                  setPointsHistory(pointsRes.data.history || []);
+                }
+              } catch (e) {}
+
+              Alert.alert('สำเร็จ 🎉', `แลกของรางวัล "${title}" สำเร็จ!\nคูปองถูกบันทึกลงระบบของคุณแล้ว สามารถนำไปเลือกใช้เป็นส่วนลดได้ที่หน้าชำระเงิน`);
+            } else {
+              Alert.alert('ผิดพลาด', res.data?.message || 'ไม่สามารถแลกของรางวัลได้');
+            }
+          } catch (e: any) {
             console.error('Redeem error:', e);
-            Alert.alert('ผิดพลาด', 'ไม่สามารถแลกของรางวัลได้');
+            const msg = e.response?.data?.message || 'ไม่สามารถแลกของรางวัลได้';
+            Alert.alert('ผิดพลาด', msg);
           }
         }
       }
