@@ -98,8 +98,9 @@ const initBase64ImageSupport = async () => {
     await db.execute('ALTER TABLE banners MODIFY image_url LONGTEXT');
     await db.execute('ALTER TABLE complaints MODIFY image_url LONGTEXT');
     try { await db.execute('ALTER TABLE complaints ADD COLUMN order_id INT NULL AFTER user_id'); } catch (e) {}
+    try { await db.execute('ALTER TABLE shops ADD COLUMN is_open TINYINT(1) NOT NULL DEFAULT 1'); } catch (e) {}
 
-    console.log('✅ Tables altered for LONGTEXT images successfully.');
+    console.log('✅ Tables altered for LONGTEXT images and is_open column successfully.');
   } catch (err) {
     console.error('❌ Error altering tables for LONGTEXT:', err.message);
   }
@@ -866,64 +867,51 @@ app.get('/api/home-data', async (req, res) => {
   try {
     const [categories] = await db.execute('SELECT * FROM categories');
     
-    // Add opening_time and closing_time to query
+    // Get products with shop open status
     const [products] = await db.execute(`
       SELECT 
         p.*,
         s.name AS shop_name,
         s.image_url AS shop_image,
-        s.opening_time,
-        s.closing_time
+        IFNULL(s.is_open, 1) AS is_open
       FROM products p
       LEFT JOIN shops s ON p.shop_id = s.shop_id
-      WHERE p.stock_quantity > 0 AND p.is_auction = 0 AND (p.deal_end_time IS NULL OR p.deal_end_time > NOW()) 
+      WHERE p.stock_quantity > 0 AND p.is_auction = 0 AND (s.is_open IS NULL OR s.is_open = 1)
       ORDER BY p.deal_end_time IS NULL ASC, p.deal_end_time ASC
     `);
     
-    const [shops] = await db.execute('SELECT * FROM shops');
+    const [shops] = await db.execute('SELECT *, IFNULL(is_open, 1) AS is_open FROM shops');
 
-    // Define isOpen first!
-    const now = new Date();
-    const thTime = new Date(now.getTime() + (7 * 60 * 60 * 1000));
-    const currentHourMin = thTime.toISOString().substring(11, 16); // "HH:MM"
+    // Filter deals and shops based on is_open (1 = open, 0 = closed)
+    const deals = products
+      .filter(p => p.is_open === 1 || p.is_open === true || p.is_open == '1' || p.is_open === null || p.is_open === undefined)
+      .map(p => {
+        const rawExpires = p.deal_end_time || p.expiry_time || p.expires_at || p.end_time || p.pickup_end_time;
+        const formattedExpiresAt = rawExpires ? new Date(rawExpires).toISOString() : null;
 
-    const isOpen = (p) => {
-      if (!p.opening_time || !p.closing_time) return true;
-      const o = p.opening_time.substring(0, 5);
-      const c = p.closing_time.substring(0, 5);
-      if (o < c) {
-        return currentHourMin >= o && currentHourMin <= c;
-      } else {
-        return currentHourMin >= o || currentHourMin <= c;
-      }
-    };
+        const origPrice = parseFloat(p.original_price ?? p.price ?? 0);
+        const discPrice = parseFloat(p.discount_price ?? p.price ?? 0);
+        const stockQty = parseInt(p.stock_quantity !== undefined && p.stock_quantity !== null ? p.stock_quantity : 5, 10);
 
-    // Filter deals and shops
-    const deals = products.filter(isOpen).map(p => {
-      const rawExpires = p.deal_end_time || p.expires_at || p.end_time || p.pickup_end_time;
-      const formattedExpiresAt = rawExpires ? new Date(rawExpires).toISOString() : null;
+        return {
+          ...p,
+          price: discPrice,
+          original_price: origPrice,
+          discount_price: discPrice,
+          stock_quantity: stockQty,
+          deal_end_time: formattedExpiresAt,
+          expires_at: formattedExpiresAt,
+          shop_name: p.shop_name || 'ร้านค้าพรีเมียม',
+          shop_image: p.shop_image || ''
+        };
+      });
 
-      const origPrice = parseFloat(p.original_price ?? p.price ?? 0);
-      const discPrice = parseFloat(p.discount_price ?? p.price ?? 0);
-      const stockQty = parseInt(p.stock_quantity !== undefined && p.stock_quantity !== null ? p.stock_quantity : 5, 10);
-
-      return {
-        ...p,
-        price: discPrice,
-        original_price: origPrice,
-        discount_price: discPrice,
-        stock_quantity: stockQty,
-        deal_end_time: formattedExpiresAt,
-        expires_at: formattedExpiresAt,
-        shop_name: p.shop_name || 'ร้านค้าพรีเมียม',
-        shop_image: p.shop_image || ''
-      };
-    });
-
-    const formattedShops = shops.filter(isOpen).map(s => ({
-      ...s,
-      name: s.name || s.shop_name || ''
-    }));
+    const formattedShops = shops
+      .filter(s => s.is_open === 1 || s.is_open === true || s.is_open == '1' || s.is_open === null || s.is_open === undefined)
+      .map(s => ({
+        ...s,
+        name: s.name || s.shop_name || ''
+      }));
 
     res.json({
       success: true,
@@ -945,27 +933,17 @@ app.get('/api/products', async (req, res) => {
         p.*,
         s.name AS shop_name,
         s.image_url AS shop_image,
-        s.opening_time,
-        s.closing_time
+        IFNULL(s.is_open, 1) AS is_open
       FROM products p
       LEFT JOIN shops s ON p.shop_id = s.shop_id
-      WHERE p.stock_quantity > 0 AND (p.deal_end_time IS NULL OR p.deal_end_time > NOW())
+      WHERE p.stock_quantity > 0 AND (s.is_open IS NULL OR s.is_open = 1)
+      ORDER BY p.deal_end_time IS NULL ASC, p.deal_end_time ASC
     `);
 
-    const now = new Date();
-    const thTime = new Date(now.getTime() + (7 * 60 * 60 * 1000));
-    const currentHourMin = thTime.toISOString().substring(11, 16);
-    const isOpen = (p) => {
-      if (!p.opening_time || !p.closing_time) return true;
-      const o = p.opening_time.substring(0, 5);
-      const c = p.closing_time.substring(0, 5);
-      if (o < c) return currentHourMin >= o && currentHourMin <= c;
-      return currentHourMin >= o || currentHourMin <= c;
-    };
-
-    const formattedProducts = rows.filter(isOpen).map(p => {
-      const rawExpires = p.deal_end_time || p.expires_at || p.end_time || p.pickup_end_time;
+    const formattedProducts = rows.map(p => {
+      const rawExpires = p.deal_end_time || p.expiry_time || p.expires_at || p.end_time || p.pickup_end_time;
       const formattedExpiresAt = rawExpires ? new Date(rawExpires).toISOString() : null;
+
       const origPrice = parseFloat(p.original_price ?? p.price ?? 0);
       const discPrice = parseFloat(p.discount_price ?? p.price ?? 0);
       const stockQty = parseInt(p.stock_quantity !== undefined && p.stock_quantity !== null ? p.stock_quantity : 5, 10);
@@ -993,7 +971,7 @@ app.get('/api/products', async (req, res) => {
 app.get('/api/products/:id', async (req, res) => {
   const { id } = req.params;
   try {
-    const [rows] = await db.execute('SELECT * FROM products WHERE product_id = ? AND stock_quantity > 0 AND (deal_end_time IS NULL OR deal_end_time > NOW())', [id]);
+    const [rows] = await db.execute('SELECT * FROM products WHERE product_id = ? AND stock_quantity > 0', [id]);
     if (rows.length === 0) {
       return res.status(404).json({ success: false, message: 'ไม่พบสินค้า' });
     }
@@ -3313,7 +3291,7 @@ app.get('/api/seller/dashboard/:owner_id', async (req, res) => {
     const owner_id = req.params.owner_id;
     
     // 1. Get Shop Info
-    const [shopData] = await db.execute('SELECT shop_id, name, status FROM shops WHERE owner_id = ?', [owner_id]);
+    const [shopData] = await db.execute('SELECT shop_id, name, status, IFNULL(is_open, 1) AS is_open FROM shops WHERE owner_id = ?', [owner_id]);
     if (shopData.length === 0) {
       return res.json({ success: false, message: 'Shop not found' });
     }
@@ -3481,14 +3459,13 @@ app.post('/api/admin/withdrawals/:id/reject', async (req, res) => {
 app.get('/api/seller/settings/:owner_id', async (req, res) => {
   try {
     const owner_id = req.params.owner_id;
-    const [rows] = await db.execute('SELECT s.shop_id, s.name, s.address, s.opening_hours, s.bank_name, s.bank_account, s.image_url, u.full_name AS owner_name FROM shops s JOIN users u ON s.owner_id = u.user_id WHERE s.owner_id = ?', [owner_id]);
+    const [rows] = await db.execute('SELECT s.shop_id, s.name, s.address, s.opening_hours, s.bank_name, s.bank_account, s.image_url, s.latitude, s.longitude, IFNULL(s.is_open, 1) AS is_open, u.full_name AS owner_name FROM shops s JOIN users u ON s.owner_id = u.user_id WHERE s.owner_id = ?', [owner_id]);
     if (rows.length === 0) return res.json({ success: false, message: 'Shop not found' });
     res.json({ success: true, data: rows[0] });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
-
 
 app.post('/api/seller/settings/:shop_id/image', upload.single('image'), async (req, res) => {
   try {
@@ -3500,17 +3477,40 @@ app.post('/api/seller/settings/:shop_id/image', upload.single('image'), async (r
     res.status(500).json({ success: false, error: error.message });
   }
 });
+
 app.put('/api/seller/settings/:shop_id', async (req, res) => {
   try {
     const shop_id = req.params.shop_id;
-    const { name, address, opening_hours, bank_name, bank_account, latitude, longitude } = req.body;
-    await db.execute('UPDATE shops SET name = ?, address = ?, opening_hours = ?, bank_name = ?, bank_account = ?, latitude = ?, longitude = ? WHERE shop_id = ?', [name, address, opening_hours, bank_name, bank_account, latitude || null, longitude || null, shop_id]);
+    const { name, address, opening_hours, bank_name, bank_account, latitude, longitude, is_open } = req.body;
+    try {
+      await db.execute('ALTER TABLE shops ADD COLUMN is_open TINYINT(1) NOT NULL DEFAULT 1');
+    } catch(e) {}
+    
+    await db.execute(
+      'UPDATE shops SET name = ?, address = ?, opening_hours = ?, bank_name = ?, bank_account = ?, latitude = ?, longitude = ?, is_open = IFNULL(?, is_open) WHERE shop_id = ?', 
+      [name, address, opening_hours, bank_name, bank_account, latitude || null, longitude || null, is_open !== undefined ? is_open : null, shop_id]
+    );
     res.json({ success: true, message: 'บันทึกข้อมูลสำเร็จ' });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
+app.put('/api/seller/toggle-status/:shop_id', async (req, res) => {
+  try {
+    const shop_id = req.params.shop_id;
+    const { is_open } = req.body;
+    try {
+      await db.execute('ALTER TABLE shops ADD COLUMN is_open TINYINT(1) NOT NULL DEFAULT 1');
+    } catch(e) {}
+    
+    const newStatus = is_open ? 1 : 0;
+    await db.execute('UPDATE shops SET is_open = ? WHERE shop_id = ?', [newStatus, shop_id]);
+    res.json({ success: true, is_open: newStatus, message: newStatus ? 'เปิดร้านสำเร็จ' : 'ปิดร้านชั่วคราวสำเร็จ' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
 
 // ==========================================
 // COMPLAINTS (Help Center)

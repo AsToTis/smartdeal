@@ -86,7 +86,7 @@ const renderCategoryIcon = (categoryName: string, isSelected: boolean) => {
 
 // ฟังก์ชันคำนวณเวลาถอยหลังแบบ Dynamic จาก deal_end_time
 const getExpiryText = (dealEndTime: string) => {
-  if (!dealEndTime) return 'หมดอายุแล้ว';
+  if (!dealEndTime) return 'พร้อมจำหน่าย';
 
   const formattedDate = dealEndTime.includes('T') 
     ? dealEndTime 

@@ -3,7 +3,6 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Switch, Image, Al
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import MapView, { Marker } from 'react-native-maps';
-import DateTimePicker from '@react-native-community/datetimepicker';
 import * as Location from 'expo-location';
 import { router, useFocusEffect } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -12,14 +11,12 @@ import { BASE_URL } from '../../constants/api';
 
 export default function SellerSettingsScreen() {
   const [shopInfo, setShopInfo] = useState<any>(null);
-  const [formData, setFormData] = useState<any>({});
+  const [formData, setFormData] = useState<any>({ is_open: 1 });
   const [editModal, setEditModal] = useState({ visible: false, field: '', value: '', title: '' });
   const [notiEnabled, setNotiEnabled] = useState(true);
   const [ownerName, setOwnerName] = useState('เจ้าของร้าน');
   const [userId, setUserId] = useState<string | null>(null);
   const [mapRegion, setMapRegion] = useState({ latitude: 13.7563, longitude: 100.5018, latitudeDelta: 0.01, longitudeDelta: 0.01 });
-  const [showTimePicker, setShowTimePicker] = useState(false);
-  const [timeMode, setTimeMode] = useState<'opening' | 'closing'>('opening');
   const [tempLocation, setTempLocation] = useState({ latitude: 13.7563, longitude: 100.5018 });
   const [isLoading, setIsLoading] = useState(false);
 
@@ -34,8 +31,11 @@ export default function SellerSettingsScreen() {
         if (parsed.user_id) {
           const res = await axios.get(`${BASE_URL}/seller/settings/${parsed.user_id}`);
           if (res.data?.success) {
-            setShopInfo(res.data.data);
-            setFormData(res.data.data);
+            const data = res.data.data;
+            const isOpenVal = (data.is_open === 0 || data.is_open === false || data.is_open === '0') ? 0 : 1;
+            data.is_open = isOpenVal;
+            setShopInfo(data);
+            setFormData(data);
           }
         }
       }
@@ -50,13 +50,31 @@ export default function SellerSettingsScreen() {
     }, [])
   );
 
+  const handleToggleShopOpen = async (val: boolean) => {
+    const newStatus = val ? 1 : 0;
+    setFormData((prev: any) => ({ ...prev, is_open: newStatus }));
+    
+    if (shopInfo?.shop_id) {
+      try {
+        await axios.put(`${BASE_URL}/seller/toggle-status/${shopInfo.shop_id}`, { is_open: newStatus });
+        setShopInfo((prev: any) => ({ ...prev, is_open: newStatus }));
+      } catch (err) {
+        console.error('Error toggling shop status:', err);
+      }
+    }
+  };
+
   const handleSave = async () => {
     if (!shopInfo?.shop_id) return;
     try {
-      const res = await axios.put(`${BASE_URL}/seller/settings/${shopInfo.shop_id}`, formData);
+      const payload = { 
+        ...formData,
+        is_open: formData.is_open === 0 || formData.is_open === false ? 0 : 1
+      };
+      const res = await axios.put(`${BASE_URL}/seller/settings/${shopInfo.shop_id}`, payload);
       if (res.data?.success) {
         Alert.alert('สำเร็จ', 'บันทึกข้อมูลสำเร็จ');
-        setShopInfo(formData);
+        setShopInfo(payload);
       } else {
         Alert.alert('ข้อผิดพลาด', res.data?.message || 'ไม่สามารถบันทึกได้');
       }
@@ -66,7 +84,6 @@ export default function SellerSettingsScreen() {
     }
   };
 
-  
   const getCurrentLocation = async () => {
     try {
       let { status } = await Location.requestForegroundPermissionsAsync();
@@ -114,8 +131,8 @@ export default function SellerSettingsScreen() {
       const match = /\.(\w+)$/.exec(filename);
       const ext = match ? match[1].toLowerCase() : 'jpg';
 
-      const formData = new FormData();
-      formData.append('image', {
+      const uploadFormData = new FormData();
+      uploadFormData.append('image', {
         uri,
         name: filename,
         type: ext === 'jpg' ? 'image/jpeg' : `image/${ext}`
@@ -137,7 +154,7 @@ export default function SellerSettingsScreen() {
           }
         };
         xhr.onerror = () => reject(new Error('เกิดข้อผิดพลาดในการเชื่อมต่อเครือข่าย'));
-        xhr.send(formData);
+        xhr.send(uploadFormData);
       });
 
       if (responseData?.success) {
@@ -195,6 +212,8 @@ export default function SellerSettingsScreen() {
     ]);
   };
 
+  const isShopOpen = formData.is_open === 1 || formData.is_open === true || formData.is_open === undefined;
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.header}>
@@ -218,12 +237,41 @@ export default function SellerSettingsScreen() {
               <MaterialIcons name="camera-alt" size={14} color="#fff" />
             </View>
           </TouchableOpacity>
-          <Text style={styles.shopNameLarge}>{formData.name || shopInfo?.name || 'สมาร์ทดีล สาขากรุงเทพ'}</Text>
+          <Text style={styles.shopNameLarge}>{formData.name || shopInfo?.name || 'ร้านค้าพรีเมียม'}</Text>
           <Text style={styles.ownerName}>{ownerName}</Text>
         </View>
 
+        {/* สถานะเปิด-ปิดร้านค้า Quick Card */}
+        <Text style={styles.sectionTitle}>สถานะเปิด-ปิดร้านค้า</Text>
+        <View style={[styles.cardGroup, { borderColor: isShopOpen ? '#bbf7d0' : '#fecaca', borderWidth: 1 }]}>
+          <View style={[styles.settingItem, { paddingVertical: 14 }]}>
+            <View style={[styles.iconCircle, { backgroundColor: isShopOpen ? '#dcfce7' : '#fee2e2' }]}>
+              <MaterialIcons 
+                name="storefront" 
+                size={22} 
+                color={isShopOpen ? '#16a34a' : '#ef4444'} 
+              />
+            </View>
+            <View style={styles.settingInfo}>
+              <Text style={styles.settingLabel}>สถานะร้านปัจจุบัน</Text>
+              <Text style={[styles.settingValue, { color: isShopOpen ? '#16a34a' : '#ef4444', fontWeight: 'bold' }]}>
+                {isShopOpen ? '🟢 เปิดร้านรับออเดอร์' : '🔴 ปิดร้านชั่วคราว'}
+              </Text>
+              <Text style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
+                {isShopOpen ? 'สินค้ากำลังแสดงบนหน้าแอปผู้ซื้อ' : 'สินค้าถูกซ่อนออกจากหน้าแอปผู้ซื้อ'}
+              </Text>
+            </View>
+            <Switch
+              trackColor={{ false: '#cbd5e1', true: '#16a34a' }}
+              thumbColor={'#fff'}
+              value={isShopOpen}
+              onValueChange={handleToggleShopOpen}
+            />
+          </View>
+        </View>
+
         {/* ข้อมูลทั่วไป */}
-        <Text style={styles.sectionTitle}>ข้อมูลทั่วไป</Text>
+        <Text style={styles.sectionTitle}>ข้อมูลร้านค้า</Text>
         <View style={styles.cardGroup}>
           <TouchableOpacity style={styles.settingItem} activeOpacity={0.7} onPress={() => openEdit('name', 'ชื่อร้านค้า')}>
             <View style={[styles.iconCircle, { backgroundColor: '#dcfce7' }]}>
@@ -249,29 +297,6 @@ export default function SellerSettingsScreen() {
             </View>
             <MaterialIcons name="chevron-right" size={24} color="#cbd5e1" />
           </TouchableOpacity>
-          <View style={styles.divider} />
-
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', padding: 15, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <View style={[styles.iconCircle, { backgroundColor: '#f1f5f9', marginRight: 15 }]}>
-                <MaterialIcons name="access-time" size={20} color="#2e7a32" />
-              </View>
-              <View>
-                <Text style={styles.settingLabel}>เวลาเปิด</Text>
-                <TouchableOpacity onPress={() => { setTimeMode('opening'); setShowTimePicker(true); }}>
-                  <Text style={[styles.settingValue, { color: '#3b82f6', fontWeight: 'bold' }]}>{formData.opening_time ? formData.opening_time.substring(0,5) : '08:00'}</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <View>
-                <Text style={styles.settingLabel}>เวลาปิด</Text>
-                <TouchableOpacity onPress={() => { setTimeMode('closing'); setShowTimePicker(true); }}>
-                  <Text style={[styles.settingValue, { color: '#ef4444', fontWeight: 'bold' }]}>{formData.closing_time ? formData.closing_time.substring(0,5) : '20:00'}</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
         </View>
 
         {/* การเงินและการตั้งค่า */}
@@ -398,64 +423,6 @@ export default function SellerSettingsScreen() {
           </View>
         </KeyboardAvoidingView>
       </Modal>
-
-    
-      
-      {showTimePicker && Platform.OS === 'android' && (
-        <DateTimePicker
-          value={(() => {
-            const timeStr = timeMode === 'opening' ? (formData.opening_time || '08:00') : (formData.closing_time || '20:00');
-            const d = new Date();
-            d.setHours(parseInt(timeStr.split(':')[0]));
-            d.setMinutes(parseInt(timeStr.split(':')[1] || '0'));
-            return d;
-          })()}
-          mode="time"
-          is24Hour={true}
-          display="default"
-          onChange={(event, selectedDate) => {
-            setShowTimePicker(false);
-            if (event.type === 'set' && selectedDate) {
-              const h = selectedDate.getHours().toString().padStart(2, '0');
-              const m = selectedDate.getMinutes().toString().padStart(2, '0');
-              setFormData(prev => ({ ...prev, [timeMode === 'opening' ? 'opening_time' : 'closing_time']: `${h}:${m}:00` }));
-            }
-          }}
-        />
-      )}
-
-      {showTimePicker && Platform.OS === 'ios' && (
-        <Modal transparent animationType="slide">
-          <View style={{flex:1, justifyContent:'flex-end', backgroundColor:'rgba(0,0,0,0.5)'}}>
-            <View style={{backgroundColor:'white', padding: 20, paddingBottom: 40}}>
-              <View style={{flexDirection:'row', justifyContent:'flex-end', marginBottom: 10}}>
-                <TouchableOpacity onPress={() => setShowTimePicker(false)}>
-                  <Text style={{color:'#16a34a', fontWeight:'bold', fontSize: 18}}>เสร็จสิ้น</Text>
-                </TouchableOpacity>
-              </View>
-              <DateTimePicker
-                value={(() => {
-                  const timeStr = timeMode === 'opening' ? (formData.opening_time || '08:00') : (formData.closing_time || '20:00');
-                  const d = new Date();
-                  d.setHours(parseInt(timeStr.split(':')[0]));
-                  d.setMinutes(parseInt(timeStr.split(':')[1] || '0'));
-                  return d;
-                })()}
-                mode="time"
-                display="spinner"
-                onChange={(event, selectedDate) => {
-                  if (selectedDate) {
-                    const h = selectedDate.getHours().toString().padStart(2, '0');
-                    const m = selectedDate.getMinutes().toString().padStart(2, '0');
-                    setFormData(prev => ({ ...prev, [timeMode === 'opening' ? 'opening_time' : 'closing_time']: `${h}:${m}:00` }));
-                  }
-                }}
-              />
-            </View>
-          </View>
-        </Modal>
-      )}
-
 
     </SafeAreaView>
   );

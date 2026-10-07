@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, RefreshControl, ActivityIndicator, Image } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, RefreshControl, ActivityIndicator, Image, Switch, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons, Ionicons } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
@@ -14,10 +14,10 @@ export default function SellerDashboardScreen() {
     return `${BASE_URL.replace('/api', '')}${imgUrl}`;
   };
 
-const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [dashboardData, setDashboardData] = useState<any>({
-    shop: { name: 'Smart Deal Seller' },
+    shop: { name: 'Smart Deal Seller', is_open: 1 },
     stats: { today_sales: 0, today_orders: 0 },
     recentOrders: []
   });
@@ -64,6 +64,24 @@ const [loading, setLoading] = useState(true);
     }, [])
   );
 
+  const isShopOpen = dashboardData.shop?.is_open === 1 || dashboardData.shop?.is_open === true || dashboardData.shop?.is_open === undefined;
+
+  const toggleShopStatus = async (newVal: boolean) => {
+    const newStatus = newVal ? 1 : 0;
+    setDashboardData((prev: any) => ({
+      ...prev,
+      shop: { ...prev.shop, is_open: newStatus }
+    }));
+
+    if (dashboardData.shop?.shop_id) {
+      try {
+        await axios.put(`${BASE_URL}/seller/toggle-status/${dashboardData.shop.shop_id}`, { is_open: newStatus });
+      } catch (err) {
+        console.error('Error toggling shop status:', err);
+      }
+    }
+  };
+
   const formatMoney = (amount: number) => {
     return Number(amount || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   };
@@ -99,6 +117,47 @@ const [loading, setLoading] = useState(true);
           </View>
         ) : (
           <View style={styles.content}>
+            {/* สถานะร้านค้า Quick Toggle */}
+            <View style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              backgroundColor: isShopOpen ? '#f0fdf4' : '#fef2f2',
+              borderColor: isShopOpen ? '#bbf7d0' : '#fecaca',
+              borderWidth: 1,
+              borderRadius: 16,
+              padding: 14,
+              marginBottom: 16,
+            }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 10 }}>
+                <View style={{
+                  width: 40,
+                  height: 40,
+                  borderRadius: 20,
+                  backgroundColor: isShopOpen ? '#dcfce7' : '#fee2e2',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  marginRight: 12
+                }}>
+                  <MaterialIcons name="storefront" size={22} color={isShopOpen ? '#16a34a' : '#ef4444'} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 15, fontWeight: '700', color: isShopOpen ? '#15803d' : '#b91c1c' }}>
+                    {isShopOpen ? '🟢 ร้านเปิดรับออเดอร์อยู่' : '🔴 ร้านปิดให้บริการชั่วคราว'}
+                  </Text>
+                  <Text style={{ fontSize: 12, color: isShopOpen ? '#16a34a' : '#dc2626', marginTop: 1 }}>
+                    {isShopOpen ? 'ลูกค้ากำลังมองเห็นและสั่งซื้อสินค้าได้' : 'สินค้าถูกซ่อนออกจากหน้าร้านผู้ซื้อ'}
+                  </Text>
+                </View>
+              </View>
+              <Switch
+                trackColor={{ false: '#cbd5e1', true: '#16a34a' }}
+                thumbColor={'#fff'}
+                value={isShopOpen}
+                onValueChange={toggleShopStatus}
+              />
+            </View>
+
             {/* สรุปยอด */}
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionTitle}>ยอดขายวันนี้</Text>
