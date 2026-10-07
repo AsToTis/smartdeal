@@ -357,28 +357,67 @@ export default function OrderChatScreen() {
   const statusBadge = getStatusBadge(orderInfo?.order_status);
 
   // Dynamic Header Title & Subtitle based on target
+  // Dynamic Header Title & Subtitle based on exact 3-channel role and target
   const getHeaderInfo = () => {
-    if (target === 'rider') {
-      return {
-        title: `🛵 แชทกับไรเดอร์`,
-        sub: orderInfo?.rider_name ? `คุณ ${orderInfo.rider_name} (${orderInfo.rider_phone || ''})` : 'คนขับจัดส่งคำสั่งซื้อนี้',
-        icon: 'bicycle',
-        placeholder: 'พิมพ์ข้อความถึงไรเดอร์...'
-      };
-    } else if (role === 'seller') {
-      return {
-        title: `👤 แชทกับลูกค้า`,
-        sub: orderInfo?.customer_name || orderInfo?.receiver_name || 'ลูกค้าคำสั่งซื้อนี้',
-        icon: 'person',
-        placeholder: 'พิมพ์ข้อความถึงลูกค้า...'
-      };
-    } else {
-      return {
-        title: `🏪 แชทกับร้านค้า`,
-        sub: orderInfo?.shop_name || 'ร้านค้า',
-        icon: 'storefront',
-        placeholder: 'พิมพ์ข้อความถึงร้านค้า...'
-      };
+    // 1. ช่องทาง ร้านค้า ↔ ไรเดอร์
+    if ((role === 'seller' && target === 'rider') || (role === 'rider' && target === 'seller')) {
+      if (role === 'seller') {
+        return {
+          title: `🛵 แชทกับไรเดอร์`,
+          roomBadge: `🏪 ร้านค้า ↔ 🛵 ไรเดอร์`,
+          sub: orderInfo?.rider_name ? `คุณ ${orderInfo.rider_name} (${orderInfo.rider_phone || ''})` : 'คนขับจัดส่งคำสั่งซื้อนี้',
+          icon: 'bicycle',
+          placeholder: 'พิมพ์ข้อความถึงไรเดอร์...'
+        };
+      } else {
+        return {
+          title: `🏪 แชทกับร้านค้า`,
+          roomBadge: `🛵 ไรเดอร์ ↔ 🏪 ร้านค้า`,
+          sub: orderInfo?.shop_name || 'ร้านค้าคำสั่งซื้อนี้',
+          icon: 'storefront',
+          placeholder: 'พิมพ์ข้อความถึงร้านค้า...'
+        };
+      }
+    }
+    // 2. ช่องทาง ลูกค้า ↔ ไรเดอร์
+    else if ((role === 'buyer' && target === 'rider') || (role === 'rider' && target === 'buyer') || target === 'rider') {
+      if (role === 'rider') {
+        return {
+          title: `👤 แชทกับลูกค้า`,
+          roomBadge: `🛵 ไรเดอร์ ↔ 👤 ลูกค้า`,
+          sub: orderInfo?.customer_name || orderInfo?.receiver_name || 'ลูกค้าคำสั่งซื้อนี้',
+          icon: 'person',
+          placeholder: 'พิมพ์ข้อความถึงลูกค้า...'
+        };
+      } else {
+        return {
+          title: `🛵 แชทกับไรเดอร์`,
+          roomBadge: `👤 ลูกค้า ↔ 🛵 ไรเดอร์`,
+          sub: orderInfo?.rider_name ? `คุณ ${orderInfo.rider_name} (${orderInfo.rider_phone || ''})` : 'คนขับจัดส่งคำสั่งซื้อนี้',
+          icon: 'bicycle',
+          placeholder: 'พิมพ์ข้อความถึงไรเดอร์...'
+        };
+      }
+    }
+    // 3. ช่องทาง ลูกค้า ↔ ร้านค้า
+    else {
+      if (role === 'seller') {
+        return {
+          title: `👤 แชทกับลูกค้า`,
+          roomBadge: `🏪 ร้านค้า ↔ 👤 ลูกค้า`,
+          sub: orderInfo?.customer_name || orderInfo?.receiver_name || 'ลูกค้าคำสั่งซื้อนี้',
+          icon: 'person',
+          placeholder: 'พิมพ์ข้อความถึงลูกค้า...'
+        };
+      } else {
+        return {
+          title: `🏪 แชทกับร้านค้า`,
+          roomBadge: `👤 ลูกค้า ↔ 🏪 ร้านค้า`,
+          sub: orderInfo?.shop_name || 'ร้านค้า',
+          icon: 'storefront',
+          placeholder: 'พิมพ์ข้อความถึงร้านค้า...'
+        };
+      }
     }
   };
 
@@ -392,7 +431,12 @@ export default function OrderChatScreen() {
           <MaterialIcons name="arrow-back" size={24} color="#0f172a" />
         </TouchableOpacity>
         <View style={styles.headerCenter}>
-          <Text style={styles.headerTitle}>{headerInfo.title}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <Text style={styles.headerTitle}>{headerInfo.title}</Text>
+            <View style={{ backgroundColor: '#f1f5f9', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, borderWidth: 1, borderColor: '#e2e8f0' }}>
+              <Text style={{ fontSize: 9, fontWeight: '700', color: '#475569' }}>{headerInfo.roomBadge}</Text>
+            </View>
+          </View>
           <Text style={styles.headerSub} numberOfLines={1}>
             {headerInfo.sub} • ออเดอร์ #{orderId}
           </Text>

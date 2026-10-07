@@ -3848,18 +3848,23 @@ const PORT = process.env.PORT || 5000;
 // ==========================================
 app.get('/api/orders/:order_id/messages', async (req, res) => {
   const orderId = req.params.order_id;
-  const target = req.query.target || req.query.channel; // 'seller' or 'buyer'
+  const target = req.query.target || req.query.channel; // 'seller' | 'rider' | 'buyer'
+  const role = req.query.role; // 'seller' | 'rider' | 'buyer'
   try {
     let query = 'SELECT id, order_id, sender_id, sender_type, receiver_type, message, image_url, created_at FROM order_messages WHERE order_id = ?';
     const params = [orderId];
 
-    // แยกช่องทางแชทอย่างเด็ดขาด 100% ไม่ปะปนกัน
-    if (target === 'seller') {
-      // ช่องทางร้านค้า ↔ ไรเดอร์ (แสดงเฉพาะข้อความระหว่างร้านค้ากับไรเดอร์เท่านั้น)
-      query += ' AND ((sender_type = "seller" AND receiver_type != "buyer") OR (sender_type = "rider" AND receiver_type = "seller") OR (receiver_type = "seller" AND sender_type != "buyer"))';
-    } else if (target === 'buyer' || target === 'rider') {
-      // ช่องทางลูกค้า ↔ ไรเดอร์ (แสดงเฉพาะข้อความระหว่างลูกค้ากับไรเดอร์เท่านั้น)
-      query += ' AND ((sender_type = "buyer" AND receiver_type != "seller") OR (sender_type = "rider" AND receiver_type IN ("buyer", "rider", "all")) OR (receiver_type = "buyer" AND sender_type != "seller"))';
+    // Channel 3: ร้านค้า ↔ ไรเดอร์ (Shop <-> Rider)
+    if ((role === 'seller' && target === 'rider') || (role === 'rider' && target === 'seller')) {
+      query += ' AND ((sender_type = "seller" AND receiver_type = "rider") OR (sender_type = "rider" AND receiver_type IN ("seller", "rider")))';
+    } 
+    // Channel 2: ลูกค้า ↔ ไรเดอร์ (Customer <-> Rider)
+    else if ((role === 'buyer' && target === 'rider') || (role === 'rider' && target === 'buyer') || target === 'rider') {
+      query += ' AND ((sender_type = "buyer" AND receiver_type = "rider") OR (sender_type = "rider" AND receiver_type IN ("buyer", "rider", "all")))';
+    } 
+    // Channel 1: ลูกค้า ↔ ร้านค้า (Customer <-> Shop)
+    else {
+      query += ' AND ((sender_type = "buyer" AND receiver_type = "seller") OR (sender_type = "seller" AND receiver_type IN ("buyer", "seller", "all")))';
     }
 
     query += ' ORDER BY created_at ASC';
