@@ -3351,7 +3351,7 @@ app.get('/api/seller/wallet/:shop_id', async (req, res) => {
     const [pendingEscrowData] = await db.execute('SELECT SUM(total_amount - delivery_fee) as pending_escrow FROM orders WHERE shop_id = ? AND order_status IN ("paid", "shipped", "pending")', [shop_id]);
     const pending_escrow = pendingEscrowData[0]?.pending_escrow || 0;
 
-    const [orders] = await db.execute('SELECT order_id as id, total_amount as amount, created_at, "sale" as type FROM orders WHERE shop_id = ? AND order_status IN ("completed", "paid") ORDER BY created_at DESC LIMIT 20', [shop_id]);
+    const [orders] = await db.execute('SELECT order_id as id, amount, created_at, "sale" as type FROM wallet_transactions WHERE target_id = ? AND user_type="shop" AND type="credit" ORDER BY created_at DESC LIMIT 20', [shop_id]);
     const [withdrawals] = await db.execute('SELECT id, amount, created_at, status, "withdrawal" as type FROM withdrawals WHERE shop_id = ? ORDER BY created_at DESC LIMIT 20', [shop_id]);
     const history = [...orders, ...withdrawals].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 30);
     
