@@ -712,9 +712,11 @@ export default function OrdersScreen() {
                   <TouchableOpacity 
                     style={[styles.reviewOrderBtn, { backgroundColor: '#fef2f2', borderColor: '#fecaca' }]}
                     onPress={() => {
-                      setIssueTargetOrder(selectedOrder);
+                      const id = selectedOrder?.order_id;
                       setSelectedOrder(null);
-                      setTimeout(() => setIssueModalVisible(true), 400);
+                      setTimeout(() => {
+                        router.push({ pathname: '/help-center' as any, params: { order_id: id } });
+                      }, 100);
                     }}
                   >
                     <MaterialIcons name="report-problem" size={16} color="#ef4444" />
