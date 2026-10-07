@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   StyleSheet, Text, View, TextInput, ScrollView, 
   TouchableOpacity, Image, ActivityIndicator 
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { BASE_URL } from '../../constants/api';
@@ -21,18 +21,34 @@ export default function SearchScreen() {
   const [searchResults, setSearchResults] = useState<{shops: any[], products: any[]}>({ shops: [], products: [] });
   const [loading, setLoading] = useState(false);
   const [nearbyShops, setNearbyShops] = useState<any[]>([]);
+  const [trendingDeals, setTrendingDeals] = useState<any[]>([]);
 
-  useEffect(() => {
-    loadRecentSearches();
-    loadNearbyShops();
-  }, []);
+  const getImageUrl = (url: string) => {
+    if (!url || typeof url !== 'string' || url.trim() === '') {
+      return 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500';
+    }
+    if (url.startsWith('http') || url.startsWith('data:')) return url;
+    return `${BASE_URL.replace('/api', '')}${url.startsWith('/') ? '' : '/'}${url}`;
+  };
 
-  const loadNearbyShops = async () => {
+  const loadData = async () => {
     try {
-      const res = await axios.get(`${BASE_URL}/shops/nearby`);
-      setNearbyShops(res.data || []);
+      const [shopsRes, homeRes] = await Promise.all([
+        axios.get(`${BASE_URL}/shops/nearby`).catch(() => ({ data: [] })),
+        axios.get(`${BASE_URL}/home-data`).catch(() => ({ data: { deals: [], shops: [] } }))
+      ]);
+
+      if (Array.isArray(shopsRes.data) && shopsRes.data.length > 0) {
+        setNearbyShops(shopsRes.data);
+      } else if (homeRes.data?.shops && homeRes.data.shops.length > 0) {
+        setNearbyShops(homeRes.data.shops);
+      }
+
+      if (homeRes.data?.deals && Array.isArray(homeRes.data.deals)) {
+        setTrendingDeals(homeRes.data.deals);
+      }
     } catch (e) {
-      console.log('Load nearby shops error:', e);
+      console.log('Load search screen data error:', e);
     }
   };
 
@@ -44,6 +60,13 @@ export default function SearchScreen() {
       }
     } catch (e) {}
   };
+
+  useFocusEffect(
+    useCallback(() => {
+      loadRecentSearches();
+      loadData();
+    }, [])
+  );
 
   const saveRecentSearch = async (keyword: string) => {
     if (!keyword.trim()) return;
@@ -90,6 +113,17 @@ export default function SearchScreen() {
     performSearch(keyword);
   };
 
+  // Sorted trending deals based on selected filter
+  const displayedDeals = [...trendingDeals].sort((a, b) => {
+    if (selectedFilter === 'discount') {
+      return (b.discount_percent || 0) - (a.discount_percent || 0);
+    }
+    if (selectedFilter === 'popular') {
+      return (b.sold_count || 0) - (a.sold_count || 0);
+    }
+    return 0; // Default
+  });
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* 1. Header Bar */}
@@ -117,7 +151,7 @@ export default function SearchScreen() {
           </TouchableOpacity>
           <TextInput
             style={styles.searchInput}
-            placeholder="ค้นหาร้านค้า, เมนูอาหาร หรือระยะทาง"
+            placeholder="ค้นหาร้านค้า, เมนูอาหาร หรือดีลลดราคา"
             placeholderTextColor="#94a3b8"
             value={searchTerm}
             onChangeText={setSearchTerm}
@@ -209,7 +243,7 @@ export default function SearchScreen() {
               <View style={styles.nearbySection}>
                 <View style={styles.sectionHeaderRow}>
                   <Text style={styles.trendingHeading}>ร้านค้าใกล้ฉัน</Text>
-                  <TouchableOpacity>
+                  <TouchableOpacity onPress={() => router.push('/(tabs)')}>
                     <Text style={styles.clearAllText}>ดูทั้งหมด</Text>
                   </TouchableOpacity>
                 </View>
@@ -221,30 +255,29 @@ export default function SearchScreen() {
                 >
                   {nearbyShops.map((shop, index) => (
                     <TouchableOpacity 
-                      key={index}
+                      key={shop.shop_id || index}
                       style={styles.nearbyCard}
-                      onPress={() => router.push(`/shop-profile?id=${shop.shop_id}` as any)}
-                      activeOpacity={0.9}
+                      onPress={() => router.push({ pathname: '/shop-profile', params: { id: shop.shop_id } })}
+                      activeOpacity={0.85}
                     >
                       <Image 
-                        source={{ uri: shop.image_url || 'https://images.unsplash.com/photo-1555507036-ab1f40ce88cb?w=300' }} 
+                        source={{ uri: getImageUrl(shop.image_url) }} 
                         style={styles.nearbyImage} 
                       />
                       <View style={styles.nearbyCardBody}>
-                        <Text style={styles.nearbyShopTitle} numberOfLines={1}>{shop.name}</Text>
+                        <Text style={styles.nearbyShopTitle} numberOfLines={1}>{shop.name || 'ร้านค้าพรีเมียม'}</Text>
                         <View style={styles.nearbySubRow}>
                           <View style={styles.cardRating}>
                             <MaterialIcons name="star" size={14} color="#f59e0b" />
-                            <Text style={styles.ratingNumSmall}>{shop.rating || '4.0'}</Text>
+                            <Text style={styles.ratingNumSmall}>{shop.rating || '5.0'}</Text>
                           </View>
-                          <Text style={styles.nearbyDistance}>• {shop.distance || '0.0 km'}</Text>
+                          <Text style={styles.nearbyDistance}>• {shop.distance || 'ใกล้คุณ'}</Text>
                         </View>
-                        {(shop.tag1 || shop.tag2) && (
-                          <View style={styles.nearbyBadgeRow}>
-                            {shop.tag1 && <View style={styles.smartDealBadge}><Text style={styles.smartDealBadgeText}>{shop.tag1}</Text></View>}
-                            {shop.tag2 && <View style={styles.smartDealBadge}><Text style={styles.smartDealBadgeText}>{shop.tag2}</Text></View>}
+                        <View style={styles.nearbyBadgeRow}>
+                          <View style={styles.smartDealBadge}>
+                            <Text style={styles.smartDealBadgeText}>SMART DEAL</Text>
                           </View>
-                        )}
+                        </View>
                       </View>
                     </TouchableOpacity>
                   ))}
@@ -252,60 +285,60 @@ export default function SearchScreen() {
               </View>
             )}
 
-            {/* 5. ส่วนดีลที่กำลังมาแรง (Trending Deals) */}
-            <Text style={styles.trendingHeading}>ดีลที่กำลังมาแรง</Text>
-            <View style={styles.dealsList}>
-              {/* Card 1 */}
-              <TouchableOpacity
-                style={styles.dealCard}
-                onPress={() => router.push({
-                  pathname: '/product-detail' as any,
-                  params: { id: 1, title: 'เดอะ การ์เด้น บิสโทร', price: 8900, originalPrice: 12500, discount: '-50%' }
-                })}
-                activeOpacity={0.9}
-              >
-                <View style={styles.cardImageWrapper}>
-                  <Image source={{ uri: 'https://images.unsplash.com/photo-1555244162-803834f70033?w=800' }} style={styles.cardImage} />
-                  <View style={styles.badgeTopRightGreen}><Text style={styles.badgeTopRightText}>ลด 50%</Text></View>
-                </View>
-                <View style={styles.cardBody}>
-                  <View style={styles.cardTitleRow}>
-                    <Text style={styles.shopCardTitle}>เดอะ การ์เด้น บิสโทร</Text>
-                    <View style={styles.cardRating}><MaterialIcons name="star" size={14} color="#f59e0b" /><Text style={styles.ratingNum}>4.8</Text></View>
-                  </View>
-                  <Text style={styles.shopSubText}>อาหารอิตาเลียน • 1.2 กม. จากคุณ</Text>
-                  <View style={styles.tagsRow}>
-                    <View style={styles.smartDealBadge}><Text style={styles.smartDealBadgeText}>SMART DEAL</Text></View>
-                    <View style={styles.freeDeliveryBadge}><Text style={styles.freeDeliveryBadgeText}>FREE DELIVERY</Text></View>
-                  </View>
-                </View>
-              </TouchableOpacity>
+            {/* 5. ส่วนดีลที่กำลังมาแรง (Trending Deals) จาก Database จริง */}
+            <Text style={styles.trendingHeading}>ดีลที่กำลังมาแรง ({displayedDeals.length})</Text>
+            {displayedDeals.length === 0 ? (
+              <View style={{ padding: 30, alignItems: 'center', backgroundColor: '#fff', borderRadius: 16 }}>
+                <MaterialIcons name="local-offer" size={40} color="#cbd5e1" />
+                <Text style={{ marginTop: 10, color: '#64748b' }}>ยังไม่มีดีลที่กำลังมาแรงในขณะนี้</Text>
+              </View>
+            ) : (
+              <View style={styles.dealsList}>
+                {displayedDeals.map((deal) => {
+                  const discPrice = deal.discount_price ?? deal.price ?? 0;
+                  const origPrice = deal.original_price ?? deal.price ?? 0;
+                  const discountPercent = deal.discount_percent || (origPrice > discPrice ? Math.round(((origPrice - discPrice) / origPrice) * 100) : 0);
 
-              {/* Card 2 */}
-              <TouchableOpacity
-                style={styles.dealCard}
-                onPress={() => router.push({
-                  pathname: '/product-detail' as any,
-                  params: { id: 2, title: 'ซูชิมาสเตอร์ สาขาสยาม', price: 320, originalPrice: 640, discount: 'ซื้อ 1 แถม 1' }
+                  return (
+                    <TouchableOpacity
+                      key={deal.product_id}
+                      style={styles.dealCard}
+                      onPress={() => router.push({
+                        pathname: '/product-detail',
+                        params: { id: deal.product_id }
+                      })}
+                      activeOpacity={0.9}
+                    >
+                      <View style={styles.cardImageWrapper}>
+                        <Image source={{ uri: getImageUrl(deal.image_url) }} style={styles.cardImage} />
+                        {discountPercent > 0 && (
+                          <View style={styles.badgeTopRightGreen}>
+                            <Text style={styles.badgeTopRightText}>ลด {discountPercent}%</Text>
+                          </View>
+                        )}
+                      </View>
+                      <View style={styles.cardBody}>
+                        <View style={styles.cardTitleRow}>
+                          <Text style={styles.shopCardTitle} numberOfLines={1}>{deal.name}</Text>
+                          <Text style={styles.productPriceTag}>฿{discPrice}</Text>
+                        </View>
+                        <Text style={styles.shopSubText}>🏬 {deal.shop_name || 'ร้านค้าพรีเมียม'}</Text>
+                        <View style={styles.tagsRow}>
+                          <View style={styles.smartDealBadge}>
+                            <Text style={styles.smartDealBadgeText}>SMART DEAL</Text>
+                          </View>
+                          {deal.stock_quantity !== undefined && (
+                            <View style={styles.freeDeliveryBadge}>
+                              <Text style={styles.freeDeliveryBadgeText}>คงเหลือ {deal.stock_quantity} ชิ้น</Text>
+                            </View>
+                          )}
+                        </View>
+                      </View>
+                    </TouchableOpacity>
+                  );
                 })}
-                activeOpacity={0.9}
-              >
-                <View style={styles.cardImageWrapper}>
-                  <Image source={{ uri: 'https://images.unsplash.com/photo-1579871494447-9811cf80d66c?w=800' }} style={styles.cardImage} />
-                  <View style={styles.badgeTopRightOrange}><Text style={styles.badgeTopRightText}>ซื้อ 1 แถม 1</Text></View>
-                </View>
-                <View style={styles.cardBody}>
-                  <View style={styles.cardTitleRow}>
-                    <Text style={styles.shopCardTitle}>ซูชิมาสเตอร์ สาขาสยาม</Text>
-                    <View style={styles.cardRating}><MaterialIcons name="star" size={14} color="#f59e0b" /><Text style={styles.ratingNum}>4.5</Text></View>
-                  </View>
-                  <Text style={styles.shopSubText}>อาหารญี่ปุ่น • 3.5 กม. จากคุณ</Text>
-                  <View style={styles.tagsRow}>
-                    <View style={styles.popularBadge}><Text style={styles.popularBadgeText}>POPULAR</Text></View>
-                  </View>
-                </View>
-              </TouchableOpacity>
-            </View>
+              </View>
+            )}
           </>
         ) : loading ? (
           <ActivityIndicator color="#16a34a" style={{ marginVertical: 30 }} size="large" />
@@ -326,17 +359,17 @@ export default function SearchScreen() {
                   <TouchableOpacity
                     key={'s_'+shop.shop_id}
                     style={styles.dealCard}
-                    onPress={() => router.push(`/shop-profile?id=${shop.shop_id}` as any)}
+                    onPress={() => router.push({ pathname: '/shop-profile', params: { id: shop.shop_id } })}
                   >
                     <View style={styles.cardImageWrapper}>
-                      <Image source={{ uri: shop.image_url || 'https://images.unsplash.com/photo-1555507036-ab1f40ce88cb?w=300' }} style={styles.cardImage} />
+                      <Image source={{ uri: getImageUrl(shop.image_url) }} style={styles.cardImage} />
                     </View>
                     <View style={styles.cardBody}>
                       <View style={styles.cardTitleRow}>
                         <Text style={styles.shopCardTitle}>{shop.name}</Text>
-                        <View style={styles.cardRating}><MaterialIcons name="star" size={14} color="#f59e0b" /><Text style={styles.ratingNum}>{shop.rating || '4.5'}</Text></View>
+                        <View style={styles.cardRating}><MaterialIcons name="star" size={14} color="#f59e0b" /><Text style={styles.ratingNum}>{shop.rating || '5.0'}</Text></View>
                       </View>
-                      <Text style={styles.shopSubText}>📍 ระยะทาง: {shop.distance || '0.5 km'}</Text>
+                      <Text style={styles.shopSubText}>📍 ระยะทาง: {shop.distance || 'ใกล้คุณ'}</Text>
                     </View>
                   </TouchableOpacity>
                 ))}
@@ -352,18 +385,12 @@ export default function SearchScreen() {
                     key={'p_'+p.product_id}
                     style={styles.dealCard}
                     onPress={() => router.push({
-                      pathname: '/product-detail' as any,
-                      params: {
-                        id: p.product_id,
-                        title: p.name,
-                        price: p.discount_price || p.price,
-                        originalPrice: p.original_price,
-                        discount: `-${p.discount_percent}%`
-                      }
+                      pathname: '/product-detail',
+                      params: { id: p.product_id }
                     })}
                   >
                     <View style={styles.cardImageWrapper}>
-                      <Image source={{ uri: p.image_url }} style={styles.cardImage} />
+                      <Image source={{ uri: getImageUrl(p.image_url) }} style={styles.cardImage} />
                       {p.discount_percent > 0 && (
                         <View style={styles.badgeTopRightGreen}>
                           <Text style={styles.badgeTopRightText}>ลด {p.discount_percent}%</Text>
@@ -478,7 +505,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.05,
     shadowRadius: 8
   },
-  cardImageWrapper: { width: '100%', height: 170, position: 'relative' },
+  cardImageWrapper: { width: '100%', height: 170, position: 'relative', backgroundColor: '#f1f5f9' },
   cardImage: { width: '100%', height: '100%', resizeMode: 'cover' },
   badgeTopRightGreen: {
     position: 'absolute',
@@ -489,20 +516,11 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: 12
   },
-  badgeTopRightOrange: {
-    position: 'absolute',
-    top: 12,
-    right: 12,
-    backgroundColor: '#ea580c',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12
-  },
   badgeTopRightText: { color: '#fff', fontSize: 11, fontWeight: 'bold' },
   cardBody: { padding: 14 },
   cardTitleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  shopCardTitle: { fontSize: 15, fontWeight: 'bold', color: '#0f172a' },
-  productPriceTag: { fontSize: 15, fontWeight: 'bold', color: '#16a34a' },
+  shopCardTitle: { fontSize: 15, fontWeight: 'bold', color: '#0f172a', flex: 1, marginRight: 8 },
+  productPriceTag: { fontSize: 16, fontWeight: 'bold', color: '#16a34a' },
   cardRating: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   ratingNum: { fontSize: 12, fontWeight: 'bold', color: '#0f172a' },
   shopSubText: { fontSize: 12, color: '#64748b', marginTop: 3, marginBottom: 10 },
@@ -511,8 +529,6 @@ const styles = StyleSheet.create({
   smartDealBadgeText: { color: '#15803d', fontSize: 10, fontWeight: 'bold' },
   freeDeliveryBadge: { backgroundColor: '#e0f2fe', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
   freeDeliveryBadgeText: { color: '#0369a1', fontSize: 10, fontWeight: 'bold' },
-  popularBadge: { backgroundColor: '#f0fdf4', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, borderWidth: 1, borderColor: '#bbf7d0' },
-  popularBadgeText: { color: '#16a34a', fontSize: 10, fontWeight: 'bold' },
   nearbySection: { marginBottom: 10 },
   nearbyCard: {
     width: 150,
@@ -527,7 +543,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.05,
     shadowRadius: 8
   },
-  nearbyImage: { width: '100%', height: 96, resizeMode: 'cover' },
+  nearbyImage: { width: '100%', height: 96, resizeMode: 'cover', backgroundColor: '#f1f5f9' },
   nearbyCardBody: { padding: 10 },
   nearbyShopTitle: { fontSize: 13, fontWeight: 'bold', color: '#0f172a' },
   nearbySubRow: { flexDirection: 'row', alignItems: 'center', marginTop: 4, marginBottom: 8 },
