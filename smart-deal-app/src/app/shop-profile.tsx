@@ -67,27 +67,41 @@ export default function ShopProfileScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      {/* Header with Cover */}
-      <View style={styles.coverImage}>
-        <View style={styles.headerRow}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-            <MaterialIcons name="arrow-back" size={24} color="#fff" />
-          </TouchableOpacity>
-          <View style={styles.headerRight}>
-            <TouchableOpacity style={styles.iconBtn} onPress={() => router.push('/(tabs)/search')}>
-              <MaterialIcons name="search" size={22} color="#fff" />
-            </TouchableOpacity>
-          </View>
-        </View>
+      {/* 1. Header Navigation Bar */}
+      <View style={styles.header}>
+        <TouchableOpacity 
+          style={styles.circleBackBtn} 
+          onPress={() => {
+            if (router.canGoBack()) router.back();
+            else router.replace('/(tabs)');
+          }}
+          activeOpacity={0.7}
+        >
+          <MaterialIcons name="arrow-back" size={22} color="#16a34a" />
+        </TouchableOpacity>
+
+        <Text style={styles.headerTitle}>รายละเอียดร้านค้า</Text>
+        
+        <TouchableOpacity 
+          style={styles.circleBackBtn} 
+          onPress={() => router.push('/(tabs)/search')}
+          activeOpacity={0.7}
+        >
+          <MaterialIcons name="search" size={22} color="#16a34a" />
+        </TouchableOpacity>
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false}>
-        {/* Shop Info Card */}
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+        {/* 2. Shop Profile Info Card */}
         <View style={styles.infoCard}>
-          <Image 
-            source={{ uri: getImageUrl(shop?.image_url) }} 
-            style={styles.avatar} 
-          />
+          {/* Avatar Container */}
+          <View style={styles.avatarContainer}>
+            <Image 
+              source={{ uri: getImageUrl(shop?.image_url) }} 
+              style={styles.avatar} 
+            />
+          </View>
+
           <Text style={styles.shopName}>{shop?.name || 'ร้านค้าพรีเมียม'}</Text>
           
           {/* Status Badge */}
@@ -97,6 +111,7 @@ export default function ShopProfileScreen() {
             </Text>
           </View>
 
+          {/* Stats Row */}
           <View style={styles.statsRow}>
             <View style={styles.statItem}>
               <MaterialIcons name="star" size={16} color="#fbbf24" />
@@ -105,7 +120,7 @@ export default function ShopProfileScreen() {
             <Text style={styles.statDot}>•</Text>
             
             <View style={styles.statItem}>
-              <MaterialIcons name="location-on" size={16} color="#94a3b8" />
+              <MaterialIcons name="location-on" size={16} color="#16a34a" />
               <Text style={styles.statText}>{shop?.distance || 'ใกล้คุณ'}</Text>
             </View>
 
@@ -117,17 +132,21 @@ export default function ShopProfileScreen() {
             )}
           </View>
 
-          <Text style={styles.addressText} numberOfLines={2}>
-            {shop?.address || 'ที่อยู่ร้านค้ายังไม่ได้ระบุ'}
-          </Text>
+          {/* Address Box */}
+          <View style={styles.addressBox}>
+            <MaterialIcons name="place" size={16} color="#64748b" style={{ marginTop: 2, marginRight: 6 }} />
+            <Text style={styles.addressText}>
+              {shop?.address || 'ที่อยู่ร้านค้ายังไม่ได้ระบุ'}
+            </Text>
+          </View>
         </View>
 
-        {/* Products */}
+        {/* 3. Products Section */}
         <View style={styles.productsSection}>
           <Text style={styles.sectionTitle}>สินค้าของร้าน ({products.length})</Text>
           
           {products.length === 0 ? (
-            <View style={{ padding: 40, alignItems: 'center' }}>
+            <View style={styles.emptyProductsBox}>
               <MaterialIcons name="inventory-2" size={48} color="#cbd5e1" />
               <Text style={{ marginTop: 12, color: '#64748b', fontSize: 15 }}>ยังไม่มีรายการสินค้าในร้านนี้</Text>
             </View>
@@ -137,21 +156,29 @@ export default function ShopProfileScreen() {
                 const discPrice = product.discount_price ?? product.price ?? 0;
                 const origPrice = product.original_price ?? product.price ?? 0;
                 const hasDiscount = origPrice > discPrice;
+                const discountPercent = product.discount_percent || (hasDiscount ? Math.round(((origPrice - discPrice) / origPrice) * 100) : 0);
 
                 return (
                   <TouchableOpacity 
                     key={product.product_id} 
                     style={styles.productCard}
                     onPress={() => router.push({ pathname: '/product-detail', params: { id: product.product_id } })}
-                    activeOpacity={0.8}
+                    activeOpacity={0.85}
                   >
-                    <Image source={{ uri: getImageUrl(product.image_url) }} style={styles.productImage} />
+                    <View style={styles.imageWrapper}>
+                      <Image source={{ uri: getImageUrl(product.image_url) }} style={styles.productImage} />
+                      {discountPercent > 0 && (
+                        <View style={styles.discountBadge}>
+                          <Text style={styles.discountBadgeText}>-{discountPercent}%</Text>
+                        </View>
+                      )}
+                    </View>
                     <View style={styles.productContent}>
                       <Text style={styles.productName} numberOfLines={2}>{product.name}</Text>
                       <View style={styles.priceRow}>
-                        <Text style={styles.priceCurrent}>฿{discPrice}</Text>
+                        <Text style={styles.priceCurrent}>฿{Number(discPrice).toFixed(2)}</Text>
                         {hasDiscount && (
-                          <Text style={styles.priceOriginal}>฿{origPrice}</Text>
+                          <Text style={styles.priceOriginal}>฿{Number(origPrice).toFixed(2)}</Text>
                         )}
                       </View>
                     </View>
@@ -171,75 +198,74 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f8fafc',
   },
-  coverImage: {
-    height: 140,
-    backgroundColor: '#2e7a32',
-    paddingHorizontal: 16,
-    paddingTop: 16,
-  },
-  headerRow: {
+  header: {
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
   },
-  backBtn: {
+  circleBackBtn: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: 'rgba(0,0,0,0.3)',
+    backgroundColor: '#e8f5e9',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  headerRight: {
-    flexDirection: 'row',
-    gap: 8,
+  headerTitle: {
+    fontSize: 17,
+    fontWeight: 'bold',
+    color: '#0f172a',
   },
-  iconBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(0,0,0,0.3)',
-    justifyContent: 'center',
-    alignItems: 'center',
+  scrollContent: {
+    paddingBottom: 40,
   },
   infoCard: {
     backgroundColor: '#fff',
     marginHorizontal: 16,
-    marginTop: -40,
-    zIndex: 10,
-    borderRadius: 20,
-    padding: 16,
+    marginTop: 16,
+    borderRadius: 24,
+    padding: 20,
     alignItems: 'center',
-    elevation: 4,
+    elevation: 3,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    borderWidth: 1,
+    borderColor: '#f1f5f9',
+  },
+  avatarContainer: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+    borderWidth: 3,
+    borderColor: '#dcfce7',
+    marginBottom: 12,
+    backgroundColor: '#f1f5f9',
+    overflow: 'hidden',
   },
   avatar: {
-    width: 84,
-    height: 84,
-    borderRadius: 42,
-    borderWidth: 4,
-    borderColor: '#fff',
-    marginTop: -42,
-    zIndex: 10,
-    elevation: 5,
-    marginBottom: 8,
-    backgroundColor: '#e2e8f0',
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
   },
   shopName: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: 'bold',
     color: '#0f172a',
-    marginBottom: 6,
+    marginBottom: 8,
     textAlign: 'center',
   },
   statusBadge: {
-    paddingHorizontal: 10,
+    paddingHorizontal: 12,
     paddingVertical: 4,
-    borderRadius: 12,
-    marginBottom: 10,
+    borderRadius: 14,
+    marginBottom: 12,
   },
   statusBadgeText: {
     fontSize: 12,
@@ -248,7 +274,7 @@ const styles = StyleSheet.create({
   statsRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: 12,
     flexWrap: 'wrap',
     justifyContent: 'center',
   },
@@ -266,11 +292,21 @@ const styles = StyleSheet.create({
     color: '#cbd5e1',
     marginHorizontal: 8,
   },
+  addressBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#f8fafc',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 12,
+    width: '100%',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
   addressText: {
-    fontSize: 13,
+    fontSize: 12,
     color: '#64748b',
-    textAlign: 'center',
-    paddingHorizontal: 16,
+    flex: 1,
     lineHeight: 18,
   },
   productsSection: {
@@ -282,6 +318,14 @@ const styles = StyleSheet.create({
     color: '#0f172a',
     marginBottom: 16,
   },
+  emptyProductsBox: {
+    padding: 40,
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#f1f5f9',
+  },
   grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -290,7 +334,7 @@ const styles = StyleSheet.create({
   productCard: {
     width: '48%',
     backgroundColor: '#fff',
-    borderRadius: 16,
+    borderRadius: 18,
     marginBottom: 16,
     overflow: 'hidden',
     elevation: 2,
@@ -301,10 +345,30 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#f1f5f9',
   },
+  imageWrapper: {
+    width: '100%',
+    height: 135,
+    backgroundColor: '#f1f5f9',
+    position: 'relative',
+  },
   productImage: {
     width: '100%',
-    height: 130,
-    backgroundColor: '#f1f5f9',
+    height: '100%',
+    resizeMode: 'cover',
+  },
+  discountBadge: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    backgroundColor: '#ef4444',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  discountBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: 'bold',
   },
   productContent: {
     padding: 12,
@@ -321,12 +385,12 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   priceCurrent: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: 'bold',
     color: '#16a34a',
   },
   priceOriginal: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#94a3b8',
     textDecorationLine: 'line-through',
   },
