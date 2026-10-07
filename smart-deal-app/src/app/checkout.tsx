@@ -12,6 +12,22 @@ import { useCart, parseItemPrice } from '../context/CartContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { BASE_URL } from '../constants/api';
 
+function calculateDistanceKm(lat1: any, lon1: any, lat2: any, lon2: any): number {
+  if (!lat1 || !lon1 || !lat2 || !lon2) return 1.2;
+  const p1 = parseFloat(lat1), p2 = parseFloat(lon1), p3 = parseFloat(lat2), p4 = parseFloat(lon2);
+  if (isNaN(p1) || isNaN(p2) || isNaN(p3) || isNaN(p4) || (p1 === 0 && p2 === 0)) return 1.2;
+  const R = 6371;
+  const dLat = (p3 - p1) * (Math.PI / 180);
+  const dLon = (p4 - p2) * (Math.PI / 180);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(p1 * (Math.PI / 180)) * Math.cos(p3 * (Math.PI / 180)) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  const d = R * c;
+  return Math.max(0.5, Math.round(d * 10) / 10);
+}
+
 export default function CheckoutScreen() {
   const params = useLocalSearchParams();
   const cartContext = useCart() as any;
@@ -42,6 +58,7 @@ export default function CheckoutScreen() {
   const [address, setAddress] = useState<any>(null);
   const [currentUserId, setCurrentUserId] = useState<number>(2);
   const [systemBaseDeliveryFee, setSystemBaseDeliveryFee] = useState<number>(25);
+  const [shopCoords, setShopCoords] = useState<{ latitude: number; longitude: number }>({ latitude: 0, longitude: 0 });
   const [systemMinOrderValue, setSystemMinOrderValue] = useState<number>(50);
 
   // Coupons State
@@ -105,6 +122,17 @@ export default function CheckoutScreen() {
 
       // ดึงคูปองสะสมของผู้ใช้
       await loadUserCoupons(userId);
+      // ดึงพิกัดของร้านค้าเพื่อคำนวณระยะทางจริง
+      const currentShopId = cartItems[0]?.shop_id || 1;
+      try {
+        const shopRes = await axios.get(`${BASE_URL}/shops/${currentShopId}`);
+        if (shopRes.data?.success && shopRes.data?.shop) {
+          setShopCoords({
+            latitude: parseFloat(shopRes.data.shop.latitude) || 0,
+            longitude: parseFloat(shopRes.data.shop.longitude) || 0
+          });
+        }
+      } catch (e) {}
       await fetchSystemFareSettings();
     } catch (error) {
       console.log('Error initializing checkout data:', error);
@@ -173,9 +201,14 @@ export default function CheckoutScreen() {
     return sum + (isNaN(lineTotal) ? 0 : lineTotal);
   }, 0);
 
-  // โครงสร้างค่าจัดส่งตาม System Control Panel (เริ่มต้น ฿35 + ฿8/กม. ระยะทางประมาณ 2.5 กม. = ฿55.00)
-  const estimatedDistanceKm = 2.5;
-  const calculatedDeliveryFare = Math.round(systemFare.baseFee);
+    // คำนวณระยะทางจริงจากร้านค้าไปยังที่อยู่จัดส่งของลูกค้า
+  const currentDistanceKm = calculateDistanceKm(
+    shopCoords.latitude || 16.2468,
+    shopCoords.longitude || 103.2523,
+    address?.latitude || 16.2400,
+    address?.longitude || 103.2500
+  );
+  const calculatedDeliveryFare = Math.round((systemFare.baseFee + (currentDistanceKm * systemFare.perKmFee)) * 100) / 100;
   const deliveryFee = deliveryMethod === 'delivery' ? calculatedDeliveryFare : 0;
 
   // คำนวณส่วนลดตามคูปองที่เลือก
@@ -193,7 +226,7 @@ export default function CheckoutScreen() {
   }
 
   const grandTotal = Math.max(0, subtotal + deliveryFee - discount);
-  const deliveryFeeText = deliveryMethod === 'delivery' ? `฿${deliveryFee.toFixed(2)}` : 'ฟรี (รับเองที่ร้าน)';
+  const deliveryFeeText = deliveryMethod === 'delivery' ? `฿${deliveryFee.toFixed(2)} (~${currentDistanceKm} กม.)` : 'ฟรี (รับเองที่ร้าน)';
 
   const handleApplyCustomCode = () => {
     const trimmed = couponCodeInput.trim().toUpperCase();

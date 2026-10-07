@@ -1567,12 +1567,23 @@ app.post('/api/orders', async (req, res) => {
       }
     }
 
-    // 2. ตรวจสอบและคำนวณค่าจัดส่งตามโครงสร้างระบบ (Delivery Fare Structure)
+        // 2. ตรวจสอบและคำนวณค่าจัดส่งตามระยะทางจริงและโครงสร้างระบบ
+    const config = await getDeliveryFareConfig();
+    let shopLat = 0, shopLng = 0;
+    try {
+      const [shopRows] = await connection.query('SELECT latitude, longitude FROM shops WHERE shop_id = ?', [shop_id || 1]);
+      if (shopRows.length > 0) {
+        shopLat = parseFloat(shopRows[0].latitude) || 0;
+        shopLng = parseFloat(shopRows[0].longitude) || 0;
+      }
+    } catch (e) {}
+
+    const distKm = calculateDistanceKm(shopLat, shopLng, latitude, longitude);
+    const fareInfo = computeFare(distKm, config.baseFee, config.perKmFee, config.riderSharePercent);
+
     let calculatedDeliveryFee = parseFloat(delivery_fee) || 0;
     if (delivery_type === 'delivery' && calculatedDeliveryFee <= 0) {
-      const config = await getDeliveryFareConfig();
-      const distKm = calculateDistanceKm(shop_id ? 13.7563 : 0, shop_id ? 100.5018 : 0, latitude, longitude);
-      calculatedDeliveryFee = config.baseFee + (distKm * config.perKmFee);
+      calculatedDeliveryFee = fareInfo.totalFare;
     }
     const finalTotalAmount = total_amount ? parseFloat(total_amount) : (parseFloat(subtotal || 0) + calculatedDeliveryFee - parseFloat(discount || 0));
 
