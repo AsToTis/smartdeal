@@ -1567,7 +1567,16 @@ app.post('/api/orders', async (req, res) => {
       }
     }
 
-    // 2. บันทึกข้อมูลคำสั่งซื้อลงตาราง orders
+    // 2. ตรวจสอบและคำนวณค่าจัดส่งตามโครงสร้างระบบ (Delivery Fare Structure)
+    let calculatedDeliveryFee = parseFloat(delivery_fee) || 0;
+    if (delivery_type === 'delivery' && calculatedDeliveryFee <= 0) {
+      const config = await getDeliveryFareConfig();
+      const distKm = calculateDistanceKm(shop_id ? 13.7563 : 0, shop_id ? 100.5018 : 0, latitude, longitude);
+      calculatedDeliveryFee = config.baseFee + (distKm * config.perKmFee);
+    }
+    const finalTotalAmount = total_amount ? parseFloat(total_amount) : (parseFloat(subtotal || 0) + calculatedDeliveryFee - parseFloat(discount || 0));
+
+    // บันทึกข้อมูลคำสั่งซื้อลงตาราง orders
     const [orderResult] = await connection.query(
       `INSERT INTO orders (
         user_id, shop_id, subtotal, delivery_fee, discount, total_amount, 
@@ -1578,7 +1587,7 @@ app.post('/api/orders', async (req, res) => {
         user_id || 2,
         shop_id,
         subtotal || 0,
-        delivery_fee || 0,
+        calculatedDeliveryFee,
         discount || 0,
         total_amount,
         delivery_type || 'delivery',
@@ -3987,14 +3996,80 @@ app.post('/api/rider/login', async (req, res) => {
   }
 });
 
-// 3. Get Nearby Jobs
+
+// ==========================================
+// DYNAMIC FARE & DISTANCE CALCULATION HELPER
+// ==========================================
+async function getDeliveryFareConfig() {
+  try {
+    const [settings] = await db.query('SELECT setting_key, setting_value FROM system_settings');
+    const config = {};
+    settings.forEach(s => {
+      config[s.setting_key] = s.setting_value;
+    });
+    return {
+      baseFee: parseFloat(config.base_delivery_fee) || 35,
+      perKmFee: parseFloat(config.per_km_fee) || 8,
+      riderSharePercent: parseFloat(config.rider_commission_percent) || 100,
+      minOrder: parseFloat(config.minimum_order_value) || 50,
+      gpPercent: parseFloat(config.platform_fee_percent) || 15
+    };
+  } catch (e) {
+    return {
+      baseFee: 35,
+      perKmFee: 8,
+      riderSharePercent: 100,
+      minOrder: 50,
+      gpPercent: 15
+    };
+  }
+}
+
+function calculateDistanceKm(lat1, lon1, lat2, lon2) {
+  if (!lat1 || !lon1 || !lat2 || !lon2) return 2.5;
+  const p1 = parseFloat(lat1), p2 = parseFloat(lon1), p3 = parseFloat(lat2), p4 = parseFloat(lon2);
+  if (isNaN(p1) || isNaN(p2) || isNaN(p3) || isNaN(p4) || (p1 === 0 && p2 === 0)) return 2.5;
+  const R = 6371;
+  const dLat = (p3 - p1) * (Math.PI / 180);
+  const dLon = (p4 - p2) * (Math.PI / 180);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(p1 * (Math.PI / 180)) * Math.cos(p3 * (Math.PI / 180)) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  const d = R * c;
+  return Math.max(0.5, Math.round(d * 10) / 10);
+}
+
+function computeFare(distanceKm, baseFee, perKmFee, riderSharePercent) {
+  const km = parseFloat(distanceKm) || 2.5;
+  const totalFare = baseFee + (km * perKmFee);
+  const riderFee = totalFare * (riderSharePercent / 100);
+  return {
+    totalFare: Math.round(totalFare * 100) / 100,
+    riderFee: Math.round(riderFee * 100) / 100
+  };
+}
+
+// 3. Get Nearby Jobs (Dynamic Fare Calculation based on System Settings)
 app.get('/api/rider/jobs', async (req, res) => {
   const { lat, lng } = req.query;
-  // If lat/lng provided, we can use Haversine formula. 
-  // For simplicity, we just fetch orders that are ready or finding_rider
   try {
+    const config = await getDeliveryFareConfig();
+
+    // Auto-fix zero delivery fees on existing orders in DB
+    try {
+      await db.query(`
+        UPDATE orders 
+        SET delivery_fee = ? 
+        WHERE (delivery_fee = 0 OR delivery_fee IS NULL) 
+          AND (delivery_type = 'delivery' OR delivery_type IS NULL)
+      `, [config.baseFee + (2.5 * config.perKmFee)]);
+    } catch(e) {}
+
     const [orders] = await db.query(`
       SELECT o.order_id as order_id, o.total_amount, o.delivery_fee, o.order_status, o.created_at,
+             o.latitude as customer_lat, o.longitude as customer_lng,
              s.shop_id as shop_id, s.name as shop_name, s.latitude as shop_lat, s.longitude as shop_lng, s.address as shop_address,
              u.full_name as customer_name, u.phone as customer_phone, o.shipping_address as customer_address
       FROM orders o
@@ -4004,10 +4079,31 @@ app.get('/api/rider/jobs', async (req, res) => {
       WHERE o.order_status IN ('preparing', 'ready') AND o.delivery_type != 'pickup' AND (del.id IS NULL OR del.status = 'cancelled')
       ORDER BY o.created_at ASC
     `);
-    res.json({ success: true, data: orders });
+
+    const formattedOrders = orders.map(o => {
+      const distKm = calculateDistanceKm(o.shop_lat, o.shop_lng, o.customer_lat, o.customer_lng);
+      const fareInfo = computeFare(distKm, config.baseFee, config.perKmFee, config.riderSharePercent);
+      
+      let finalFee = parseFloat(o.delivery_fee) || 0;
+      if (finalFee <= 0) {
+        finalFee = fareInfo.riderFee;
+      } else {
+        finalFee = Math.round((finalFee * (config.riderSharePercent / 100)) * 100) / 100;
+      }
+
+      return {
+        ...o,
+        distance: `${distKm} กม.`,
+        delivery_fee: finalFee
+      };
+    });
+
+    res.json({ success: true, data: formattedOrders, jobs: formattedOrders });
   } catch (error) {
     console.error('Get jobs error:', error);
     res.status(500).json({ success: false, message: 'เกิดข้อผิดพลาดเซิร์ฟเวอร์' });
+  }
+});
   }
 });
 

@@ -141,7 +141,12 @@ export default function CheckoutScreen() {
     return sum + (isNaN(lineTotal) ? 0 : lineTotal);
   }, 0);
 
-  const deliveryFee = deliveryMethod === 'delivery' ? 15 : 0;
+  // โครงสร้างค่าจัดส่งตาม System Control Panel (เริ่มต้น ฿35 + ฿8/กม. ระยะทางประมาณ 2.5 กม. = ฿55.00)
+  const baseDeliveryFare = 35;
+  const perKmFare = 8;
+  const estimatedDistanceKm = 2.5;
+  const calculatedDeliveryFare = Math.round(baseDeliveryFare + (estimatedDistanceKm * perKmFare));
+  const deliveryFee = deliveryMethod === 'delivery' ? calculatedDeliveryFare : 0;
 
   // คำนวณส่วนลดตามคูปองที่เลือก
   let discount = 0;
@@ -158,7 +163,7 @@ export default function CheckoutScreen() {
   }
 
   const grandTotal = Math.max(0, subtotal + deliveryFee - discount);
-  const deliveryFeeText = deliveryMethod === 'delivery' ? '฿15.00' : 'ฟรี (รับเองที่ร้าน)';
+  const deliveryFeeText = deliveryMethod === 'delivery' ? `฿${deliveryFee.toFixed(2)}` : 'ฟรี (รับเองที่ร้าน)';
 
   const handleApplyCustomCode = () => {
     const trimmed = couponCodeInput.trim().toUpperCase();
