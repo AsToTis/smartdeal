@@ -874,8 +874,27 @@ app.get('/api/home-data', async (req, res) => {
       WHERE p.stock_quantity > 0 AND p.is_auction = 0 AND (p.deal_end_time IS NULL OR p.deal_end_time > NOW()) ORDER BY p.deal_end_time IS NULL ASC, p.deal_end_time ASC
     `);
     const [shops] = await db.execute('SELECT * FROM shops');
+    const filteredShops = shops.filter(isOpen);
 
-    const deals = products.map(p => {
+
+    const now = new Date();
+    // Thai time = UTC+7
+    const thTime = new Date(now.getTime() + (7 * 60 * 60 * 1000));
+    const currentHourMin = thTime.toISOString().substring(11, 16); // "HH:MM"
+
+    const isOpen = (p) => {
+      if (!p.opening_time || !p.closing_time) return true;
+      const o = p.opening_time.substring(0, 5);
+      const c = p.closing_time.substring(0, 5);
+      if (o < c) {
+        return currentHourMin >= o && currentHourMin <= c;
+      } else {
+        // Crosses midnight e.g. 18:00 - 02:00
+        return currentHourMin >= o || currentHourMin <= c;
+      }
+    };
+
+    const deals = products.filter(isOpen).map(p => {
       const rawExpires = p.deal_end_time || p.expires_at || p.end_time || p.pickup_end_time;
       const formattedExpiresAt = rawExpires ? new Date(rawExpires).toISOString() : null;
 
@@ -896,7 +915,7 @@ app.get('/api/home-data', async (req, res) => {
       };
     });
 
-    const formattedShops = shops.map(s => ({
+    const formattedShops = shops.filter(isOpen).map(s => ({
       ...s,
       name: s.name || s.shop_name || ''
     }));
@@ -905,7 +924,7 @@ app.get('/api/home-data', async (req, res) => {
       success: true,
       categories,
       deals,
-      shops: formattedShops
+      shops: formattedShops.filter(isOpen)
     });
 
   } catch (err) {
