@@ -864,21 +864,25 @@ app.post('/api/forgot-password/reset-password', async (req, res) => {
 app.get('/api/home-data', async (req, res) => {
   try {
     const [categories] = await db.execute('SELECT * FROM categories');
+    
+    // Add opening_time and closing_time to query
     const [products] = await db.execute(`
       SELECT 
         p.*,
         s.name AS shop_name,
-        s.image_url AS shop_image
+        s.image_url AS shop_image,
+        s.opening_time,
+        s.closing_time
       FROM products p
       LEFT JOIN shops s ON p.shop_id = s.shop_id
-      WHERE p.stock_quantity > 0 AND p.is_auction = 0 AND (p.deal_end_time IS NULL OR p.deal_end_time > NOW()) ORDER BY p.deal_end_time IS NULL ASC, p.deal_end_time ASC
+      WHERE p.stock_quantity > 0 AND p.is_auction = 0 AND (p.deal_end_time IS NULL OR p.deal_end_time > NOW()) 
+      ORDER BY p.deal_end_time IS NULL ASC, p.deal_end_time ASC
     `);
+    
     const [shops] = await db.execute('SELECT * FROM shops');
-    const filteredShops = shops.filter(isOpen);
 
-
+    // Define isOpen first!
     const now = new Date();
-    // Thai time = UTC+7
     const thTime = new Date(now.getTime() + (7 * 60 * 60 * 1000));
     const currentHourMin = thTime.toISOString().substring(11, 16); // "HH:MM"
 
@@ -889,11 +893,11 @@ app.get('/api/home-data', async (req, res) => {
       if (o < c) {
         return currentHourMin >= o && currentHourMin <= c;
       } else {
-        // Crosses midnight e.g. 18:00 - 02:00
         return currentHourMin >= o || currentHourMin <= c;
       }
     };
 
+    // Filter deals and shops
     const deals = products.filter(isOpen).map(p => {
       const rawExpires = p.deal_end_time || p.expires_at || p.end_time || p.pickup_end_time;
       const formattedExpiresAt = rawExpires ? new Date(rawExpires).toISOString() : null;
@@ -924,7 +928,7 @@ app.get('/api/home-data', async (req, res) => {
       success: true,
       categories,
       deals,
-      shops: formattedShops.filter(isOpen)
+      shops: formattedShops
     });
 
   } catch (err) {
@@ -939,13 +943,26 @@ app.get('/api/products', async (req, res) => {
       SELECT 
         p.*,
         s.name AS shop_name,
-        s.image_url AS shop_image
+        s.image_url AS shop_image,
+        s.opening_time,
+        s.closing_time
       FROM products p
       LEFT JOIN shops s ON p.shop_id = s.shop_id
       WHERE p.stock_quantity > 0 AND (p.deal_end_time IS NULL OR p.deal_end_time > NOW())
     `);
 
-    const formattedProducts = rows.map(p => {
+    const now = new Date();
+    const thTime = new Date(now.getTime() + (7 * 60 * 60 * 1000));
+    const currentHourMin = thTime.toISOString().substring(11, 16);
+    const isOpen = (p) => {
+      if (!p.opening_time || !p.closing_time) return true;
+      const o = p.opening_time.substring(0, 5);
+      const c = p.closing_time.substring(0, 5);
+      if (o < c) return currentHourMin >= o && currentHourMin <= c;
+      return currentHourMin >= o || currentHourMin <= c;
+    };
+
+    const formattedProducts = rows.filter(isOpen).map(p => {
       const rawExpires = p.deal_end_time || p.expires_at || p.end_time || p.pickup_end_time;
       const formattedExpiresAt = rawExpires ? new Date(rawExpires).toISOString() : null;
       const origPrice = parseFloat(p.original_price ?? p.price ?? 0);
@@ -3523,12 +3540,10 @@ app.post('/api/complaints', upload.single('image'), async (req, res) => {
 app.get('/api/admin/complaints', async (req, res) => {
   try {
     const [complaints] = await db.execute(`
-      SELECT c.*, u.full_name as user_name, u.email, u.phone
-      FROM complaints c
-      LEFT JOIN users u ON c.user_id = u.user_id
-      ORDER BY c.created_at DESC
+      SELECT c.*, DATE_FORMAT(c.created_at, '%Y-%m-%dT%T.000Z') as created_at_str, u.full_name as user_name, u.email, u.phone FROM complaints c LEFT JOIN users u ON c.user_id = u.user_id ORDER BY c.created_at DESC
     `);
-    res.json({ success: true, data: complaints });
+    const formattedComplaints = complaints.map(c => ({ ...c, created_at: c.created_at_str || c.created_at }));
+    res.json({ success: true, data: formattedComplaints });
   } catch (error) {
     console.error('Error fetching complaints:', error);
     res.status(500).json({ success: false, message: 'Internal server error' });
