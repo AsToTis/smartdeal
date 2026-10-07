@@ -338,8 +338,8 @@ app.post('/api/register/request-otp', async (req, res) => {
       res.json({ message: 'ส่งรหัส OTP ไปยังอีเมลเรียบร้อยแล้ว' });
     } catch (err) {
       console.log('ส่งอีเมลไม่สำเร็จ:', err.message);
-      delete otpStore[email];
-      return res.status(200).json({ message: 'เซิร์ฟเวอร์ส่งอีเมลไม่ได้ชั่วคราว แต่สามารถใช้รหัสนี้ได้: ' + otp, otpFallback: otp });
+      // delete removed
+        return res.status(200).json({ message: 'เซิร์ฟเวอร์ส่งอีเมลไม่ได้ชั่วคราว แต่สามารถใช้รหัสนี้ได้: ' + otp, otpFallback: otp });
     }
   } catch (error) {
     res.status(500).json({ message: 'เกิดข้อผิดพลาดทางเซิร์ฟเวอร์', error: error.message });

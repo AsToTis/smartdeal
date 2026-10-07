@@ -29,7 +29,8 @@ export default function CartScreen() {
   // คำนวณยอดเงินอย่างปลอดภัย (ป้องกัน NaN 100%)
   const safeTotalAmount = isNaN(totalAmount) ? 0 : totalAmount;
   const safeDiscount = isNaN(discount) ? 0 : discount;
-  const finalTotal = Math.max(0, safeTotalAmount - safeDiscount);
+  const deliveryFee = 15; // ค่าจัดส่งโดยไรเดอร์
+  const finalTotal = Math.max(0, safeTotalAmount + deliveryFee - safeDiscount);
 
   // ตรวจสอบและไปหน้าชำระเงิน
   const handleProceedToCheckout = () => {
@@ -259,7 +260,7 @@ export default function CartScreen() {
               </View>
               <View style={styles.summaryRow}>
                 <Text style={styles.summaryLabel}>ค่าจัดส่ง</Text>
-                <Text style={[styles.summaryValue, { color: '#16a34a' }]}>ฟรี</Text>
+                <Text style={styles.summaryValue}>฿{deliveryFee.toFixed(2)}</Text>
               </View>
               {safeDiscount > 0 && (
                 <View style={styles.summaryRow}>
