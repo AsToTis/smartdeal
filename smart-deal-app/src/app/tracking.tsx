@@ -10,7 +10,8 @@ import {
   Linking,
   Alert,
   Modal,
-  TextInput
+  TextInput,
+  Dimensions
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons, MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
@@ -18,12 +19,15 @@ import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { WebView } from 'react-native-webview';
 import axios from 'axios';
 import * as Location from 'expo-location';
-import { BASE_URL } from '../constants/api';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { BASE_URL, SERVER_URL } from '../constants/api';
 
+const { width, height } = Dimensions.get('window');
 const MapWebView = WebView as any;
 
 export default function TrackingScreen() {
-  const { id } = useLocalSearchParams();
+  const params = useLocalSearchParams();
+  const id = params.id || params.order_id || params.orderId;
   const webViewRef = useRef<any>(null);
 
   const [loading, setLoading] = useState(true);
@@ -36,10 +40,28 @@ export default function TrackingScreen() {
   const [showRatingModal, setShowRatingModal] = useState(false);
   const [selectedRating, setSelectedRating] = useState(5);
   const [ratingComment, setRatingComment] = useState('');
+  const [isSubmittingRating, setIsSubmittingRating] = useState(false);
 
-  // Default coordinates (used if none provided) - Mahasarakham City
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
+
+  // Default coordinates - Mahasarakham City
   const [centerLat, setCenterLat] = useState(16.1852);
   const [centerLng, setCenterLng] = useState(103.3013);
+
+  const getImageUrl = (imgUrl?: string) => {
+    if (!imgUrl) return '';
+    if (imgUrl.startsWith('data:') || imgUrl.startsWith('file://')) {
+      return imgUrl;
+    }
+    if (imgUrl.startsWith('http://') || imgUrl.startsWith('https://')) {
+      return imgUrl.replace(/^http:\/\/(localhost|127\.0\.0\.1|202\.28\.34\.205)(:\d+)?/, SERVER_URL);
+    }
+    const cleanPath = imgUrl.startsWith('/') ? imgUrl : `/${imgUrl}`;
+    if (cleanPath.startsWith('/uploads/')) {
+      return `${SERVER_URL}${cleanPath}`;
+    }
+    return `${SERVER_URL}/uploads${cleanPath}`;
+  };
 
   useEffect(() => {
     (async () => {
@@ -55,14 +77,13 @@ export default function TrackingScreen() {
 
   const fetchTrackingData = async () => {
     try {
-      const orderId = id || 1; // Fallback to 1 for testing if not provided
+      const orderId = id || 1;
       const res = await axios.get(`${BASE_URL}/orders/${orderId}/tracking`);
       if (res.data?.success) {
         setOrder(res.data.order);
         setShop(res.data.shop);
         setRider(res.data.rider);
 
-        // Update map center to rider or shop
         if (res.data.rider?.lat && res.data.rider?.lng) {
           setCenterLat(res.data.rider.lat);
           setCenterLng(res.data.rider.lng);
@@ -83,25 +104,22 @@ export default function TrackingScreen() {
   useFocusEffect(
     useCallback(() => {
       fetchTrackingData();
-      const interval = setInterval(fetchTrackingData, 10000); // Poll every 10s
+      const interval = setInterval(fetchTrackingData, 6000);
       return () => clearInterval(interval);
     }, [id])
   );
 
   const updateMapMarkers = (s: any, o: any, r: any) => {
-    // Escape quotes to prevent JS injection errors
     const safeAddress = o?.shipping_address ? o.shipping_address.replace(/'/g, "\\'").replace(/\n/g, " ") : 'จัดส่งที่นี่';
     const safeShopName = s?.name ? s.name.replace(/'/g, "\\'").replace(/\n/g, " ") : 'ร้านอาหาร';
     
-    const sLat = s?.lat || 13.736717;
-    const sLng = s?.lng || 100.523186;
+    const sLat = s?.lat || 16.1852;
+    const sLng = s?.lng || 103.3013;
     
-    // Customer fallback
     const currentUserLoc = userLocationRef.current;
     const cLat = currentUserLoc?.latitude || o?.delivery_lat || sLat + 0.008;
     const cLng = currentUserLoc?.longitude || o?.delivery_lng || sLng + 0.005;
     
-    // Rider fallback (starts near shop)
     const rLat = r?.lat || sLat + 0.001;
     const rLng = r?.lng || sLng + 0.001;
 
@@ -119,7 +137,7 @@ export default function TrackingScreen() {
     webViewRef.current?.injectJavaScript(jsCode);
   };
 
-  const handleCall = () => {
+  const handleCallRider = () => {
     if (rider?.phone) {
       Linking.openURL(`tel:${rider.phone}`);
     } else {
@@ -127,11 +145,7 @@ export default function TrackingScreen() {
     }
   };
 
-  const handleChat = () => {
-    router.push({ pathname: '/order-chat', params: { orderId: order?.order_id || id, riderId: rider?.rider_id } });
-  };
-
-  const handleShopCall = () => {
+  const handleCallShop = () => {
     if (shop?.phone) {
       Linking.openURL(`tel:${shop.phone}`);
     } else {
@@ -139,38 +153,116 @@ export default function TrackingScreen() {
     }
   };
 
-  const handleShopChat = () => {
-    router.push({ pathname: '/order-chat', params: { orderId: order?.order_id || id, shopId: shop?.shop_id } });
+  const handleOpenChat = async (target: 'seller' | 'rider') => {
+    let currentUserId = 1;
+    try {
+      const u = await AsyncStorage.getItem('user');
+      if (u) {
+        const parsed = JSON.parse(u);
+        if (parsed.user_id) currentUserId = Number(parsed.user_id);
+      }
+    } catch (e) {}
+
+    router.push({ 
+      pathname: '/order-chat' as any, 
+      params: { 
+        order_id: order?.order_id || id, 
+        role: 'buyer', 
+        target: target,
+        user_id: currentUserId 
+      } 
+    });
   };
 
-  // Helper to determine status index
+  // Confirm Receipt & Release Escrow
+  const handleConfirmReceived = () => {
+    Alert.alert(
+      'ยืนยันได้รับสินค้า',
+      'คุณได้รับสินค้าถูกต้องครบถ้วนและต้องการยืนยันคำสั่งซื้อใช่หรือไม่? (ระบบจะโอนเงินให้ร้านค้าและไรเดอร์)',
+      [
+        { text: 'ตรวจสอบอีกครั้ง', style: 'cancel' },
+        {
+          text: 'ยืนยันรับสินค้าแล้ว',
+          onPress: async () => {
+            try {
+              const res = await axios.put(`${BASE_URL}/orders/${order?.order_id || id}/complete`);
+              if (res.data?.success) {
+                Alert.alert('สำเร็จ', 'ขอบคุณที่ยืนยันการรับสินค้า กรุณาให้คะแนนความพึงพอใจ');
+                fetchTrackingData();
+                setShowRatingModal(true);
+              }
+            } catch (err: any) {
+              console.error('Confirm received error:', err);
+              Alert.alert('ผิดพลาด', err.response?.data?.message || 'ไม่สามารถยืนยันได้');
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  // Submit Rating
+  const handleSubmitRating = async () => {
+    setIsSubmittingRating(true);
+    try {
+      let currentUserId = 1;
+      try {
+        const u = await AsyncStorage.getItem('user');
+        if (u) {
+          const parsed = JSON.parse(u);
+          if (parsed.user_id) currentUserId = Number(parsed.user_id);
+        }
+      } catch (e) {}
+
+      await axios.post(`${BASE_URL}/reviews`, {
+        order_id: order?.order_id || id,
+        user_id: currentUserId,
+        rating: selectedRating,
+        comment: ratingComment
+      });
+
+      setShowRatingModal(false);
+      Alert.alert('ขอบคุณ', 'บันทึกคะแนนรีวิวของคุณเรียบร้อยแล้ว');
+      router.replace('/(tabs)/orders' as any);
+    } catch (error) {
+      console.error('Submit review error:', error);
+      setShowRatingModal(false);
+      router.replace('/(tabs)/orders' as any);
+    } finally {
+      setIsSubmittingRating(false);
+    }
+  };
+
+  // Status mapping
   const getStatusIndex = (status: string) => {
     if (['pending', 'paid'].includes(status)) return 0;
     if (['preparing'].includes(status)) return 1;
     if (['ready'].includes(status)) return 2;
-    if (['finding_rider', 'heading_to_shop', 'shipped'].includes(status)) return 3;
-    if (['delivering'].includes(status)) return 4;
-    if (['completed', 'delivered'].includes(status)) return 5;
+    if (['delivering', 'shipped'].includes(status)) return 3;
+    if (['delivered'].includes(status)) return 4;
+    if (['completed'].includes(status)) return 5;
     return 0;
   };
 
-  const statusIdx = getStatusIndex(order?.status || 'heading_to_shop');
+  const statusIdx = getStatusIndex(order?.status || 'preparing');
 
   const getStatusTitle = () => {
-    if (statusIdx <= 1) return 'กำลังจัดเตรียมสินค้า';
-    if (statusIdx <= 3) return 'คนขับกำลังไปรับสินค้า';
-    if (statusIdx === 4) return 'กำลังนำส่งสินค้า';
-    if (statusIdx >= 5) return 'สินค้ามาถึงแล้ว';
+    if (statusIdx === 0) return 'ร้านค้ารับคำสั่งซื้อแล้ว';
+    if (statusIdx === 1) return 'ร้านค้ากำลังจัดเตรียมสินค้า 🍳';
+    if (statusIdx === 2) return 'สินค้าพร้อมแล้ว กำลังรอไรเดอร์มารับ 🛵';
+    if (statusIdx === 3) return 'ไรเดอร์รับสินค้าแล้ว กำลังนำส่งคุณ 🛵💨';
+    if (statusIdx === 4) return 'ไรเดอร์จัดส่งถึงที่หมายแล้ว 📦';
+    if (statusIdx === 5) return 'คำสั่งซื้อสำเร็จสมบูรณ์ ✅';
     return 'กำลังดำเนินการ';
   };
 
-  const formatTime = (dateString: string) => {
+  const formatThaiTime = (dateString?: string) => {
     if (!dateString) return '';
     const date = new Date(dateString);
     return date.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) + ' น.';
   };
 
-  // HTML for Leaflet Map
+  // Leaflet Map HTML
   const leafletMapHTML = `
     <!DOCTYPE html>
     <html>
@@ -181,8 +273,6 @@ export default function TrackingScreen() {
       <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
       <style>
         body, html, #map { margin: 0; padding: 0; width: 100%; height: 100%; background: #e2e8f0; }
-        
-        /* Custom Marker Styles */
         .shop-marker {
           background: #f57c00;
           color: white;
@@ -196,7 +286,6 @@ export default function TrackingScreen() {
           font-size: 16px;
           box-shadow: 0 4px 6px rgba(0,0,0,0.3);
         }
-        
         .customer-marker {
           background: #3b82f6;
           color: white;
@@ -210,14 +299,12 @@ export default function TrackingScreen() {
           font-size: 16px;
           box-shadow: 0 4px 6px rgba(0,0,0,0.3);
         }
-        
         .rider-marker-container {
           display: flex;
           flex-direction: column;
           align-items: center;
           margin-top: -20px;
         }
-        
         .rider-eta {
           background: white;
           color: #16a34a;
@@ -229,125 +316,75 @@ export default function TrackingScreen() {
           margin-bottom: 4px;
           white-space: nowrap;
         }
-        
         .rider-icon {
           background: #16a34a;
           color: white;
           border-radius: 50%;
-          border: 3px solid white;
-          width: 40px;
-          height: 40px;
+          border: 2px solid white;
+          width: 36px;
+          height: 36px;
           display: flex;
           align-items: center;
           justify-content: center;
-          font-size: 20px;
+          font-size: 18px;
           box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+          animation: pulse 1.5s infinite;
         }
-        
-        .map-tooltip {
-          background-color: white;
-          border: 1px solid #e2e8f0;
-          border-radius: 8px;
-          padding: 6px 10px;
-          font-family: sans-serif;
-          font-size: 13px;
-          font-weight: bold;
-          color: #0f172a;
-          box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-          white-space: nowrap;
-          max-width: 150px;
-          overflow: hidden;
-          text-overflow: ellipsis;
+        @keyframes pulse {
+          0% { transform: scale(1); }
+          50% { transform: scale(1.1); }
+          100% { transform: scale(1); }
         }
       </style>
     </head>
     <body>
       <div id="map"></div>
       <script>
-        var map = L.map('map', { zoomControl: false, attributionControl: false }).setView([${centerLat}, ${centerLng}], 14);
-        
-        L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+        var map = L.map('map', { zoomControl: false }).setView([${centerLat}, ${centerLng}], 14);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
           maxZoom: 19
         }).addTo(map);
 
-        var shopMarker, customerMarker, riderMarker;
+        var shopMarker, customerMarker, riderMarker, routeLine;
 
-        var shopIcon = L.divIcon({ className: 'custom-div-icon', html: '<div class="shop-marker">🏪</div>', iconSize: [32, 32], iconAnchor: [16, 16] });
-        var customerIcon = L.divIcon({ className: 'custom-div-icon', html: '<div class="customer-marker">📍</div>', iconSize: [32, 32], iconAnchor: [16, 16] });
-        var riderIcon = L.divIcon({ className: 'custom-div-icon', html: '<div class="rider-marker-container"><div class="rider-eta">5 นาที</div><div class="rider-icon">🛵</div></div>', iconSize: [46, 66], iconAnchor: [23, 60] });
+        window.updateMarkers = function(sLat, sLng, cLat, cLng, rLat, rLng, custAddr, shopName) {
+          if (shopMarker) map.removeLayer(shopMarker);
+          if (customerMarker) map.removeLayer(customerMarker);
+          if (riderMarker) map.removeLayer(riderMarker);
+          if (routeLine) map.removeLayer(routeLine);
 
-        window.updateMarkers = function(sLat, sLng, cLat, cLng, rLat, rLng, cAddress, sName) {
-          var bounds = [];
-          
-          if (sLat && sLng) {
-            if (!shopMarker) {
-              shopMarker = L.marker([sLat, sLng], {icon: shopIcon}).addTo(map);
-              if (sName) shopMarker.bindTooltip(sName, { permanent: true, direction: 'top', offset: [0, -20], className: 'map-tooltip' });
-            } else {
-              shopMarker.setLatLng([sLat, sLng]);
-              if (sName) shopMarker.setTooltipContent(sName);
-            }
-            bounds.push([sLat, sLng]);
-          }
-          
-          if (cLat && cLng) {
-            if (!customerMarker) {
-              customerMarker = L.marker([cLat, cLng], {icon: customerIcon}).addTo(map);
-              if (cAddress) customerMarker.bindTooltip(cAddress, { permanent: true, direction: 'top', offset: [0, -20], className: 'map-tooltip' });
-            } else {
-              customerMarker.setLatLng([cLat, cLng]);
-              if (cAddress) customerMarker.setTooltipContent(cAddress);
-            }
-            bounds.push([cLat, cLng]);
-          }
-          
-          if (rLat && rLng) {
-            if (!riderMarker) riderMarker = L.marker([rLat, rLng], {icon: riderIcon}).addTo(map);
-            else riderMarker.setLatLng([rLat, rLng]);
-            bounds.push([rLat, rLng]);
-          }
+          var shopIcon = L.divIcon({
+            className: 'custom-div-icon',
+            html: "<div class='shop-marker'>🏪</div>",
+            iconSize: [32, 32],
+            iconAnchor: [16, 16]
+          });
+          shopMarker = L.marker([sLat, sLng], { icon: shopIcon }).addTo(map)
+            .bindPopup("<b>" + shopName + "</b><br>ร้านค้า");
 
-          // Draw dashed route line
-          if (sLat && cLat) {
-            if (window.routeLine) {
-              map.removeLayer(window.routeLine);
-            }
-            window.routeLine = L.polyline([[sLat, sLng], [cLat, cLng]], {color: '#16a34a', dashArray: '10, 10', weight: 4}).addTo(map);
-          }
+          var customerIcon = L.divIcon({
+            className: 'custom-div-icon',
+            html: "<div class='customer-marker'>📍</div>",
+            iconSize: [32, 32],
+            iconAnchor: [16, 16]
+          });
+          customerMarker = L.marker([cLat, cLng], { icon: customerIcon }).addTo(map)
+            .bindPopup("<b>จุดส่งสินค้า</b><br>" + custAddr);
 
-          if (bounds.length > 1) {
-            map.fitBounds(bounds, { padding: [50, 50] });
-          } else if (bounds.length === 1) {
-            map.setView(bounds[0], 15);
-          }
+          var riderIcon = L.divIcon({
+            className: 'custom-div-icon',
+            html: "<div class='rider-marker-container'><div class='rider-eta'>ไรเดอร์</div><div class='rider-icon'>🛵</div></div>",
+            iconSize: [60, 60],
+            iconAnchor: [30, 45]
+          });
+          riderMarker = L.marker([rLat, rLng], { icon: riderIcon }).addTo(map);
+
+          var latlngs = [[sLat, sLng], [rLat, rLng], [cLat, cLng]];
+          routeLine = L.polyline(latlngs, { color: '#16a34a', weight: 4, dashArray: '6, 8' }).addTo(map);
+
+          var bounds = L.latLngBounds([ [sLat, sLng], [cLat, cLng], [rLat, rLng] ]);
+          map.fitBounds(bounds, { padding: [40, 40] });
         };
-
-        // Initialize with default/fetched data
-        setTimeout(function() {
-          var safeAddr = ${JSON.stringify(order?.shipping_address || 'จัดส่งที่นี่')};
-          var safeShop = ${JSON.stringify(shop?.name || 'ร้านอาหาร')};
-          
-          var sLat = ${shop?.lat || 'null'};
-          var sLng = ${shop?.lng || 'null'};
-          var cLat = ${userLocation?.latitude || order?.delivery_lat || 'null'};
-          var cLng = ${userLocation?.longitude || order?.delivery_lng || 'null'};
-          var rLat = ${rider?.lat || 'null'};
-          var rLng = ${rider?.lng || 'null'};
-          
-          sLat = sLat || 16.1852;
-          sLng = sLng || 103.3013;
-          cLat = cLat || (sLat + 0.008);
-          cLng = cLng || (sLng + 0.005);
-          rLat = rLat || (sLat + 0.001);
-          rLng = rLng || (sLng + 0.001);
-          
-          window.updateMarkers(
-            sLat, sLng,
-            cLat, cLng,
-            rLat, rLng,
-            safeAddr || 'จัดส่งที่นี่', safeShop || 'ร้านอาหาร'
-          );
-        }, 500);
       </script>
     </body>
     </html>
@@ -355,250 +392,276 @@ export default function TrackingScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+      <SafeAreaView style={styles.centerLoading}>
         <ActivityIndicator size="large" color="#16a34a" />
-        <Text style={{ marginTop: 12, color: '#64748b' }}>กำลังโหลดข้อมูลการติดตาม...</Text>
+        <Text style={{ marginTop: 10, color: '#64748b' }}>กำลังโหลดข้อมูลพิกัด...</Text>
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
           <MaterialIcons name="arrow-back" size={24} color="#0f172a" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>ติดตามสถานะคำสั่งซื้อ</Text>
-        <TouchableOpacity style={styles.helpBtn}>
-          <MaterialIcons name="help-outline" size={24} color="#0f172a" />
-        </TouchableOpacity>
+        <Text style={styles.headerTitle}>ติดตามคำสั่งซื้อ #{order?.order_id || id}</Text>
+        <View style={{ width: 36 }} />
       </View>
 
-      {/* Map Section */}
+      {/* Map View */}
       <View style={styles.mapContainer}>
         <MapWebView
           ref={webViewRef}
-          originWhitelist={['*']}
           source={{ html: leafletMapHTML }}
           style={styles.mapWebView}
           javaScriptEnabled={true}
-          scrollEnabled={false}
+          domStorageEnabled={true}
         />
       </View>
 
       {/* Bottom Sheet Details */}
-      <View style={styles.bottomSheet}>
-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 20 }}>
-          
-          {/* Status Header */}
-          <View style={styles.statusHeaderRow}>
-            <View>
-              <Text style={styles.statusTitle}>{getStatusTitle()}</Text>
-              <Text style={styles.orderId}>เลขที่อ้างอิง: #SD-{order?.order_id || '9925'}</Text>
-            </View>
-            <View style={{ alignItems: 'flex-end' }}>
-              <Text style={styles.etaLabel}>เวลาที่คาดถึง</Text>
-              <Text style={styles.etaTime}>12:45 น.</Text>
-            </View>
+      <ScrollView style={styles.bottomSheet} contentContainerStyle={styles.bottomSheetContent}>
+        {/* Status Header */}
+        <View style={styles.statusHeaderRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.statusTitle}>{getStatusTitle()}</Text>
+            <Text style={styles.orderId}>คำสั่งซื้อ #{order?.order_id || id} • ชำระเงินแล้ว</Text>
           </View>
+        </View>
 
-          {/* Location Details Card */}
-          <View style={styles.locationCard}>
-            <View style={styles.locationConnectionLine} />
-            
-            {/* Shop Location */}
-            <View style={styles.locationItem}>
-              <View style={[styles.locationDot, { backgroundColor: '#ef4444' }]} />
-              <View style={styles.locationContent}>
-                <Text style={styles.locationLabel}>รับคำสั่งซื้อจาก</Text>
-                
-                <View style={styles.locationTitleRow}>
-                  <Text style={styles.locationTitle} numberOfLines={1}>{shop?.name || 'ร้านอาหาร'}</Text>
-                  <MaterialIcons name="chevron-right" size={20} color="#94a3b8" />
-                </View>
-                
-                <Text style={styles.locationDesc}>{shop?.address || 'ไม่มีข้อมูลที่อยู่'}</Text>
-              </View>
+        {/* Action Button: Confirm Receipt (When Delivered) */}
+        {order?.status === 'delivered' && (
+          <View style={styles.confirmBox}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <Ionicons name="gift" size={24} color="#15803d" />
+              <Text style={styles.confirmBoxTitle}>สินค้ามาถึงแล้ว กรุณาตรวจสอบ</Text>
             </View>
-
-            <View style={{ height: 24 }} />
-
-            {/* Delivery Location */}
-            <View style={styles.locationItem}>
-              <View style={[styles.locationDot, { backgroundColor: '#10b981' }]} />
-              <View style={styles.locationContent}>
-                <Text style={styles.locationLabel}>จัดส่งที่</Text>
-                <Text style={styles.locationTitle}>{order?.shipping_address || 'ที่อยู่จัดส่งของคุณ'}</Text>
-                <Text style={styles.locationDesc}>{order?.receiver_name || 'ลูกค้า'} - {order?.receiver_phone || ''}</Text>
-
-                {statusIdx >= 5 && (
-                  <TouchableOpacity style={styles.proofLink}>
-                    <MaterialCommunityIcons name="image-outline" size={18} color="#3b82f6" />
-                    <Text style={styles.proofText}>หลักฐานการจัดส่งอาหาร</Text>
-                    <MaterialIcons name="chevron-right" size={18} color="#3b82f6" />
-                  </TouchableOpacity>
-                )}
-              </View>
-            </View>
+            <Text style={styles.confirmBoxSub}>
+              เมื่อคุณตรวจสอบสินค้าเรียบร้อยแล้ว กรุณากดยืนยันรับสินค้าเพื่อปล่อยเงินให้ร้านค้าและไรเดอร์
+            </Text>
+            <TouchableOpacity style={styles.confirmReceivedBtn} onPress={handleConfirmReceived}>
+              <Ionicons name="checkmark-circle" size={22} color="#fff" />
+              <Text style={styles.confirmReceivedBtnText}>ฉันได้รับสินค้าเรียบร้อยแล้ว</Text>
+            </TouchableOpacity>
           </View>
+        )}
 
-          {/* Timeline */}
-          <View style={styles.timelineContainer}>
-            {/* Step 1: Preparing */}
-            <View style={styles.timelineStep}>
-              <View style={styles.timelineIconContainer}>
-                <View style={[styles.timelineIcon, statusIdx >= 1 ? styles.timelineIconActive : {}]}>
-                  {statusIdx >= 1 ? <MaterialIcons name="check" size={14} color="#fff" /> : null}
-                </View>
-                <View style={[styles.timelineLine, statusIdx >= 2 ? styles.timelineLineActive : {}]} />
+        {/* Rider Card */}
+        {rider ? (
+          <View style={styles.riderCard}>
+            <View style={styles.riderHeader}>
+              <View style={styles.riderImgWrapper}>
+                <Text style={{ fontSize: 28 }}>🛵</Text>
               </View>
-              <View style={styles.timelineContent}>
-                <Text style={[styles.timelineTitle, statusIdx >= 1 ? styles.timelineTitleActive : {}]}>คำสั่งจัดเตรียมสินค้า</Text>
-                <Text style={styles.timelineSub}>{order?.prepared_at ? `เสร็จสิ้นเมื่อ ${formatTime(order.prepared_at)}` : (statusIdx >= 1 ? 'ดำเนินการแล้ว' : 'รอการดำเนินการ')}</Text>
-              </View>
-            </View>
-
-            {/* Step 2: Going to pick up / Picked up */}
-            <View style={styles.timelineStep}>
-              <View style={styles.timelineIconContainer}>
-                <View style={[styles.timelineIcon, statusIdx >= 3 ? styles.timelineIconActive : {}]}>
-                  {statusIdx >= 3 ? <MaterialCommunityIcons name="motorbike" size={14} color="#fff" /> : null}
-                </View>
-                <View style={[styles.timelineLine, statusIdx >= 4 ? styles.timelineLineActive : {}]} />
-              </View>
-              <View style={styles.timelineContent}>
-                <Text style={[styles.timelineTitle, statusIdx >= 3 ? styles.timelineTitleActive : {}]}>คนขับกำลังไปรับสินค้า</Text>
-                <Text style={styles.timelineSub}>{order?.picked_up_at ? `รับสินค้าเมื่อ ${formatTime(order.picked_up_at)}` : (statusIdx >= 3 ? 'กำลังดำเนินการ' : 'รอการดำเนินการ')}</Text>
-              </View>
-            </View>
-
-            {/* Step 3: Delivering */}
-            <View style={styles.timelineStep}>
-              <View style={styles.timelineIconContainer}>
-                <View style={[styles.timelineIcon, statusIdx >= 4 ? styles.timelineIconActive : {}]}>
-                  {statusIdx >= 4 ? <Ionicons name="navigate" size={12} color="#fff" /> : null}
-                </View>
-                <View style={[styles.timelineLine, statusIdx >= 5 ? styles.timelineLineActive : {}]} />
-              </View>
-              <View style={styles.timelineContent}>
-                <Text style={[styles.timelineTitle, statusIdx >= 4 ? styles.timelineTitleActive : {}]}>กำลังนำส่งสินค้า</Text>
-                <Text style={styles.timelineSub}>{statusIdx >= 4 && statusIdx < 5 ? 'กำลังดำเนินการ' : 'รอการดำเนินการ'}</Text>
-              </View>
-            </View>
-
-            {/* Step 4: Completed */}
-            <View style={styles.timelineStep}>
-              <View style={styles.timelineIconContainer}>
-                <View style={[styles.timelineIcon, statusIdx >= 5 ? styles.timelineIconActive : {}]}>
-                  {statusIdx >= 5 ? <MaterialIcons name="check" size={14} color="#fff" /> : null}
-                </View>
-              </View>
-              <View style={styles.timelineContent}>
-                <Text style={[styles.timelineTitle, statusIdx >= 5 ? styles.timelineTitleActive : {}]}>สินค้ามาถึงแล้ว</Text>
-                <Text style={styles.timelineSub}>{order?.delivered_at ? `จัดส่งสำเร็จเมื่อ ${formatTime(order.delivered_at)}` : 'รอการดำเนินการ'}</Text>
-              </View>
-            </View>
-          </View>
-
-          {/* Rider Info Card */}
-          {rider?.name ? (
-            <View style={styles.riderCard}>
-              <View style={styles.riderHeader}>
-                <View style={styles.riderImgWrapper}>
-                  <Image source={{ uri: 'https://images.unsplash.com/photo-1599566150163-29194dcaad36?w=200' }} style={styles.riderImg} />
-                </View>
-                <View style={styles.riderInfo}>
-                  <Text style={styles.riderName}>
-                    {rider?.name}
-                  </Text>
-                  <Text style={styles.riderPlate}>
-                    ทะเบียน {rider?.vehicle_plate}
-                  </Text>
-                  <Text style={styles.riderVaccine}>ฉีดวัคซีนแล้ว 3 เข็ม</Text>
-                </View>
-                <View style={styles.riderRating}>
+              <View style={styles.riderInfo}>
+                <Text style={styles.riderName}>{rider.name || 'ไรเดอร์ SmartDeal'}</Text>
+                <Text style={styles.riderPlate}>ทะเบียน: {rider.vehicle_plate || 'มอเตอร์ไซค์รับจ้าง'}</Text>
+                <View style={styles.riderRatingRow}>
                   <MaterialIcons name="star" size={14} color="#f59e0b" />
-                  <Text style={styles.ratingText}>{rider?.rating}</Text>
+                  <Text style={styles.ratingText}>{rider.rating || '5.0'}</Text>
+                  <Text style={styles.riderPhoneSmall}>• โทร {rider.phone || '-'}</Text>
                 </View>
               </View>
-
               <View style={styles.riderActions}>
-                <TouchableOpacity style={styles.actionIconBtn} onPress={handleCall}>
-                  <MaterialIcons name="phone" size={20} color="#16a34a" />
+                <TouchableOpacity style={styles.actionIconBtn} onPress={handleCallRider}>
+                  <Ionicons name="call" size={18} color="#16a34a" />
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.actionIconBtn} onPress={handleChat}>
-                  <MaterialCommunityIcons name="chat-processing" size={20} color="#16a34a" />
+                <TouchableOpacity style={[styles.actionChatBtn, { backgroundColor: '#f0fdf4', borderColor: '#bbf7d0' }]} onPress={() => handleOpenChat('rider')}>
+                  <Ionicons name="chatbubbles" size={16} color="#16a34a" />
+                  <Text style={styles.actionChatBtnText}>แชท</Text>
                 </TouchableOpacity>
-                
-                {statusIdx >= 5 && (
-                  <TouchableOpacity style={styles.rateBtn} onPress={() => setShowRatingModal(true)}>
-                    <MaterialIcons name="star" size={18} color="#d97706" />
-                    <Text style={styles.rateBtnText}>ให้คะแนนคนขับ</Text>
-                  </TouchableOpacity>
-                )}
               </View>
             </View>
-          ) : (
-            <View style={[styles.riderCard, {alignItems: 'center', paddingVertical: 24}]}>
-              <MaterialCommunityIcons name="motorbike" size={48} color="#cbd5e1" />
-              <Text style={{marginTop: 8, color: '#64748b', fontSize: 16}}>ระบบกำลังค้นหาคนขับให้คุณ...</Text>
-            </View>
-          )}
-          
-        </ScrollView>
-      </View>
+          </View>
+        ) : (
+          <View style={styles.waitingRiderCard}>
+            <Ionicons name="bicycle-outline" size={24} color="#64748b" />
+            <Text style={styles.waitingRiderText}>
+              {statusIdx <= 1 ? 'ร้านค้ากำลังเตรียมสินค้า จะมอบหมายไรเดอร์เมื่อพร้อมส่ง' : 'กำลังจัดหาไรเดอร์ที่ใกล้ที่สุด...'}
+            </Text>
+          </View>
+        )}
 
-      {/* Rating Bottom Sheet Modal */}
-      <Modal visible={showRatingModal} transparent={true} animationType="slide">
+        {/* Proof Photo: รูปถ่ายยืนยันการจัดส่งมอบสินค้า (แสดงเฉพาะตอนส่งมอบสินค้าแล้ว) */}
+        {(order?.delivery_proof_image || order?.proof_image) && (
+          <View style={styles.proofsSection}>
+            <View style={[styles.proofItemCard, { backgroundColor: '#f0fdf4', borderColor: '#86efac', borderWidth: 1.5 }]}>
+              <View style={styles.proofItemHeader}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Ionicons name="checkmark-done-circle" size={18} color="#16a34a" />
+                  <Text style={[styles.proofItemTitle, { color: '#15803d' }]}>รูปถ่ายยืนยันการส่งมอบสินค้า</Text>
+                </View>
+                <Text style={styles.proofItemTime}>{formatThaiTime(order.delivered_at)}</Text>
+              </View>
+              <TouchableOpacity 
+                activeOpacity={0.88}
+                onPress={() => setPreviewImage(getImageUrl(order.delivery_proof_image || order.proof_image))}
+                style={styles.proofImgFrame}
+              >
+                <Image source={{ uri: getImageUrl(order.delivery_proof_image || order.proof_image) }} style={styles.proofImg} resizeMode="cover" />
+                <View style={[styles.expandPill, { backgroundColor: 'rgba(22, 163, 74, 0.75)' }]}>
+                  <Ionicons name="expand" size={12} color="#fff" />
+                  <Text style={styles.expandPillText}>แตะดูรูป</Text>
+                </View>
+              </TouchableOpacity>
+              <Text style={[styles.proofSubText, { color: '#166534' }]}>✓ ไรเดอร์ส่งมอบสินค้าถึงมือผู้รับเรียบร้อยแล้ว</Text>
+            </View>
+          </View>
+        )}
+
+        {/* Location & Shop Card */}
+        <View style={styles.locationCard}>
+          {/* Shop */}
+          <View style={styles.locationItem}>
+            <View style={[styles.locationDot, { backgroundColor: '#f57c00' }]} />
+            <View style={styles.locationContent}>
+              <Text style={styles.locationLabel}>ร้านค้า</Text>
+              <View style={styles.locationTitleRow}>
+                <Text style={styles.locationTitle} numberOfLines={1}>{shop?.name || 'ร้านค้า'}</Text>
+                <View style={styles.locationShopActions}>
+                  <TouchableOpacity style={styles.locIconBtn} onPress={handleCallShop}>
+                    <Ionicons name="call" size={16} color="#f57c00" />
+                  </TouchableOpacity>
+                  <TouchableOpacity style={[styles.locChatBtn, { backgroundColor: '#fffbeb', borderColor: '#fed7aa' }]} onPress={() => handleOpenChat('seller')}>
+                    <Ionicons name="storefront" size={14} color="#d97706" />
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#d97706', marginLeft: 3 }}>แชทร้านค้า</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+              <Text style={styles.locationDesc} numberOfLines={2}>{shop?.address || 'ที่อยู่ร้านค้า'}</Text>
+            </View>
+          </View>
+
+          <View style={styles.locationDivider} />
+
+          {/* Destination */}
+          <View style={styles.locationItem}>
+            <View style={[styles.locationDot, { backgroundColor: '#3b82f6' }]} />
+            <View style={styles.locationContent}>
+              <Text style={styles.locationLabel}>จุดส่งสินค้าของคุณ</Text>
+              <Text style={styles.locationTitle}>{order?.receiver_name || 'สถานที่จัดส่ง'}</Text>
+              <Text style={styles.locationDesc}>{order?.shipping_address || 'ที่อยู่จัดส่ง'}</Text>
+              {order?.note_for_rider && (
+                <Text style={styles.riderNoteText}>📝 ข้อความถึงคนขับ: {order.note_for_rider}</Text>
+              )}
+            </View>
+          </View>
+        </View>
+
+        {/* Timeline */}
+        <View style={styles.timelineContainer}>
+          <Text style={styles.timelineHeader}>ลำดับสถานะคำสั่งซื้อ</Text>
+
+          {[
+            { title: 'รับคำสั่งซื้อเรียบร้อย', desc: 'ร้านค้าได้รับคำสั่งซื้อของคุณแล้ว', time: formatThaiTime(order?.created_at), active: statusIdx >= 0 },
+            { title: 'ร้านค้ากำลังเตรียมสินค้า', desc: 'ร้านค้ากำลังปรุงหรือเตรียมสินค้า', time: formatThaiTime(order?.prepared_at), active: statusIdx >= 1 },
+            { title: 'สินค้าพร้อมส่ง (รอไรเดอร์)', desc: 'สินค้าบรรจุเสร็จพร้อมส่งมอบให้ไรเดอร์', time: '', active: statusIdx >= 2 },
+            { title: 'ไรเดอร์รับสินค้าแล้ว กำลังนำส่ง', desc: 'ไรเดอร์รับของจากร้านและกำลังเดินทางมาส่งคุณ', time: formatThaiTime(order?.picked_up_at || order?.pickup_at), active: statusIdx >= 3 },
+            { title: 'จัดส่งถึงที่หมายแล้ว', desc: 'ไรเดอร์นำส่งถึงปลายทางพร้อมถ่ายรูปยืนยัน', time: formatThaiTime(order?.delivered_at), active: statusIdx >= 4 },
+            { title: 'คำสั่งซื้อสำเร็จสมบูรณ์', desc: 'ลูกค้ายืนยันรับสินค้าและปล่อยเงิน Escrow', time: '', active: statusIdx >= 5 },
+          ].map((item, idx) => (
+            <View key={idx} style={styles.timelineStep}>
+              <View style={styles.timelineIconContainer}>
+                <View style={[styles.timelineIcon, item.active && styles.timelineIconActive]}>
+                  <Ionicons name={item.active ? "checkmark" : "ellipse"} size={12} color={item.active ? "#fff" : "#94a3b8"} />
+                </View>
+                {idx < 5 && <View style={[styles.timelineLine, item.active && styles.timelineLineActive]} />}
+              </View>
+              <View style={styles.timelineContent}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Text style={[styles.timelineTitle, item.active && styles.timelineTitleActive]}>{item.title}</Text>
+                  {!!item.time && <Text style={styles.timelineTime}>{item.time}</Text>}
+                </View>
+                <Text style={styles.timelineSub}>{item.desc}</Text>
+              </View>
+            </View>
+          ))}
+        </View>
+      </ScrollView>
+
+      {/* Rating Modal */}
+      <Modal
+        visible={showRatingModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowRatingModal(false)}
+      >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
-            {/* Drag Handle */}
             <View style={styles.dragHandle} />
-            
-            <Text style={styles.modalTitle}>ให้คะแนนคนขับ</Text>
-            <Text style={styles.modalSubTitle}>การจัดส่งของ {rider?.name || 'คนขับ'} เป็นอย่างไรบ้าง?</Text>
-            
+            <Text style={styles.modalTitle}>ให้คะแนนความพึงพอใจ ⭐</Text>
+            <Text style={styles.modalSubTitle}>ช่วยให้คะแนนร้านค้าและไรเดอร์เพื่อพัฒนาการบริการ</Text>
+
             <View style={styles.starsContainer}>
               {[1, 2, 3, 4, 5].map((star) => (
-                <TouchableOpacity 
-                  key={star} 
-                  onPress={() => setSelectedRating(star)}
-                  style={{ padding: 4 }}
-                >
-                  <MaterialIcons 
-                    name={star <= selectedRating ? "star" : "star-border"} 
-                    size={46} 
-                    color={star <= selectedRating ? "#f59e0b" : "#e2e8f0"} 
+                <TouchableOpacity key={star} onPress={() => setSelectedRating(star)}>
+                  <MaterialIcons
+                    name={star <= selectedRating ? 'star' : 'star-border'}
+                    size={38}
+                    color="#f59e0b"
                   />
                 </TouchableOpacity>
               ))}
             </View>
+
             <TextInput
               style={styles.commentInput}
-              placeholder="พิมพ์คำติชมหรือความประทับใจ (ไม่บังคับ)..."
+              placeholder="แสดงความคิดเห็นเพิ่มเติม (ถ้ามี)..."
               placeholderTextColor="#94a3b8"
-              multiline
               value={ratingComment}
               onChangeText={setRatingComment}
+              multiline
             />
+
             <View style={styles.modalActions}>
-              <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setShowRatingModal(false)}>
-                <Text style={styles.modalCancelText}>ยกเลิก</Text>
+              <TouchableOpacity 
+                style={styles.modalCancelBtn} 
+                onPress={() => {
+                  setShowRatingModal(false);
+                  router.replace('/(tabs)/orders' as any);
+                }}
+              >
+                <Text style={styles.modalCancelText}>ข้าม</Text>
               </TouchableOpacity>
               <TouchableOpacity 
                 style={styles.modalSubmitBtn} 
-                onPress={() => {
-                  Alert.alert('ขอบคุณ', 'เราได้รับคะแนนของคุณแล้ว');
-                  setShowRatingModal(false);
-                  setRatingComment('');
-                  setSelectedRating(5);
-                }}
+                onPress={handleSubmitRating}
+                disabled={isSubmittingRating}
               >
-                <Text style={styles.modalSubmitText}>ส่งคะแนน</Text>
+                {isSubmittingRating ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.modalSubmitText}>ส่งคะแนน</Text>
+                )}
               </TouchableOpacity>
             </View>
           </View>
+        </View>
+      </Modal>
+
+      {/* Full Image Preview Modal */}
+      <Modal
+        visible={!!previewImage}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setPreviewImage(null)}
+      >
+        <View style={styles.fullImageModal}>
+          <TouchableOpacity 
+            style={styles.modalCloseBtn}
+            onPress={() => setPreviewImage(null)}
+          >
+            <Ionicons name="close-circle" size={36} color="#fff" />
+          </TouchableOpacity>
+          {previewImage && (
+            <Image 
+              source={{ uri: previewImage }} 
+              style={styles.fullImage} 
+              resizeMode="contain" 
+            />
+          )}
         </View>
       </Modal>
     </SafeAreaView>
@@ -606,9 +669,15 @@ export default function TrackingScreen() {
 }
 
 const styles = StyleSheet.create({
+  centerLoading: {
+    flex: 1,
+    backgroundColor: '#f8fafc',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   container: {
     flex: 1,
-    backgroundColor: '#ffffff'
+    backgroundColor: '#f8fafc'
   },
   header: {
     flexDirection: 'row',
@@ -617,21 +686,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     backgroundColor: '#ffffff',
+    borderBottomWidth: 1,
+    borderColor: '#e2e8f0',
     zIndex: 10
   },
-  backBtn: {
-    padding: 4
-  },
-  helpBtn: {
-    padding: 4
-  },
-  headerTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#0f172a'
-  },
+  backBtn: { padding: 4 },
+  headerTitle: { fontSize: 16, fontWeight: 'bold', color: '#0f172a' },
   mapContainer: {
-    height: '40%',
+    height: '35%',
     width: '100%',
     backgroundColor: '#e2e8f0'
   },
@@ -644,66 +706,229 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
-    marginTop: -20, // Overlap map
-    paddingHorizontal: 20,
-    paddingTop: 24,
+    marginTop: -16,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: -4 },
     shadowOpacity: 0.1,
-    shadowRadius: 12,
+    shadowRadius: 10,
     elevation: 8
+  },
+  bottomSheetContent: {
+    paddingHorizontal: 18,
+    paddingTop: 20,
+    paddingBottom: 40,
   },
   statusHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 24
+    marginBottom: 16
   },
   statusTitle: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: 'bold',
     color: '#16a34a'
   },
   orderId: {
     fontSize: 12,
     color: '#64748b',
-    marginTop: 4
+    marginTop: 2
   },
-  etaLabel: {
-    fontSize: 10,
-    color: '#94a3b8',
-    marginBottom: 2
-  },
-  etaTime: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#0f172a'
-  },
-  locationCard: {
-    backgroundColor: '#ffffff',
+
+  confirmBox: {
+    backgroundColor: '#f0fdf4',
+    borderWidth: 1.5,
+    borderColor: '#86efac',
     borderRadius: 16,
     padding: 16,
-    borderWidth: 1,
-    borderColor: '#f1f5f9',
-    marginBottom: 24,
-    shadowColor: '#000',
+    marginBottom: 16,
+  },
+  confirmBoxTitle: {
+    fontSize: 15,
+    fontWeight: 'bold',
+    color: '#15803d',
+  },
+  confirmBoxSub: {
+    fontSize: 12,
+    color: '#166534',
+    lineHeight: 18,
+    marginBottom: 12,
+  },
+  confirmReceivedBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#16a34a',
+    paddingVertical: 12,
+    borderRadius: 12,
+    gap: 8,
+    shadowColor: '#16a34a',
     shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  confirmReceivedBtnText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: 'bold',
+  },
+
+  riderCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.05,
-    shadowRadius: 8,
+    shadowRadius: 4,
     elevation: 2
   },
-  locationConnectionLine: {
+  riderHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  riderImgWrapper: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#dcfce7',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  riderInfo: { flex: 1 },
+  riderName: { fontSize: 15, fontWeight: 'bold', color: '#0f172a' },
+  riderPlate: { fontSize: 12, color: '#64748b', marginTop: 2 },
+  riderRatingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
+    gap: 4,
+  },
+  ratingText: { fontSize: 12, fontWeight: 'bold', color: '#d97706' },
+  riderPhoneSmall: { fontSize: 11, color: '#64748b' },
+  riderActions: { flexDirection: 'row', gap: 8, alignItems: 'center' },
+  actionIconBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#f0fdf4',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+  },
+  actionChatBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 16,
+    borderWidth: 1,
+    gap: 4,
+  },
+  actionChatBtnText: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#16a34a',
+  },
+
+  waitingRiderCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    marginBottom: 16,
+    gap: 10,
+  },
+  waitingRiderText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#64748b',
+  },
+
+  proofsSection: {
+    marginBottom: 16,
+    gap: 10,
+  },
+  proofItemCard: {
+    backgroundColor: '#f0fdf4',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+  },
+  proofItemHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  proofItemTitle: {
+    fontSize: 13,
+    fontWeight: 'bold',
+    color: '#166534',
+  },
+  proofItemTime: {
+    fontSize: 11,
+    color: '#64748b',
+  },
+  proofImgFrame: {
+    height: 140,
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: '#000',
+    position: 'relative',
+    marginBottom: 6,
+  },
+  proofImg: {
+    width: '100%',
+    height: '100%',
+  },
+  expandPill: {
     position: 'absolute',
-    left: 20,
-    top: 32,
-    bottom: 32,
-    width: 2,
-    backgroundColor: '#f1f5f9',
-    zIndex: 1
+    bottom: 6,
+    right: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.65)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    gap: 4,
+  },
+  expandPillText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  proofSubText: {
+    fontSize: 12,
+    color: '#166534',
+  },
+
+  locationCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#f1f5f9',
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2
   },
   locationItem: {
     flexDirection: 'row',
-    zIndex: 2
   },
   locationDot: {
     width: 10,
@@ -712,318 +937,150 @@ const styles = StyleSheet.create({
     marginTop: 4,
     marginRight: 12
   },
-  locationContent: {
-    flex: 1
-  },
-  locationLabel: {
-    fontSize: 13,
-    color: '#64748b',
-    marginBottom: 8
-  },
+  locationContent: { flex: 1 },
+  locationLabel: { fontSize: 12, color: '#64748b', marginBottom: 2 },
   locationTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 8
+    justifyContent: 'space-between',
+    marginBottom: 4
   },
-  locationTitle: {
-    fontSize: 16,
+  locationTitle: { fontSize: 15, fontWeight: 'bold', color: '#0f172a', flex: 1 },
+  locationShopActions: { flexDirection: 'row', gap: 6, marginLeft: 8 },
+  locIconBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: '#fff7ed',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#fed7aa',
+  },
+  locChatBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 15,
+    borderWidth: 1,
+  },
+  locationDesc: { fontSize: 13, color: '#64748b', lineHeight: 18 },
+  riderNoteText: { fontSize: 12, color: '#ef4444', marginTop: 4, fontStyle: 'italic' },
+  locationDivider: {
+    height: 1,
+    backgroundColor: '#f1f5f9',
+    marginVertical: 12,
+    marginLeft: 22,
+  },
+
+  timelineContainer: {
+    backgroundColor: '#ffffff',
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#f1f5f9',
+    marginBottom: 20,
+  },
+  timelineHeader: {
+    fontSize: 14,
     fontWeight: 'bold',
     color: '#0f172a',
-    marginRight: 4,
-    flexShrink: 1
+    marginBottom: 14,
   },
-  locationShopActions: {
-    flexDirection: 'row',
-    gap: 8
-  },
-  locIconBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    justifyContent: 'center',
-    alignItems: 'center'
-  },
-  locationDesc: {
-    fontSize: 14,
-    color: '#64748b',
-    lineHeight: 20
-  },
-  proofLink: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 12,
-    gap: 4
-  },
-  proofText: {
-    color: '#3b82f6',
-    fontSize: 14,
-    fontWeight: '500'
-  },
-  timelineContainer: {
-    marginBottom: 24,
-    paddingLeft: 8
-  },
-  timelineStep: {
-    flexDirection: 'row',
-    marginBottom: 0
-  },
-  timelineIconContainer: {
-    alignItems: 'center',
-    marginRight: 16
-  },
+  timelineStep: { flexDirection: 'row' },
+  timelineIconContainer: { alignItems: 'center', marginRight: 12 },
   timelineIcon: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
     backgroundColor: '#e2e8f0',
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 2
   },
-  timelineIconActive: {
-    backgroundColor: '#16a34a'
-  },
+  timelineIconActive: { backgroundColor: '#16a34a' },
   timelineLine: {
     width: 2,
-    height: 40,
+    height: 36,
     backgroundColor: '#e2e8f0',
-    marginTop: -2,
-    marginBottom: -2,
     zIndex: 1
   },
-  timelineLineActive: {
-    backgroundColor: '#16a34a'
-  },
-  timelineContent: {
-    flex: 1,
-    paddingBottom: 24,
-    paddingTop: 2
-  },
-  timelineTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#64748b'
-  },
-  timelineTitleActive: {
-    color: '#0f172a'
-  },
-  timelineSub: {
-    fontSize: 12,
-    color: '#94a3b8',
-    marginTop: 4
-  },
-  addressCard: {
-    backgroundColor: '#ffffff',
-    borderRadius: 16,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-    marginBottom: 16
-  },
-  addressHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8
-  },
-  addressTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#0f172a',
-    marginLeft: 8
-  },
-  addressText: {
-    fontSize: 14,
-    color: '#475569',
-    lineHeight: 20,
-    marginLeft: 32
-  },
-  riderCard: {
-    backgroundColor: '#ffffff',
-    borderRadius: 16,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-    marginBottom: 16
-  },
-  riderHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 16
-  },
-  riderImgWrapper: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: '#e2e8f0',
-    marginRight: 12,
-    overflow: 'hidden'
-  },
-  riderImg: {
-    width: '100%',
-    height: '100%'
-  },
-  riderInfo: {
-    flex: 1
-  },
-  riderName: {
-    fontSize: 15,
-    fontWeight: 'bold',
-    color: '#0f172a'
-  },
-  riderPlate: {
-    fontSize: 12,
-    color: '#475569',
-    marginTop: 2
-  },
-  riderVaccine: {
-    fontSize: 11,
-    color: '#16a34a',
-    marginTop: 4,
-    fontWeight: '500'
-  },
-  riderRating: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#fef3c7',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-    alignSelf: 'flex-start'
-  },
-  ratingText: {
-    fontSize: 12,
-    fontWeight: 'bold',
-    color: '#d97706',
-    marginLeft: 4
-  },
-  riderActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12
-  },
-  actionIconBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#f0fdf4',
-    justifyContent: 'center',
-    alignItems: 'center'
-  },
-  rateBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#fef3c7',
-    height: 44,
-    borderRadius: 22,
-    gap: 8
-  },
-  rateBtnText: {
-    color: '#d97706',
-    fontSize: 14,
-    fontWeight: 'bold'
-  },
+  timelineLineActive: { backgroundColor: '#16a34a' },
+  timelineContent: { flex: 1, paddingBottom: 16 },
+  timelineTitle: { fontSize: 13, fontWeight: '600', color: '#94a3b8' },
+  timelineTitleActive: { color: '#0f172a', fontWeight: 'bold' },
+  timelineTime: { fontSize: 11, color: '#64748b' },
+  timelineSub: { fontSize: 11, color: '#94a3b8', marginTop: 2 },
+
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.6)', // Darker overlay for premium feel
+    backgroundColor: 'rgba(15, 23, 42, 0.6)',
     justifyContent: 'flex-end',
   },
   modalContent: {
     backgroundColor: '#ffffff',
-    borderTopLeftRadius: 32,
-    borderTopRightRadius: 32,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
     padding: 24,
     paddingBottom: 40,
-    width: '100%',
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -10 },
-    shadowOpacity: 0.1,
-    shadowRadius: 20,
-    elevation: 20
   },
   dragHandle: {
-    width: 48,
+    width: 44,
     height: 5,
     backgroundColor: '#e2e8f0',
     borderRadius: 3,
-    marginBottom: 20
+    marginBottom: 16
   },
-  modalTitle: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#0f172a',
-    marginBottom: 6
-  },
-  modalSubTitle: {
-    fontSize: 14,
-    color: '#64748b',
-    marginBottom: 24
-  },
-  starsContainer: {
-    flexDirection: 'row',
-    gap: 12,
-    marginBottom: 28
-  },
+  modalTitle: { fontSize: 20, fontWeight: 'bold', color: '#0f172a', marginBottom: 6 },
+  modalSubTitle: { fontSize: 13, color: '#64748b', marginBottom: 20, textAlign: 'center' },
+  starsContainer: { flexDirection: 'row', gap: 10, marginBottom: 20 },
   commentInput: {
     width: '100%',
-    height: 100,
+    height: 90,
     backgroundColor: '#f8fafc',
     borderWidth: 1,
     borderColor: '#e2e8f0',
-    borderRadius: 16,
-    padding: 16,
-    paddingTop: 16,
-    fontSize: 15,
+    borderRadius: 12,
+    padding: 12,
+    fontSize: 14,
     color: '#0f172a',
     textAlignVertical: 'top',
-    marginBottom: 28
+    marginBottom: 20
   },
-  modalActions: {
-    flexDirection: 'row',
-    width: '100%',
-    gap: 16
-  },
+  modalActions: { flexDirection: 'row', width: '100%', gap: 12 },
   modalCancelBtn: {
     flex: 1,
-    paddingVertical: 16,
-    borderRadius: 16,
+    paddingVertical: 14,
+    borderRadius: 12,
     backgroundColor: '#f1f5f9',
     alignItems: 'center'
   },
-  modalCancelText: {
-    color: '#64748b',
-    fontSize: 16,
-    fontWeight: 'bold'
-  },
+  modalCancelText: { color: '#64748b', fontSize: 15, fontWeight: 'bold' },
   modalSubmitBtn: {
     flex: 2,
-    paddingVertical: 16,
-    borderRadius: 16,
+    paddingVertical: 14,
+    borderRadius: 12,
     backgroundColor: '#16a34a',
     alignItems: 'center',
-    shadowColor: '#16a34a',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4
   },
-  modalSubmitText: {
-    color: '#ffffff',
-    fontSize: 16,
-    fontWeight: 'bold'
+  modalSubmitText: { color: '#ffffff', fontSize: 15, fontWeight: 'bold' },
+
+  fullImageModal: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.92)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalCloseBtn: {
+    position: 'absolute',
+    top: 50,
+    right: 20,
+    zIndex: 20,
+  },
+  fullImage: {
+    width: width * 0.95,
+    height: height * 0.8,
   }
 });

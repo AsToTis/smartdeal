@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   View, Text, StyleSheet, TextInput, TouchableOpacity, FlatList, 
-  KeyboardAvoidingView, Platform, ActivityIndicator, Image, Modal, Alert, Dimensions 
+  KeyboardAvoidingView, Platform, ActivityIndicator, Image, Modal, Alert, Dimensions, TouchableWithoutFeedback 
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons, Ionicons, FontAwesome5 } from '@expo/vector-icons';
@@ -9,7 +9,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { BASE_URL } from '../constants/api';
+import { BASE_URL, SERVER_URL } from '../constants/api';
 
 const { width, height } = Dimensions.get('window');
 
@@ -17,7 +17,7 @@ export default function OrderChatScreen() {
   const params = useLocalSearchParams();
   const orderId = Number(params.order_id || params.orderId || params.id);
   const initialRole = (params.role as string) || 'buyer';
-  const target = (params.target as string) || (initialRole === 'seller' ? 'buyer' : 'seller'); // 'seller' or 'rider' or 'buyer'
+  const target = (params.target as string) || (initialRole === 'seller' ? 'buyer' : 'seller'); // 'seller' | 'rider' | 'buyer'
   
   const [role, setRole] = useState<string>(initialRole);
   const [userId, setUserId] = useState<number>(Number(params.user_id || params.userId) || 0);
@@ -31,13 +31,46 @@ export default function OrderChatScreen() {
 
   const flatListRef = useRef<FlatList>(null);
 
-  // Helper to format image URLs
+  // Helper to format image URLs safely
   const getFullImageUrl = (url?: string) => {
     if (!url) return '';
-    if (url.startsWith('data:') || url.startsWith('http://') || url.startsWith('https://') || url.startsWith('file://')) {
+    if (url.startsWith('data:') || url.startsWith('file://')) {
       return url;
     }
-    return `${BASE_URL.replace('/api', '')}${url.startsWith('/') ? '' : '/'}${url}`;
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      return url.replace(/^http:\/\/(localhost|127\.0\.0\.1|202\.28\.34\.205)(:\d+)?/, SERVER_URL);
+    }
+    const cleanPath = url.startsWith('/') ? url : `/${url}`;
+    if (cleanPath.startsWith('/uploads/')) {
+      return `${SERVER_URL}${cleanPath}`;
+    }
+    return `${SERVER_URL}/uploads${cleanPath}`;
+  };
+
+  // Safe time formatting avoiding "Invalid Date"
+  const formatMessageTime = (dateStr?: any) => {
+    if (!dateStr) return '';
+    try {
+      let d: Date;
+      if (dateStr instanceof Date) {
+        d = dateStr;
+      } else if (typeof dateStr === 'string') {
+        const isoStr = dateStr.includes(' ') && !dateStr.includes('T')
+          ? dateStr.replace(' ', 'T')
+          : dateStr;
+        d = new Date(isoStr);
+      } else {
+        d = new Date(dateStr);
+      }
+      if (isNaN(d.getTime())) {
+        const match = String(dateStr).match(/(\d{1,2}):(\d{2})/);
+        if (match) return `${match[1].padStart(2, '0')}:${match[2]}`;
+        return '';
+      }
+      return d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', hour12: false });
+    } catch (e) {
+      return '';
+    }
   };
 
   // Resolve user and role if not passed
@@ -75,8 +108,12 @@ export default function OrderChatScreen() {
     if (!orderId) return;
     try {
       if (showLoading) setLoading(true);
-      const targetParam = target ? `?target=${target}` : (role === 'seller' ? '?target=seller' : '?target=buyer');
-      const res = await axios.get(`${BASE_URL}/orders/${orderId}/messages${targetParam}`);
+      const queryParams = new URLSearchParams();
+      if (target) queryParams.append('target', target);
+      if (role) queryParams.append('role', role);
+      const queryStr = queryParams.toString() ? `?${queryParams.toString()}` : '';
+
+      const res = await axios.get(`${BASE_URL}/orders/${orderId}/messages${queryStr}`);
       if (res.data?.success) {
         setMessages(res.data.messages || []);
       }
@@ -94,7 +131,7 @@ export default function OrderChatScreen() {
     }, 3500);
 
     return () => clearInterval(intervalId);
-  }, [orderId, target]);
+  }, [orderId, target, role]);
 
   // Image picking options
   const handlePickImage = async () => {
@@ -159,7 +196,14 @@ export default function OrderChatScreen() {
       setSending(true);
 
       const senderType = role === 'seller' ? 'seller' : role === 'rider' ? 'rider' : 'buyer';
-      const receiverType = target === 'rider' ? 'rider' : target === 'seller' ? 'seller' : 'all';
+      let receiverType = 'all';
+      if (role === 'seller') {
+        receiverType = target === 'rider' ? 'rider' : 'buyer';
+      } else if (role === 'buyer') {
+        receiverType = target === 'rider' ? 'rider' : 'seller';
+      } else if (role === 'rider') {
+        receiverType = target === 'seller' ? 'seller' : 'buyer';
+      }
 
       if (selectedImage) {
         const formData = new FormData();
@@ -209,7 +253,7 @@ export default function OrderChatScreen() {
   };
 
   const renderMessage = ({ item }: { item: any }) => {
-    const isSelf = (item.sender_type === role) || (userId && item.sender_id === userId);
+    const isSelf = item.sender_type === role;
     const isRider = item.sender_type === 'rider';
     const isSeller = item.sender_type === 'seller';
     const isBuyer = item.sender_type === 'buyer';
@@ -232,7 +276,7 @@ export default function OrderChatScreen() {
         ? `🛵 ไรเดอร์ (${orderInfo?.rider_name || 'ไรเดอร์'})` 
         : isSeller 
           ? `🏪 ร้านค้า (${orderInfo?.shop_name || 'ร้านค้า'})` 
-          : `👤 ลูกค้า (${orderInfo?.customer_name || 'ลูกค้า'})`;
+          : `👤 ลูกค้า (${orderInfo?.customer_name || orderInfo?.receiver_name || 'ลูกค้า'})`;
 
     const fullImg = item.image_url ? getFullImageUrl(item.image_url) : null;
 
@@ -267,7 +311,7 @@ export default function OrderChatScreen() {
               {roleBadgeText}
             </Text>
             <Text style={[styles.messageTime, isSelf ? styles.messageTimeSelf : styles.messageTimeOther]}>
-              {new Date(item.created_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })}
+              {formatMessageTime(item.created_at)}
             </Text>
           </View>
 
@@ -383,7 +427,9 @@ export default function OrderChatScreen() {
                 <Text style={styles.emptySubtitle}>
                   {target === 'rider'
                     ? 'สอบถามตำแหน่งหรือแจ้งจุดนัดรับกับไรเดอร์ได้ที่นี่'
-                    : 'สอบถามรายละเอียดสินค้าหรือสถานะออเดอร์กับร้านค้าได้ที่นี่'}
+                    : role === 'seller'
+                      ? 'สื่อสารรายละเอียดคำสั่งซื้อกับคุณลูกค้าได้ที่นี่'
+                      : 'สอบถามรายละเอียดสินค้าหรือสถานะออเดอร์กับร้านค้าได้ที่นี่'}
                 </Text>
               </View>
             }
@@ -448,21 +494,23 @@ export default function OrderChatScreen() {
         animationType="fade"
         onRequestClose={() => setPreviewImageUrl(null)}
       >
-        <View style={styles.fullImageModal}>
-          <TouchableOpacity 
-            style={styles.modalCloseBtn}
-            onPress={() => setPreviewImageUrl(null)}
-          >
-            <Ionicons name="close-circle" size={36} color="#fff" />
-          </TouchableOpacity>
-          {previewImageUrl && (
-            <Image 
-              source={{ uri: previewImageUrl }} 
-              style={styles.fullImage} 
-              resizeMode="contain" 
-            />
-          )}
-        </View>
+        <TouchableWithoutFeedback onPress={() => setPreviewImageUrl(null)}>
+          <View style={styles.fullImageModal}>
+            <TouchableOpacity 
+              style={styles.modalCloseBtn}
+              onPress={() => setPreviewImageUrl(null)}
+            >
+              <Ionicons name="close-circle" size={36} color="#fff" />
+            </TouchableOpacity>
+            {previewImageUrl && (
+              <Image 
+                source={{ uri: previewImageUrl }} 
+                style={styles.fullImage} 
+                resizeMode="contain" 
+              />
+            )}
+          </View>
+        </TouchableWithoutFeedback>
       </Modal>
     </SafeAreaView>
   );

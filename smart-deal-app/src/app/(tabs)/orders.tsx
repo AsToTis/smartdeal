@@ -20,7 +20,7 @@ import { router, useFocusEffect } from 'expo-router';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import * as FileSystem from 'expo-file-system/legacy';
-import { BASE_URL } from '../../constants/api';
+import { BASE_URL, SERVER_URL } from '../../constants/api';
 import { useCart } from '../../context/CartContext';
 
 type TabType = 'all' | 'completed' | 'cancelled';
@@ -33,6 +33,21 @@ export default function OrdersScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null);
 
+  const getImageUrl = (imgUrl?: string) => {
+    if (!imgUrl) return '';
+    if (imgUrl.startsWith('data:') || imgUrl.startsWith('file://')) {
+      return imgUrl;
+    }
+    if (imgUrl.startsWith('http://') || imgUrl.startsWith('https://')) {
+      return imgUrl.replace(/^http:\/\/(localhost|127\.0\.0\.1|202\.28\.34\.205)(:\d+)?/, SERVER_URL);
+    }
+    const cleanPath = imgUrl.startsWith('/') ? imgUrl : `/${imgUrl}`;
+    if (cleanPath.startsWith('/uploads/')) {
+      return `${SERVER_URL}${cleanPath}`;
+    }
+    return `${SERVER_URL}/uploads${cleanPath}`;
+  };
+
   // States for Report Issue
   const [issueTargetOrder, setIssueTargetOrder] = useState<any | null>(null);
   const [issueModalVisible, setIssueModalVisible] = useState(false);
@@ -42,7 +57,7 @@ export default function OrdersScreen() {
 
   const fetchOrders = async () => {
     try {
-      let currentUserId = null; // (สมชาย ใจดี)
+      let currentUserId = null;
       try {
         const userData = await AsyncStorage.getItem('user');
         if (userData) {
@@ -53,15 +68,33 @@ export default function OrdersScreen() {
         console.log('AsyncStorage read error', e);
       }
 
-      if (!currentUserId) { setOrders([]); setLoading(false); setRefreshing(false); return; }
-      const res = await axios.get(`${BASE_URL}/orders/user/${currentUserId}`);
+      if (!currentUserId) { 
+        setOrders([]); 
+        setLoading(false); 
+        setRefreshing(false); 
+        return; 
+      }
+
+      // 1. Try to load cached orders for instant zero-wait display
+      try {
+        const cached = await AsyncStorage.getItem(`cached_orders_${currentUserId}`);
+        if (cached && orders.length === 0) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setOrders(parsed);
+            setLoading(false);
+          }
+        }
+      } catch (e) {}
+
+      // 2. Fetch latest orders from server
+      const res = await axios.get(`${BASE_URL}/orders/user/${currentUserId}`, { timeout: 8000 });
       if (res.data && res.data.success) {
-        setOrders(res.data.data || []);
-      } else {
-        setOrders([]);
+        const freshOrders = res.data.data || [];
+        setOrders(freshOrders);
+        AsyncStorage.setItem(`cached_orders_${currentUserId}`, JSON.stringify(freshOrders)).catch(() => {});
       }
     } catch (error: any) {
-      setOrders([]);
       console.error('❌ Fetch orders error:', error?.message || error);
     } finally {
       setLoading(false);
@@ -135,38 +168,42 @@ export default function OrdersScreen() {
     }
     
     if (s === 'completed') {
-      return { dotColor: '#16a34a', textColor: '#16a34a', text: 'สำเร็จ', isCancelled: false, isActive: false };
+      return { dotColor: '#16a34a', textColor: '#16a34a', text: 'สำเร็จแล้ว', isCancelled: false, isActive: false };
     }
     
     if (s === 'preparing') {
-      return { dotColor: '#0ea5e9', textColor: '#0ea5e9', text: 'กำลังจัดเตรียมอาหาร', isCancelled: false, isActive: true };
+      return { dotColor: '#0ea5e9', textColor: '#0284c7', text: 'ร้านค้ากำลังเตรียมสินค้า', isCancelled: false, isActive: true };
+    }
+
+    if (s === 'ready') {
+      return { dotColor: '#7c3aed', textColor: '#7c3aed', text: 'สินค้าพร้อมส่ง (รอไรเดอร์)', isCancelled: false, isActive: true };
     }
     
-    if (s === 'delivering' || s === 'finding_rider' || s === 'heading_to_shop' || s === 'ready' || s === 'shipped') {
-      return { dotColor: '#2563eb', textColor: '#2563eb', text: 'กำลังจัดส่ง', isCancelled: false, isActive: true };
+    if (s === 'delivering' || s === 'finding_rider' || s === 'heading_to_shop' || s === 'shipped') {
+      return { dotColor: '#16a34a', textColor: '#15803d', text: 'ไรเดอร์กำลังนำส่ง 🛵', isCancelled: false, isActive: true };
     }
     
     if (s === 'delivered') {
-      return { dotColor: '#059669', textColor: '#059669', text: 'ไรเดอร์ส่งของแล้ว (รอคุณยืนยัน)', isCancelled: false, isActive: true };
+      return { dotColor: '#2563eb', textColor: '#1d4ed8', text: 'จัดส่งถึงที่หมายแล้ว 📦 (รอคุณยืนยัน)', isCancelled: false, isActive: true };
     }
     
     if (s === 'ready_for_pickup') {
       return { dotColor: '#059669', textColor: '#059669', text: 'รอคุณเข้ารับที่ร้าน', isCancelled: false, isActive: true };
     }
     
-    // pending หรือค่าเริ่มต้น
-    return { dotColor: '#f59e0b', textColor: '#f59e0b', text: 'รอร้านค้ายืนยัน', isCancelled: false, isActive: true };
+    return { dotColor: '#f59e0b', textColor: '#d97706', text: 'รับคำสั่งซื้อแล้ว', isCancelled: false, isActive: true };
   };
 
   // รูปภาพสินค้าตัวแทน
   const getOrderImage = (order: any) => {
     const isValid = (img: string) => img && typeof img === 'string' && img.trim() !== '';
-    const formatUrl = (img: string) => img.startsWith('/') ? `${BASE_URL.replace('/api', '')}${img}` : img;
     
-    if (isValid(order?.display_image)) return formatUrl(order.display_image);
-    if (isValid(order?.shop_image)) return formatUrl(order.shop_image);
+    if (isValid(order?.display_image)) return getImageUrl(order.display_image);
+    if (isValid(order?.delivery_proof_image)) return getImageUrl(order.delivery_proof_image);
+    if (isValid(order?.proof_image)) return getImageUrl(order.proof_image);
+    if (isValid(order?.shop_image)) return getImageUrl(order.shop_image);
     if (order?.items && order.items.length > 0 && isValid(order.items[0].product_image)) {
-      return formatUrl(order.items[0].product_image);
+      return getImageUrl(order.items[0].product_image);
     }
     return 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500';
   };
@@ -597,6 +634,27 @@ export default function OrdersScreen() {
                     <Text style={styles.riderDetailText}>ไรเดอร์: {selectedOrder.rider_name} ({selectedOrder.rider_phone})</Text>
                   </View>
                 )}
+
+                {/* รูปถ่ายยืนยันการจัดส่งสินค้า (แสดงเฉพาะรูปตอนไรเดอร์ส่งมอบของถึงมือลูกค้า) */}
+                {(selectedOrder?.delivery_proof_image || selectedOrder?.proof_image) && (
+                  <View style={{ marginTop: 12, padding: 12, backgroundColor: '#f0fdf4', borderRadius: 12, borderWidth: 1.5, borderColor: '#86efac' }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Ionicons name="checkmark-done-circle" size={18} color="#16a34a" />
+                        <Text style={{ fontSize: 13, fontWeight: 'bold', color: '#15803d' }}>รูปถ่ายยืนยันการส่งมอบสินค้า</Text>
+                      </View>
+                      <Text style={{ fontSize: 11, color: '#166534' }}>{formatThaiDateTime(selectedOrder.delivered_at || selectedOrder.delivery_completed_at)}</Text>
+                    </View>
+                    <Image 
+                      source={{ uri: getOrderImage({ display_image: selectedOrder.delivery_proof_image || selectedOrder.proof_image }) }} 
+                      style={{ width: '100%', height: 160, borderRadius: 8, backgroundColor: '#e2e8f0' }} 
+                      resizeMode="cover" 
+                    />
+                    <Text style={{ fontSize: 11, color: '#166534', marginTop: 6, fontWeight: '500' }}>
+                      ✓ ไรเดอร์ถ่ายรูปยืนยันส่งมอบสินค้าถึงมือผู้รับเรียบร้อยแล้ว
+                    </Text>
+                  </View>
+                )}
               </View>
 
               {/* สรุปยอดเงิน */}
@@ -618,20 +676,52 @@ export default function OrdersScreen() {
 
             {/* ปุ่ม Actions ด้านล่าง */}
             <View style={[styles.modalActionRow, { flexDirection: 'column', gap: 8 }]}>
-{/* ปุ่มแชท (Order Chat System) */}
-              {['preparing', 'shipped', 'completed'].includes(selectedOrder?.order_status) && (
-                <View style={{ marginBottom: 8 }}>
+{/* ปุ่มแชทแยกชัดเจน: แชทกับร้านค้า และ แชทกับไรเดอร์ */}
+              {['pending', 'paid', 'preparing', 'ready', 'delivering', 'delivered', 'shipped', 'completed'].includes(selectedOrder?.order_status) && (
+                <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
+                  {/* ปุ่มแชทกับร้านค้า */}
                   <TouchableOpacity 
-                    style={[styles.trackNavBtn, { flex: 0, width: '100%', backgroundColor: '#f1f5f9', borderColor: '#e2e8f0' }]}
-                    onPress={() => {
+                    style={[styles.trackNavBtn, { flex: 1, backgroundColor: '#fffbeb', borderColor: '#fde68a', borderWidth: 1 }]}
+                    onPress={async () => {
                       const id = selectedOrder?.order_id;
+                      let currentUserId = 1;
+                      try {
+                        const u = await AsyncStorage.getItem('user');
+                        if (u) {
+                          const parsed = JSON.parse(u);
+                          if (parsed.user_id) currentUserId = Number(parsed.user_id);
+                        }
+                      } catch(e) {}
                       setSelectedOrder(null);
-                      router.push({ pathname: '/order-chat' as any, params: { order_id: id, role: 'buyer', user_id: 2 } });
+                      router.push({ pathname: '/order-chat' as any, params: { order_id: id, role: 'buyer', target: 'seller', user_id: currentUserId } });
                     }}
                   >
-                    <Ionicons name="chatbubble-ellipses" size={16} color="#0f172a" />
-                    <Text style={[styles.trackNavBtnText, { color: '#0f172a', marginLeft: 6 }]}>แชทกับร้านค้า</Text>
+                    <Ionicons name="storefront" size={16} color="#d97706" />
+                    <Text style={[styles.trackNavBtnText, { color: '#d97706', fontWeight: 'bold', marginLeft: 6 }]}>แชทกับร้านค้า</Text>
                   </TouchableOpacity>
+
+                  {/* ปุ่มแชทกับไรเดอร์ (แสดงเมื่อมีไรเดอร์รับงานแล้ว) */}
+                  {selectedOrder?.rider_name ? (
+                    <TouchableOpacity 
+                      style={[styles.trackNavBtn, { flex: 1, backgroundColor: '#f0fdf4', borderColor: '#bbf7d0', borderWidth: 1 }]}
+                      onPress={async () => {
+                        const id = selectedOrder?.order_id;
+                        let currentUserId = 1;
+                        try {
+                          const u = await AsyncStorage.getItem('user');
+                          if (u) {
+                            const parsed = JSON.parse(u);
+                            if (parsed.user_id) currentUserId = Number(parsed.user_id);
+                          }
+                        } catch(e) {}
+                        setSelectedOrder(null);
+                        router.push({ pathname: '/order-chat' as any, params: { order_id: id, role: 'buyer', target: 'rider', user_id: currentUserId } });
+                      }}
+                    >
+                      <Ionicons name="bicycle" size={16} color="#16a34a" />
+                      <Text style={[styles.trackNavBtnText, { color: '#16a34a', fontWeight: 'bold', marginLeft: 6 }]}>แชทกับไรเดอร์</Text>
+                    </TouchableOpacity>
+                  ) : null}
                 </View>
               )}
 

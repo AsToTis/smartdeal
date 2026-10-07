@@ -200,15 +200,9 @@ export default function HomeScreen() {
     }
   };
 
-  useEffect(() => {
-    fetchHomeData();
-  }, []);
-
   useFocusEffect(
     useCallback(() => {
       fetchHomeData();
-      fetchUnreadNotifications();
-      fetchUserAddress();
     }, [])
   );
 

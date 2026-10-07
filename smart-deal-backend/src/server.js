@@ -3848,18 +3848,23 @@ const PORT = process.env.PORT || 5000;
 // ==========================================
 app.get('/api/orders/:order_id/messages', async (req, res) => {
   const orderId = req.params.order_id;
-  const target = req.query.target || req.query.channel; // 'seller' or 'buyer'
+  const target = req.query.target || req.query.channel; // 'seller' | 'rider' | 'buyer'
+  const role = req.query.role; // 'seller' | 'rider' | 'buyer'
   try {
     let query = 'SELECT id, order_id, sender_id, sender_type, receiver_type, message, image_url, created_at FROM order_messages WHERE order_id = ?';
     const params = [orderId];
 
-    // แยกช่องทางแชทอย่างเด็ดขาด 100% ไม่ปนกัน
-    if (target === 'seller') {
-      // ช่องทางร้านค้า ↔ ไรเดอร์ (แสดงเฉพาะข้อความระหว่างร้านค้ากับไรเดอร์)
-      query += ' AND (sender_type = "seller" OR receiver_type = "seller")';
-    } else if (target === 'buyer' || target === 'rider') {
-      // ช่องทางลูกค้า ↔ ไรเดอร์ (แสดงเฉพาะข้อความระหว่างลูกค้ากับไรเดอร์)
-      query += ' AND (sender_type = "buyer" OR receiver_type = "buyer")';
+    // Channel 3: ร้านค้า ↔ ไรเดอร์ (Shop <-> Rider)
+    if ((role === 'seller' && target === 'rider') || (role === 'rider' && target === 'seller')) {
+      query += ' AND ((sender_type = "seller" AND receiver_type = "rider") OR (sender_type = "rider" AND receiver_type IN ("seller", "rider")))';
+    } 
+    // Channel 2: ลูกค้า ↔ ไรเดอร์ (Customer <-> Rider)
+    else if ((role === 'buyer' && target === 'rider') || (role === 'rider' && target === 'buyer') || target === 'rider') {
+      query += ' AND ((sender_type = "buyer" AND receiver_type = "rider") OR (sender_type = "rider" AND receiver_type IN ("buyer", "rider", "all")))';
+    } 
+    // Channel 1: ลูกค้า ↔ ร้านค้า (Customer <-> Shop)
+    else {
+      query += ' AND ((sender_type = "buyer" AND receiver_type = "seller") OR (sender_type = "seller" AND receiver_type IN ("buyer", "seller", "all")))';
     }
 
     query += ' ORDER BY created_at ASC';
@@ -3871,13 +3876,19 @@ app.get('/api/orders/:order_id/messages', async (req, res) => {
     res.status(500).json({ success: false, message: 'ไม่สามารถดึงข้อความได้' });
   }
 });
-  }
-});
 
 app.post('/api/orders/:order_id/messages', upload.single('image'), async (req, res) => {
   const orderId = req.params.order_id;
   const { sender_id, sender_type, message } = req.body;
-  const receiver_type = req.body.receiver_type || 'all';
+  let receiver_type = req.body.receiver_type;
+  
+  // กำหนดผู้รับปลายทางอย่างแม่นยำ ไม่ให้ข้อความปนกัน
+  if (!receiver_type || receiver_type === 'all') {
+    if (sender_type === 'seller') receiver_type = 'buyer';
+    else if (sender_type === 'buyer') receiver_type = 'seller';
+    else if (sender_type === 'rider') receiver_type = 'buyer';
+  }
+
   let image_url = req.body.image_url || '';
   if (req.file) {
     image_url = `/uploads/${req.file.filename}`;
@@ -4392,8 +4403,6 @@ app.post('/api/rider/deliveries/:order_id/complete', upload.single('proof_image'
   } catch (error) {
     console.error('Complete delivery error:', error);
     res.status(500).json({ success: false, message: 'เกิดข้อผิดพลาดเซิร์ฟเวอร์' });
-  }
-});
   }
 });
 
