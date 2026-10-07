@@ -3851,23 +3851,30 @@ app.get('/api/orders/:order_id/messages', async (req, res) => {
   const target = req.query.target || req.query.channel; // 'seller' | 'rider' | 'buyer'
   const role = req.query.role; // 'seller' | 'rider' | 'buyer'
   try {
-    let query = 'SELECT id, order_id, sender_id, sender_type, receiver_type, message, image_url, created_at FROM order_messages WHERE order_id = ?';
+    let query = `SELECT id, order_id, sender_id, sender_type, receiver_type, message, image_url, 
+                        DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%s.000Z') as created_at 
+                 FROM order_messages 
+                 WHERE order_id = ?`;
     const params = [orderId];
 
-    // Channel 3: ร้านค้า ↔ ไรเดอร์ (Shop <-> Rider)
-    if ((role === 'seller' && target === 'rider') || (role === 'rider' && target === 'seller')) {
-      query += ' AND ((sender_type = "seller" AND receiver_type = "rider") OR (sender_type = "rider" AND receiver_type IN ("seller", "rider")))';
+    // 1. ช่องทาง: ร้านค้า ↔ ไรเดอร์ (Shop <-> Rider) - แสดงเฉพาะข้อความระหว่างร้านค้ากับไรเดอร์เท่านั้น
+    if (target === 'seller' || (role === 'rider' && target === 'seller') || (role === 'seller' && target === 'rider')) {
+      query += ' AND ((sender_type = "seller" AND receiver_type = "rider") OR (sender_type = "rider" AND receiver_type = "seller"))';
     } 
-    // Channel 2: ลูกค้า ↔ ไรเดอร์ (Customer <-> Rider)
-    else if ((role === 'buyer' && target === 'rider') || (role === 'rider' && target === 'buyer') || target === 'rider') {
-      query += ' AND ((sender_type = "buyer" AND receiver_type = "rider") OR (sender_type = "rider" AND receiver_type IN ("buyer", "rider", "all")))';
+    // 2. ช่องทาง: ลูกค้า ↔ ไรเดอร์ (Customer <-> Rider) - แสดงเฉพาะข้อความระหว่างลูกค้ากับไรเดอร์เท่านั้น
+    else if (target === 'buyer' || (role === 'rider' && target === 'buyer') || (role === 'buyer' && target === 'rider') || target === 'rider') {
+      query += ' AND ((sender_type = "buyer" AND receiver_type = "rider") OR (sender_type = "rider" AND receiver_type = "buyer"))';
     } 
-    // Channel 1: ลูกค้า ↔ ร้านค้า (Customer <-> Shop)
+    // 3. ช่องทาง: ลูกค้า ↔ ร้านค้า (Customer <-> Shop) - แสดงเฉพาะเมื่อระบุชัดเจนจากแอปลูกค้า/ร้านค้า
+    else if (target === 'shop_direct' || (role === 'buyer' && target === 'seller_direct') || (role === 'seller' && target === 'buyer_direct')) {
+      query += ' AND ((sender_type = "buyer" AND receiver_type = "seller") OR (sender_type = "seller" AND receiver_type = "buyer"))';
+    }
+    // ป้องกันการหลุดของแชทคู่อื่นอย่างเด็ดขาด 100%
     else {
-      query += ' AND ((sender_type = "buyer" AND receiver_type = "seller") OR (sender_type = "seller" AND receiver_type IN ("buyer", "seller", "all")))';
+      query += ' AND 1 = 0';
     }
 
-    query += ' ORDER BY created_at ASC';
+    query += ' ORDER BY id ASC';
 
     const [messages] = await db.query(query, params);
     res.json({ success: true, messages });
