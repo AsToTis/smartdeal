@@ -3857,21 +3857,17 @@ app.get('/api/orders/:order_id/messages', async (req, res) => {
                  WHERE order_id = ?`;
     const params = [orderId];
 
-    // 1. ช่องทาง: ร้านค้า ↔ ไรเดอร์ (Shop <-> Rider) - แสดงเฉพาะข้อความระหว่างร้านค้ากับไรเดอร์เท่านั้น
-    if (target === 'seller' || (role === 'rider' && target === 'seller') || (role === 'seller' && target === 'rider')) {
+    // 1. ช่องทาง: ร้านค้า ↔ ไรเดอร์ (Shop <-> Rider)
+    if ((role === 'seller' && target === 'rider') || (role === 'rider' && target === 'seller')) {
       query += ' AND ((sender_type = "seller" AND receiver_type = "rider") OR (sender_type = "rider" AND receiver_type = "seller"))';
     } 
-    // 2. ช่องทาง: ลูกค้า ↔ ไรเดอร์ (Customer <-> Rider) - แสดงเฉพาะข้อความระหว่างลูกค้ากับไรเดอร์เท่านั้น
-    else if (target === 'buyer' || (role === 'rider' && target === 'buyer') || (role === 'buyer' && target === 'rider') || target === 'rider') {
+    // 2. ช่องทาง: ลูกค้า ↔ ไรเดอร์ (Customer <-> Rider)
+    else if ((role === 'buyer' && target === 'rider') || (role === 'rider' && target === 'buyer') || (target === 'rider' && role !== 'seller')) {
       query += ' AND ((sender_type = "buyer" AND receiver_type = "rider") OR (sender_type = "rider" AND receiver_type = "buyer"))';
     } 
-    // 3. ช่องทาง: ลูกค้า ↔ ร้านค้า (Customer <-> Shop) - แสดงเฉพาะเมื่อระบุชัดเจนจากแอปลูกค้า/ร้านค้า
-    else if (target === 'shop_direct' || (role === 'buyer' && target === 'seller_direct') || (role === 'seller' && target === 'buyer_direct')) {
-      query += ' AND ((sender_type = "buyer" AND receiver_type = "seller") OR (sender_type = "seller" AND receiver_type = "buyer"))';
-    }
-    // ป้องกันการหลุดของแชทคู่อื่นอย่างเด็ดขาด 100%
+    // 3. ช่องทาง: ลูกค้า ↔ ร้านค้า (Customer <-> Shop)
     else {
-      query += ' AND 1 = 0';
+      query += ' AND ((sender_type = "buyer" AND receiver_type = "seller") OR (sender_type = "seller" AND receiver_type = "buyer"))';
     }
 
     query += ' ORDER BY id ASC';
