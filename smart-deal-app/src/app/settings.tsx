@@ -31,15 +31,12 @@ export default function SettingsScreen() {
   const [pushEnabled, setPushEnabled] = useState(true);
   const [promoEnabled, setPromoEnabled] = useState(true);
   const [locationEnabled, setLocationEnabled] = useState(true);
-  const [language, setLanguage] = useState('ไทย');
-  
   // User Data State
   const [user, setUser] = useState<any>(null);
 
   // Modals
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
-  const [showLangModal, setShowLangModal] = useState(false);
   const [showPrivacyModal, setShowPrivacyModal] = useState(false);
   const [showTermsModal, setShowTermsModal] = useState(false);
 
@@ -72,8 +69,7 @@ export default function SettingsScreen() {
         setPushEnabled(parsed.pushEnabled ?? true);
         setPromoEnabled(parsed.promoEnabled ?? true);
         setLocationEnabled(parsed.locationEnabled ?? true);
-        setLanguage(parsed.language ?? 'ไทย');
-      }
+        }
     } catch (e) {
       console.error('Failed to load settings', e);
     }
@@ -127,13 +123,6 @@ export default function SettingsScreen() {
       Alert.alert('การเข้าถึงตำแหน่งที่ตั้ง', 'กรุณาอนุญาตการเข้าถึงตำแหน่งที่ตั้งในการตั้งค่าของอุปกรณ์');
       handleToggle('locationEnabled', false);
     }
-  };
-
-  const handleSelectLanguage = (lang: string) => {
-    setLanguage(lang);
-    saveSettings('language', lang);
-    setShowLangModal(false);
-    Alert.alert('เปลี่ยนภาษาสำเร็จ', lang === 'ไทย' ? 'เปลี่ยนภาษาเป็น ภาษาไทย เรียบร้อยแล้ว' : 'Language changed to English successfully');
   };
 
   // Profile Edit Handlers
@@ -324,7 +313,7 @@ export default function SettingsScreen() {
         </View>
 
         {/* Preferences Section */}
-        <Text style={[styles.sectionTitle, { color: subTextColor }]}>การแสดงผลและภาษา</Text>
+        <Text style={[styles.sectionTitle, { color: subTextColor }]}>การแสดงผล</Text>
         <View style={[styles.card, { backgroundColor: cardColor, borderColor: dividerColor }]}>
           <View style={styles.row}>
             <View style={[styles.iconCircle, { backgroundColor: iconBg }]}>
@@ -338,15 +327,6 @@ export default function SettingsScreen() {
               thumbColor="#fff"
             />
           </View>
-          <View style={[styles.divider, { backgroundColor: dividerColor }]} />
-          <TouchableOpacity style={styles.row} onPress={() => setShowLangModal(true)}>
-            <View style={[styles.iconCircle, { backgroundColor: iconBg }]}>
-              <MaterialIcons name="language" size={20} color="#06b6d4" />
-            </View>
-            <Text style={[styles.rowText, { color: textColor }]}>ภาษา (Language)</Text>
-            <Text style={[styles.subText, { color: subTextColor }]}>{language === 'ไทย' ? 'ไทย' : 'English'}</Text>
-            <MaterialIcons name="chevron-right" size={22} color={subTextColor} />
-          </TouchableOpacity>
         </View>
 
         {/* Privacy & Legal Section */}
@@ -558,36 +538,6 @@ export default function SettingsScreen() {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* 3. Modal เลือกภาษา */}
-      <Modal
-        visible={showLangModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowLangModal(false)}
-      >
-        <Pressable style={styles.modalBackdrop} onPress={() => setShowLangModal(false)}>
-          <View style={[styles.modalCard, { backgroundColor: cardColor, width: '85%' }]}>
-            <Text style={[styles.modalTitle, { color: textColor, marginBottom: 14 }]}>เลือกภาษา (Select Language)</Text>
-            
-            <TouchableOpacity 
-              style={[styles.langOption, language === 'ไทย' && styles.langOptionActive]}
-              onPress={() => handleSelectLanguage('ไทย')}
-            >
-              <Text style={[styles.langText, { color: textColor }]}>🇹🇭 ภาษาไทย (Thai)</Text>
-              {language === 'ไทย' && <MaterialIcons name="check-circle" size={22} color="#16a34a" />}
-            </TouchableOpacity>
-
-            <TouchableOpacity 
-              style={[styles.langOption, language === 'English' && styles.langOptionActive]}
-              onPress={() => handleSelectLanguage('English')}
-            >
-              <Text style={[styles.langText, { color: textColor }]}>🇬🇧 English (US)</Text>
-              {language === 'English' && <MaterialIcons name="check-circle" size={22} color="#16a34a" />}
-            </TouchableOpacity>
-          </View>
-        </Pressable>
-      </Modal>
-
       {/* 4. Modal นโยบายความเป็นส่วนตัว (Privacy Policy) */}
       <Modal
         visible={showPrivacyModal}
@@ -742,6 +692,7 @@ const styles = StyleSheet.create({
     marginRight: 12,
   },
   rowText: {
+    flex: 1,
     fontSize: 15,
     fontWeight: '600',
   },
