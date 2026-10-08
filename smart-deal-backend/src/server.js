@@ -208,6 +208,7 @@ const initExtendedChatAndProofTables = async () => {
 
     // 2. deliveries table proof columns
     try { await db.execute('ALTER TABLE deliveries ADD COLUMN pickup_proof_image LONGTEXT NULL'); } catch(e) {}
+    try { await db.execute('ALTER TABLE deliveries ADD COLUMN pickup_proofs LONGTEXT NULL'); } catch(e) {}
     try { await db.execute('ALTER TABLE deliveries MODIFY proof_image LONGTEXT NULL'); } catch(e) {}
     try { await db.execute('ALTER TABLE deliveries ADD COLUMN pickup_at DATETIME NULL'); } catch(e) {}
     console.log('✅ Extended chat and proof tables initialized successfully');
@@ -3218,6 +3219,7 @@ app.get('/api/shops/:shopId/orders', async (req, res) => {
         u.phone AS customer_phone,
         u.email AS customer_email,
         d.status AS delivery_status,
+        d.pickup_proofs,
         d.pickup_proof_image,
         d.proof_image AS delivery_proof_image,
         d.proof_image,
@@ -3278,8 +3280,21 @@ app.get('/api/shops/:shopId/orders', async (req, res) => {
       );
       const itemsToDisplay = myShopItems.length > 0 ? myShopItems : allOrderItems;
 
+      let shopPickupProof = null;
+      if (order.pickup_proofs) {
+        try {
+          const proofs = typeof order.pickup_proofs === 'string' ? JSON.parse(order.pickup_proofs) : order.pickup_proofs;
+          if (proofs && proofs[String(shopId)]) {
+            shopPickupProof = proofs[String(shopId)].proof_image || null;
+          }
+        } catch(e) {}
+      } else if (Number(order.shop_id) === Number(shopId)) {
+        shopPickupProof = order.pickup_proof_image || null;
+      }
+
       return {
         ...order,
+        pickup_proof_image: shopPickupProof,
         items: itemsToDisplay.map(item => ({
           ...item,
           product_name: item.product_name || item.db_product_name || 'สินค้า',
@@ -4533,10 +4548,10 @@ app.put('/api/rider/deliveries/:order_id/status', async (req, res) => {
 });
 
 
-// 4.1 Proof of Pickup (Rider receives food from Shop with photo verification)
+// 4.1 Proof of Pickup (Rider receives food from Shop with photo verification per shop)
 app.post('/api/rider/deliveries/:order_id/pickup', upload.single('pickup_image'), async (req, res) => {
   const orderId = req.params.order_id;
-  const { rider_id, pickup_proof_image } = req.body;
+  const { rider_id, shop_id, pickup_proof_image, is_all_picked_up } = req.body;
   const uploadedImage = req.file ? `/uploads/${req.file.filename}` : (pickup_proof_image || '');
 
   let connection;
@@ -4544,49 +4559,111 @@ app.post('/api/rider/deliveries/:order_id/pickup', upload.single('pickup_image')
     connection = await db.getConnection();
     await connection.beginTransaction();
 
-    // 🔒 ตรวจสอบว่าร้านค้ากดยืนยันพร้อมส่งสินค้าแล้วหรือยัง (Step 1 -> Step 2)
-    const [orderRows] = await connection.query('SELECT order_status FROM orders WHERE order_id = ? FOR UPDATE', [orderId]);
+    const [orderRows] = await connection.query('SELECT order_status, shop_id FROM orders WHERE order_id = ? FOR UPDATE', [orderId]);
     if (orderRows.length === 0) {
       await connection.rollback();
       return res.status(404).json({ success: false, message: 'ไม่พบข้อมูลคำสั่งซื้อ' });
     }
 
-    // เมื่อไรเดอร์ถ่ายรูปยืนยันรับสินค้า สามารถรับสินค้าและเปลี่ยนสถานะเป็น delivering ได้ทันที
-    const currentOrderStatus = orderRows[0].order_status;
+    // Get current deliveries record
+    const [delRows] = await connection.query('SELECT id, pickup_proofs, pickup_proof_image FROM deliveries WHERE order_id = ? AND rider_id = ? FOR UPDATE', [orderId, rider_id]);
+    
+    let proofsMap = {};
+    if (delRows.length > 0 && delRows[0].pickup_proofs) {
+      try {
+        proofsMap = typeof delRows[0].pickup_proofs === 'string' ? JSON.parse(delRows[0].pickup_proofs) : delRows[0].pickup_proofs;
+      } catch (e) {
+        proofsMap = {};
+      }
+    }
+
+    const targetShopId = String(shop_id || orderRows[0].shop_id || '1');
+    proofsMap[targetShopId] = {
+      shop_id: targetShopId,
+      proof_image: uploadedImage,
+      picked_up_at: new Date().toISOString()
+    };
+
+    // Find all distinct pickup shops for this order
+    const [orderShops] = await connection.query(`
+      SELECT DISTINCT s.shop_id, s.name as shop_name, s.owner_id
+      FROM order_items oi
+      LEFT JOIN products p ON oi.product_id = p.product_id
+      LEFT JOIN shops s ON (oi.shop_id = s.shop_id OR p.shop_id = s.shop_id)
+      WHERE oi.order_id = ? AND s.shop_id IS NOT NULL
+    `, [orderId]);
+
+    const allShopIds = orderShops.length > 0 ? orderShops.map(s => String(s.shop_id)) : [String(orderRows[0].shop_id || '1')];
+    const pickedUpCount = allShopIds.filter(id => proofsMap[id] && proofsMap[id].proof_image).length;
+    const reallyAllPickedUp = is_all_picked_up === true || is_all_picked_up === 'true' || pickedUpCount >= allShopIds.length;
+
+    const newDeliveryStatus = reallyAllPickedUp ? 'delivering' : 'accepted';
+    const newOrderStatus = reallyAllPickedUp ? 'delivering' : orderRows[0].order_status;
 
     await connection.query(
-      'UPDATE deliveries SET status = "delivering", pickup_proof_image = ?, pickup_at = NOW() WHERE order_id = ? AND rider_id = ?',
-      [uploadedImage, orderId, rider_id]
+      'UPDATE deliveries SET status = ?, pickup_proofs = ?, pickup_proof_image = ?, pickup_at = NOW() WHERE order_id = ? AND rider_id = ?',
+      [newDeliveryStatus, JSON.stringify(proofsMap), uploadedImage, orderId, rider_id]
     );
 
-    await connection.query(
-      'UPDATE orders SET order_status = "delivering" WHERE order_id = ?',
-      [orderId]
-    );
+    if (reallyAllPickedUp) {
+      await connection.query(
+        'UPDATE orders SET order_status = "delivering" WHERE order_id = ?',
+        [orderId]
+      );
+    }
 
-    // Notify Buyer
+    // 1. Notify ONLY the specific Shop Owner that was just picked up
     try {
-      const [oRows] = await connection.query('SELECT user_id FROM orders WHERE order_id = ?', [orderId]);
-      if (oRows.length > 0 && oRows[0].user_id) {
+      const [shopOwner] = await connection.query('SELECT owner_id, name FROM shops WHERE shop_id = ?', [targetShopId]);
+      if (shopOwner.length > 0 && shopOwner[0].owner_id) {
         await connection.query(
           'INSERT INTO notifications (user_id, title, message, type, reference_id, is_read, created_at) VALUES (?, ?, ?, "order", ?, 0, NOW())',
-          [oRows[0].user_id, `🛵 ไรเดอร์รับสินค้าจากร้านแล้ว (#${orderId})`, 'ไรเดอร์ได้รับสินค้าเรียบร้อยแล้ว และกำลังเดินทางนำส่งให้คุณ', String(orderId)]
+          [shopOwner[0].owner_id, `🛵 ไรเดอร์รับสินค้าจากร้าน ${shopOwner[0].name} แล้ว (#${orderId})`, 'ไรเดอร์ได้ถ่ายรูปยืนยันรับสินค้าจากร้านของคุณเรียบร้อยแล้ว', String(orderId)]
         );
       }
     } catch(ne) {}
 
-    // Auto post delivery update & photo to Customer (Buyer <-> Rider channel)
+    // 2. Auto post pickup proof message & photo ONLY to this Shop Seller Chat Channel
     try {
+      const [sInfo] = await connection.query('SELECT name FROM shops WHERE shop_id = ?', [targetShopId]);
+      const sName = sInfo.length > 0 ? sInfo[0].name : 'ร้านค้า';
       await connection.query(
-        'INSERT INTO order_messages (order_id, sender_id, sender_type, receiver_type, message, image_url) VALUES (?, ?, "rider", "buyer", ?, ?)',
-        [orderId, rider_id, '🛵 [ยืนยันรับสินค้าแล้ว] ไรเดอร์ได้รับสินค้าจากร้านค้าเรียบร้อยแล้ว กำลังเดินทางไปส่งให้คุณลูกค้าครับ', uploadedImage || null]
+        'INSERT INTO order_messages (order_id, shop_id, sender_id, sender_type, receiver_type, message, image_url) VALUES (?, ?, ?, "rider", "seller", ?, ?)',
+        [orderId, targetShopId, rider_id, `🛵 [ยืนยันรับสินค้าแล้ว] ไรเดอร์ได้รับสินค้าจาก "${sName}" เรียบร้อยแล้วครับ`, uploadedImage || null]
       );
     } catch(e) {
-      console.error('Error auto-posting pickup proof to chat:', e);
+      console.error('Error auto-posting pickup proof to shop chat:', e);
+    }
+
+    // 3. If ALL shops are picked up, notify Buyer & post to Buyer Chat Channel
+    if (reallyAllPickedUp) {
+      try {
+        const [oRows] = await connection.query('SELECT user_id FROM orders WHERE order_id = ?', [orderId]);
+        if (oRows.length > 0 && oRows[0].user_id) {
+          await connection.query(
+            'INSERT INTO notifications (user_id, title, message, type, reference_id, is_read, created_at) VALUES (?, ?, ?, "order", ?, 0, NOW())',
+            [oRows[0].user_id, `🛵 ไรเดอร์รับสินค้าครบทุกร้านแล้ว (#${orderId})`, 'ไรเดอร์ได้รับสินค้าครบทุกร้านแล้ว และกำลังเดินทางนำส่งให้คุณ', String(orderId)]
+          );
+        }
+      } catch(ne) {}
+
+      try {
+        await connection.query(
+          'INSERT INTO order_messages (order_id, sender_id, sender_type, receiver_type, message, image_url) VALUES (?, NULL, ?, "rider", "buyer", ?, ?)',
+          [orderId, rider_id, '🛵 [รับสินค้าครบแล้ว] ไรเดอร์ได้รับสินค้าครบทุกร้านค้าเรียบร้อยแล้ว กำลังเดินทางไปส่งให้คุณลูกค้าครับ', uploadedImage || null]
+        );
+      } catch(e) {}
     }
 
     await connection.commit();
-    res.json({ success: true, message: 'ยืนยันการรับสินค้าสำเร็จ' });
+    res.json({
+      success: true,
+      message: reallyAllPickedUp ? 'รับสินค้าครบทุกร้านแล้ว กำลังไปส่งลูกค้า' : 'ยืนยันการรับสินค้าร้านนี้เรียบร้อย',
+      is_all_picked_up: reallyAllPickedUp,
+      picked_up_count: pickedUpCount,
+      total_shops: allShopIds.length,
+      proofs: proofsMap
+    });
   } catch (error) {
     if (connection) await connection.rollback();
     console.error('Pickup error:', error);
@@ -4706,6 +4783,7 @@ app.get('/api/rider/jobs/:order_id', async (req, res) => {
              owner.phone as shop_phone,
              o.shipping_address as customer_address, o.latitude as customer_lat, o.longitude as customer_lng,
              u.full_name as customer_name, u.phone as customer_phone, d.status as delivery_status,
+             d.pickup_proofs, d.pickup_proof_image, d.proof_image,
              o.note_for_rider
       FROM orders o
       JOIN shops s ON o.shop_id = s.shop_id
@@ -4718,13 +4796,22 @@ app.get('/api/rider/jobs/:order_id', async (req, res) => {
     if (jobs.length > 0) {
       const job = jobs[0];
 
+      let proofsMap = {};
+      if (job.pickup_proofs) {
+        try {
+          proofsMap = typeof job.pickup_proofs === 'string' ? JSON.parse(job.pickup_proofs) : job.pickup_proofs;
+        } catch(e) {}
+      }
+
       let pickupShops = [{
         shop_id: job.shop_id,
         shop_name: job.shop_name,
         shop_address: job.shop_address,
         shop_lat: job.shop_lat,
         shop_lng: job.shop_lng,
-        shop_phone: job.shop_phone || '021234567'
+        shop_phone: job.shop_phone || '021234567',
+        is_picked_up: !!(proofsMap[String(job.shop_id)]?.proof_image),
+        proof_image: proofsMap[String(job.shop_id)]?.proof_image || null
       }];
 
       try {
@@ -4738,10 +4825,16 @@ app.get('/api/rider/jobs/:order_id', async (req, res) => {
         `, [orderId]);
 
         if (orderShops.length > 0) {
-          pickupShops = orderShops.map(s => ({
-            ...s,
-            shop_phone: s.shop_phone || '021234567'
-          }));
+          pickupShops = orderShops.map(s => {
+            const sKey = String(s.shop_id);
+            const proof = proofsMap[sKey]?.proof_image || null;
+            return {
+              ...s,
+              shop_phone: s.shop_phone || '021234567',
+              is_picked_up: !!proof,
+              proof_image: proof
+            };
+          });
         }
       } catch (shopErr) {
         console.error('Error fetching pickup shops for job detail:', shopErr.message);
@@ -4750,7 +4843,8 @@ app.get('/api/rider/jobs/:order_id', async (req, res) => {
       let items = [];
       try {
         const [itemRows] = await db.query(`
-          SELECT oi.*, p.name as db_product_name, COALESCE(s.name, '') as shop_name
+          SELECT oi.*, p.name as db_product_name, COALESCE(s.name, '') as shop_name,
+                 COALESCE(oi.shop_id, p.shop_id) as item_shop_id
           FROM order_items oi
           LEFT JOIN products p ON oi.product_id = p.product_id
           LEFT JOIN shops s ON (oi.shop_id = s.shop_id OR p.shop_id = s.shop_id)
@@ -4759,20 +4853,38 @@ app.get('/api/rider/jobs/:order_id', async (req, res) => {
 
         items = itemRows.map(item => ({
           ...item,
-          product_name: item.product_name || item.db_product_name || 'สินค้า'
+          product_name: item.product_name || item.db_product_name || 'สินค้า',
+          shop_id: item.item_shop_id || job.shop_id
         }));
       } catch (itemErr) {
         console.error('Error fetching order items for job detail:', itemErr.message);
       }
 
+      pickupShops = pickupShops.map(shop => {
+        const shopItems = items.filter(it => Number(it.shop_id) === Number(shop.shop_id));
+        return {
+          ...shop,
+          items: shopItems.map(it => ({
+            name: it.product_name,
+            quantity: it.quantity || 1,
+            price: it.price
+          }))
+        };
+      });
+
+      const isMulti = pickupShops.length > 1;
+      const allDone = isMulti ? pickupShops.every(s => s.is_picked_up) : !!pickupShops[0]?.is_picked_up;
+
       res.json({
         success: true,
         data: {
           ...job,
+          pickup_proofs: proofsMap,
           shop_phone: job.shop_phone || '021234567',
           shops: pickupShops,
           pickup_shops: pickupShops,
-          is_multi_shop: pickupShops.length > 1,
+          is_multi_shop: isMulti,
+          delivery_status: allDone ? (job.delivery_status || 'delivering') : 'accepted',
           items: items
         }
       });
