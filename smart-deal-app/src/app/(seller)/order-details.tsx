@@ -33,9 +33,12 @@ export default function OrderDetailsScreen() {
   const [loading, setLoading] = useState(true);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
 
+  const [currentShopId, setCurrentShopId] = useState<string | null>(null);
+
   const fetchOrderDetails = async () => {
     try {
       const shopId = await AsyncStorage.getItem('shop_id');
+      if (shopId) setCurrentShopId(shopId);
       const url = shopId ? `${BASE_URL}/orders/${orderId}?shop_id=${shopId}` : `${BASE_URL}/orders/${orderId}`;
       const res = await axios.get(url);
       if (res.data?.success) {
@@ -96,7 +99,9 @@ export default function OrderDetailsScreen() {
 
   const formatThaiDate = (dateStr?: string) => {
     if (!dateStr) return '-';
-    const d = new Date(dateStr);
+    const cleanStr = String(dateStr).replace(' ', 'T');
+    const d = new Date(cleanStr);
+    if (isNaN(d.getTime())) return String(dateStr);
     return d.toLocaleDateString('th-TH', { 
       day: 'numeric', month: 'short', year: 'numeric', 
       hour: '2-digit', minute: '2-digit' 
@@ -150,12 +155,21 @@ export default function OrderDetailsScreen() {
 
   // Status timeline steps (เริ่มต้นที่กำลังเตรียม อัตโนมัติเมื่อสั่งซื้อ)
   const steps = [
-    { key: 'preparing', label: 'กำลังเตรียม', active: ['pending', 'paid', 'preparing', 'ready', 'delivering', 'delivered', 'completed', 'shipped'].includes(order.order_status) },
+    { key: 'preparing', label: 'กำลังเตรียม', active: true },
     { key: 'ready', label: 'พร้อมส่ง', active: ['ready', 'delivering', 'delivered', 'completed', 'shipped'].includes(order.order_status) },
     { key: 'delivering', label: 'ไรเดอร์รับของ', active: ['delivering', 'delivered', 'completed', 'shipped'].includes(order.order_status) },
     { key: 'delivered', label: 'ส่งถึงลูกค้า', active: ['delivered', 'completed'].includes(order.order_status) },
     { key: 'completed', label: 'สำเร็จ', active: order.order_status === 'completed' }
   ];
+
+  // คัดกรองสินค้าเฉพาะของร้านนี้เท่านั้น
+  const myItems = (order.items || []).filter((item: any) => {
+    if (!currentShopId) return true;
+    const itemShopId = String(item.product_shop_id || item.shop_id || '');
+    return itemShopId === String(currentShopId);
+  });
+  const itemsToRender = myItems.length > 0 ? myItems : (order.items || []);
+  const mySubtotal = itemsToRender.reduce((sum: number, it: any) => sum + (Number(it.price || 0) * (it.quantity || 1)), 0);
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -332,8 +346,8 @@ export default function OrderDetailsScreen() {
 
         {/* รายการสินค้า (Items) */}
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>รายการสินค้า ({order.items?.length || 0} รายการ)</Text>
-          {order.items && order.items.map((item: any, index: number) => (
+          <Text style={styles.sectionTitle}>รายการสินค้า ({itemsToRender.length} รายการ)</Text>
+          {itemsToRender.map((item: any, index: number) => (
             <View key={index} style={styles.itemRow}>
               <Image source={{ uri: getImageUrl(item.product_image) }} style={styles.itemImage} />
               <View style={styles.itemDetails}>
@@ -349,7 +363,7 @@ export default function OrderDetailsScreen() {
           <View style={styles.summaryContainer}>
             <View style={styles.summaryRow}>
               <Text style={styles.summaryLabel}>ยอดรวมสินค้า</Text>
-              <Text style={styles.summaryValue}>฿{Number(order.subtotal || order.total_amount).toFixed(2)}</Text>
+              <Text style={styles.summaryValue}>฿{mySubtotal.toFixed(2)}</Text>
             </View>
             <View style={styles.summaryRow}>
               <Text style={styles.summaryLabel}>หักส่วนลด</Text>
@@ -357,11 +371,11 @@ export default function OrderDetailsScreen() {
             </View>
             <View style={styles.summaryRow}>
               <Text style={styles.summaryLabel}>ค่าธรรมเนียมระบบ (GP {order.gp_percent || 15}%)</Text>
-              <Text style={styles.summaryValue}>฿{((Number(order.subtotal || order.total_amount) - Number(order.discount || 0)) * (order.gp_percent || 15) / 100).toFixed(2)}</Text>
+              <Text style={styles.summaryValue}>฿{((mySubtotal - Number(order.discount || 0)) * (order.gp_percent || 15) / 100).toFixed(2)}</Text>
             </View>
             <View style={styles.summaryTotalRow}>
               <Text style={styles.summaryTotalLabel}>ยอดที่ร้านค้าจะได้รับสุทธิ</Text>
-              <Text style={styles.summaryTotalValue}>฿{((Number(order.subtotal || order.total_amount) - Number(order.discount || 0)) * (1 - (order.gp_percent || 15) / 100)).toFixed(2)}</Text>
+              <Text style={styles.summaryTotalValue}>฿{((mySubtotal - Number(order.discount || 0)) * (1 - (order.gp_percent || 15) / 100)).toFixed(2)}</Text>
             </View>
           </View>
         </View>
@@ -425,17 +439,8 @@ export default function OrderDetailsScreen() {
           </TouchableOpacity>
         )}
 
-        {/* Dynamic action based on status */}
-        {['pending', 'paid'].includes(order.order_status) && (
-          <TouchableOpacity 
-            style={styles.actionBtn}
-            onPress={() => handleUpdateStatus('preparing')}
-          >
-            <Text style={styles.actionBtnText}>รับคำสั่งซื้อ (กำลังเตรียม)</Text>
-          </TouchableOpacity>
-        )}
-        
-        {order.order_status === 'preparing' && (
+        {/* Dynamic action based on status (เริ่มต้นที่กำลังเตรียม และมีปุ่มพร้อมส่ง) */}
+        {['pending', 'paid', 'preparing'].includes(order.order_status) && (
           <TouchableOpacity 
             style={[styles.actionBtn, { backgroundColor: '#7c3aed' }]}
             onPress={() => handleUpdateStatus('ready')}

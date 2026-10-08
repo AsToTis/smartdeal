@@ -168,11 +168,12 @@ export default function OrdersScreen() {
     const map: { [key: string]: any } = {};
     if (order.items && Array.isArray(order.items)) {
       order.items.forEach((it: any) => {
-        const sid = String(it.product_shop_id || it.shop_id || order.shop_id || '1');
         const sname = it.item_shop_name || it.shop_name || order.shop_name || 'ร้านค้า';
+        const sid = String(it.product_shop_id || it.shop_id || order.shop_id || '1');
         const simg = it.product_image || order.shop_image || '';
-        if (!map[sid]) {
-          map[sid] = {
+        const shopKey = sname || `shop_${sid}`;
+        if (!map[shopKey]) {
+          map[shopKey] = {
             shop_id: sid,
             shop_name: sname,
             shop_image: simg,
