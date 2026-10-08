@@ -1520,7 +1520,7 @@ app.get('/api/orders/user/:userId', async (req, res) => {
       const shopsList = Object.values(shopMap).map(s => {
         const sid = String(s.shop_id);
         const isPickedUp = !!(parsedPickupProofs[sid] && parsedPickupProofs[sid].proof_image);
-        let sStatus = parsedShopStatuses[sid] || (['pending', 'paid'].includes(order.order_status) ? 'preparing' : order.order_status);
+        let sStatus = parsedShopStatuses[sid] || order.order_status;
         if (isPickedUp) {
           sStatus = 'picked_up';
         }
@@ -1636,7 +1636,7 @@ app.get('/api/orders/:orderId', async (req, res) => {
     const shopsList = Object.values(shopMap).map(s => {
       const sid = String(s.shop_id);
       const isPickedUp = !!(parsedPickupProofs[sid] && parsedPickupProofs[sid].proof_image);
-      let sStatus = parsedShopStatuses[sid] || (['pending', 'paid'].includes(order.order_status) ? 'preparing' : order.order_status);
+      let sStatus = parsedShopStatuses[sid] || order.order_status;
       if (isPickedUp) sStatus = 'picked_up';
       return {
         ...s,
@@ -1666,8 +1666,6 @@ app.get('/api/orders/:orderId', async (req, res) => {
       }
       if (parsedShopStatuses[requestedShopId]) {
         effectiveStatus = parsedShopStatuses[requestedShopId];
-      } else if (['pending', 'paid'].includes(order.order_status)) {
-        effectiveStatus = 'preparing';
       }
     }
 
@@ -3420,11 +3418,7 @@ app.get('/api/shops/:shopId/orders', async (req, res) => {
 
       let effectiveShopStatus = parsedShopStatuses[String(shopId)];
       if (!effectiveShopStatus) {
-        if (['pending', 'paid'].includes(order.order_status)) {
-          effectiveShopStatus = 'preparing';
-        } else {
-          effectiveShopStatus = order.order_status;
-        }
+        effectiveShopStatus = order.order_status;
       }
 
       if (['delivering', 'delivered', 'shipped', 'completed', 'cancelled'].includes(order.order_status)) {
@@ -5534,11 +5528,11 @@ app.post('/api/auth/google-mock', async (req, res) => {
 });
 
 
-// Auto-cancel and refund orders pending > 30 mins
+// Auto-cancel and refund orders pending > 10 mins
 setInterval(async () => {
   try {
     const [orders] = await db.query(
-        "SELECT order_id, user_id, order_type FROM orders WHERE order_status = 'pending' AND created_at < NOW() - INTERVAL 30 MINUTE"
+        "SELECT order_id, user_id, order_type FROM orders WHERE order_status = 'pending' AND created_at < NOW() - INTERVAL 10 MINUTE"
       );
 
     if (orders.length > 0) {
@@ -5576,24 +5570,106 @@ setInterval(async () => {
             }
           }
         
-        // 2. Notify customer
-        const msg = 'ออเดอร์ของคุณถูกยกเลิกเนื่องจากร้านค้าไม่ตอบรับภายใน 30 นาที ระบบได้ลบออเดอร์และจะดำเนินการคืนเงินให้คุณ';
+        // 2. Notify customer with refund flag
+        const msg = 'ออเดอร์ถูกยกเลิกเนื่องจากร้านค้าไม่ตอบรับภายใน 10 นาที กดที่นี่เพื่อขอคืนเงิน';
         await db.query(
-          "INSERT INTO notifications (user_id, title, message) VALUES (?, 'ยกเลิกออเดอร์ (ร้านไม่ตอบรับ)', ?)",
-          [order.user_id, msg]
+          "INSERT INTO notifications (user_id, title, message, type, reference_id, is_read, created_at) VALUES (?, 'ออเดอร์ถูกยกเลิก (ขอคืนเงิน)', ?, 'refund_request', ?, 0, NOW())",
+          [order.user_id, msg, order.order_id]
         );
         
-        // 3. Delete order (cascades to order_items)
-        await db.query("DELETE FROM deliveries WHERE order_id = ?", [order.order_id]);
-        await db.query("DELETE FROM orders WHERE order_id = ?", [order.order_id]);
+        // 3. Update order status instead of delete
+        await db.query("UPDATE deliveries SET status = 'cancelled' WHERE order_id = ?", [order.order_id]);
+        await db.query("UPDATE orders SET order_status = 'cancelled' WHERE order_id = ?", [order.order_id]);
         
-        console.log(`🗑️ ลบออเดอร์ที่หมดเวลา (30 นาที) Order ID: ${order.order_id}`);
+        console.log(`❌ ยกเลิกออเดอร์ที่หมดเวลา (10 นาที) Order ID: ${order.order_id}`);
       }
     }
   } catch (error) {
     console.error('Auto-cancel cron error:', error.message);
   }
 }, 60 * 1000); // Check every 1 minute
+
+
+// ------------------- REFUND SYSTEM API -------------------
+app.post('/api/refund-request', upload.single('slip_image'), async (req, res) => {
+  const { user_id, order_id, bank_name, account_number, account_name } = req.body;
+  if (!user_id || !order_id || !bank_name || !account_number || !account_name) {
+    return res.status(400).json({ success: false, message: 'Missing fields' });
+  }
+
+  const slip_image = req.file ? req.file.filename : null;
+
+  try {
+    // Check if order exists and is cancelled
+    const [orders] = await db.query("SELECT total_amount, delivery_fee, order_status FROM orders WHERE order_id = ?", [order_id]);
+    if (orders.length === 0) return res.status(404).json({ success: false, message: 'Order not found' });
+    
+    // Calculate total refund
+    // total_amount already includes delivery fee and discounts based on our insert logic
+    const amountToRefund = Number(orders[0].total_amount);
+
+    // Create refund request table if it doesn't exist
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS refund_requests (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        order_id INT NOT NULL,
+        amount DECIMAL(10, 2) NOT NULL,
+        bank_name VARCHAR(100) NOT NULL,
+        account_number VARCHAR(100) NOT NULL,
+        account_name VARCHAR(100) NOT NULL,
+        slip_image VARCHAR(255) DEFAULT NULL,
+        status ENUM('pending', 'approved', 'rejected') DEFAULT 'pending',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Check for duplicate request
+    const [existing] = await db.query("SELECT id FROM refund_requests WHERE order_id = ?", [order_id]);
+    if (existing.length > 0) return res.status(400).json({ success: false, message: 'คุณได้ส่งคำขอคืนเงินสำหรับออเดอร์นี้ไปแล้ว' });
+
+    // Insert request
+    await db.query(
+      "INSERT INTO refund_requests (user_id, order_id, amount, bank_name, account_number, account_name, slip_image) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [user_id, order_id, amountToRefund, bank_name, account_number, account_name, slip_image]
+    );
+
+    res.json({ success: true, message: 'ส่งคำขอคืนเงินสำเร็จ' });
+  } catch (error) {
+    console.error('Refund request error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// Admin get refunds
+app.get('/api/admin/refunds', async (req, res) => {
+  try {
+    const [refunds] = await db.query(`
+      SELECT r.*, u.full_name, u.phone_number 
+      FROM refund_requests r 
+      LEFT JOIN users u ON r.user_id = u.user_id 
+      ORDER BY r.created_at DESC
+    `);
+    res.json({ success: true, data: refunds });
+  } catch (error) {
+    console.error('Get refunds error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// Admin update refund status
+app.put('/api/admin/refund-status/:id', async (req, res) => {
+  const { status } = req.body;
+  try {
+    await db.query("UPDATE refund_requests SET status = ? WHERE id = ?", [status, req.params.id]);
+    res.json({ success: true, message: 'อัปเดตสถานะสำเร็จ' });
+  } catch (error) {
+    console.error('Update refund status error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+// ---------------------------------------------------------
 
 
 app.listen(PORT, '0.0.0.0', () => {
