@@ -35,7 +35,9 @@ export default function OrderDetailsScreen() {
 
   const fetchOrderDetails = async () => {
     try {
-      const res = await axios.get(`${BASE_URL}/orders/${orderId}`);
+      const shopId = await AsyncStorage.getItem('shop_id');
+      const url = shopId ? `${BASE_URL}/orders/${orderId}?shop_id=${shopId}` : `${BASE_URL}/orders/${orderId}`;
+      const res = await axios.get(url);
       if (res.data?.success) {
         setOrder(res.data.data || res.data.order);
       }
@@ -68,8 +70,10 @@ export default function OrderDetailsScreen() {
         text: 'ยืนยัน',
         onPress: async () => {
           try {
+            const shopId = await AsyncStorage.getItem('shop_id');
             await axios.put(`${BASE_URL}/orders/${orderId}/status`, {
-              order_status: newStatus
+              order_status: newStatus,
+              shop_id: shopId
             });
             Alert.alert('สำเร็จ', 'อัปเดตสถานะเรียบร้อยแล้ว');
             fetchOrderDetails();
@@ -123,7 +127,6 @@ export default function OrderDetailsScreen() {
     switch (status) {
       case 'pending':
       case 'paid':
-        return { text: 'ออเดอร์ใหม่', bg: '#fef3c7', color: '#d97706', icon: 'notifications' };
       case 'preparing':
         return { text: 'กำลังจัดเตรียม', bg: '#e0f2fe', color: '#0284c7', icon: 'restaurant' };
       case 'ready':
@@ -145,10 +148,9 @@ export default function OrderDetailsScreen() {
 
   const statusInfo = getStatusBadge(order.order_status);
 
-  // Status timeline steps
+  // Status timeline steps (เริ่มต้นที่กำลังเตรียม อัตโนมัติเมื่อสั่งซื้อ)
   const steps = [
-    { key: 'received', label: 'รับออเดอร์', active: ['pending', 'paid', 'preparing', 'ready', 'delivering', 'delivered', 'completed', 'shipped'].includes(order.order_status) },
-    { key: 'preparing', label: 'กำลังเตรียม', active: ['preparing', 'ready', 'delivering', 'delivered', 'completed', 'shipped'].includes(order.order_status) },
+    { key: 'preparing', label: 'กำลังเตรียม', active: ['pending', 'paid', 'preparing', 'ready', 'delivering', 'delivered', 'completed', 'shipped'].includes(order.order_status) },
     { key: 'ready', label: 'พร้อมส่ง', active: ['ready', 'delivering', 'delivered', 'completed', 'shipped'].includes(order.order_status) },
     { key: 'delivering', label: 'ไรเดอร์รับของ', active: ['delivering', 'delivered', 'completed', 'shipped'].includes(order.order_status) },
     { key: 'delivered', label: 'ส่งถึงลูกค้า', active: ['delivered', 'completed'].includes(order.order_status) },

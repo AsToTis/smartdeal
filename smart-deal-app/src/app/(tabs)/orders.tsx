@@ -159,6 +159,37 @@ export default function OrdersScreen() {
     groupedOrders[groupKey].push(order);
   });
 
+  // ดึงข้อมูลร้านค้าทั้งหมดในคำสั่งซื้อ (รองรับ Multi-vendor / สั่งหลายร้านในออเดอร์เดียว)
+  const getOrderShops = (order: any) => {
+    if (!order) return [];
+    if (order.shops && Array.isArray(order.shops) && order.shops.length > 0) {
+      return order.shops;
+    }
+    const map: { [key: string]: any } = {};
+    if (order.items && Array.isArray(order.items)) {
+      order.items.forEach((it: any) => {
+        const sid = String(it.product_shop_id || it.shop_id || order.shop_id || '1');
+        const sname = it.item_shop_name || it.shop_name || order.shop_name || 'ร้านค้า';
+        const simg = it.product_image || order.shop_image || '';
+        if (!map[sid]) {
+          map[sid] = {
+            shop_id: sid,
+            shop_name: sname,
+            shop_image: simg,
+            shop_status: (order.shop_statuses && order.shop_statuses[sid]) || order.order_status || 'preparing'
+          };
+        }
+      });
+    }
+    const list = Object.values(map);
+    return list.length > 0 ? list : [{
+      shop_id: order.shop_id || '1',
+      shop_name: order.shop_name || 'ร้านค้า',
+      shop_image: order.shop_image || '',
+      shop_status: order.order_status || 'preparing'
+    }];
+  };
+
   // ดึงข้อมูลสถานะ: สีจุด, ข้อความสถานะ
   const getStatusInfo = (status: string) => {
     const s = (status || '').toLowerCase();
@@ -171,12 +202,16 @@ export default function OrdersScreen() {
       return { dotColor: '#16a34a', textColor: '#16a34a', text: 'สำเร็จแล้ว', isCancelled: false, isActive: false };
     }
     
-    if (s === 'preparing') {
+    if (s === 'preparing' || s === 'pending' || s === 'paid') {
       return { dotColor: '#0ea5e9', textColor: '#0284c7', text: 'ร้านค้ากำลังเตรียมสินค้า', isCancelled: false, isActive: true };
     }
 
     if (s === 'ready') {
       return { dotColor: '#7c3aed', textColor: '#7c3aed', text: 'สินค้าพร้อมส่ง (รอไรเดอร์)', isCancelled: false, isActive: true };
+    }
+
+    if (s === 'picked_up') {
+      return { dotColor: '#16a34a', textColor: '#15803d', text: 'ไรเดอร์รับสินค้าแล้ว 🛵', isCancelled: false, isActive: true };
     }
     
     if (s === 'delivering' || s === 'finding_rider' || s === 'heading_to_shop' || s === 'shipped') {
@@ -191,7 +226,7 @@ export default function OrdersScreen() {
       return { dotColor: '#059669', textColor: '#059669', text: 'รอคุณเข้ารับที่ร้าน', isCancelled: false, isActive: true };
     }
     
-    return { dotColor: '#f59e0b', textColor: '#d97706', text: 'รับคำสั่งซื้อแล้ว', isCancelled: false, isActive: true };
+    return { dotColor: '#0ea5e9', textColor: '#0284c7', text: 'ร้านค้ากำลังเตรียมสินค้า', isCancelled: false, isActive: true };
   };
 
   // รูปภาพสินค้าตัวแทน
@@ -586,21 +621,51 @@ export default function OrdersScreen() {
             </View>
 
             <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 420 }}>
-              {/* ร้านค้า & สถานะ */}
-              <View style={styles.modalSectionCard}>
-                <View style={styles.modalShopRow}>
-                  <Image source={{ uri: getOrderImage(selectedOrder || {}) }} style={styles.modalShopImg} />
-                  <View style={{ flex: 1, marginLeft: 10 }}>
-                    <Text style={styles.modalShopName}>{selectedOrder?.shop_name || 'ร้านค้า'}</Text>
-                    <View style={styles.statusRow}>
-                      <View style={[styles.statusDot, { backgroundColor: getStatusInfo(selectedOrder?.order_status).dotColor }]} />
-                      <Text style={[styles.statusLabel, { color: getStatusInfo(selectedOrder?.order_status).textColor }]}>
-                        {getStatusInfo(selectedOrder?.order_status).text}
+              {/* ร้านค้า & สถานะ (แสดงแยกรายร้านตามรูปที่ 2 ในช่วงร้านเตรียมของ และรวมเป็นสถานะเดียวเมื่อไรเดอร์รับของครบแล้ว) */}
+              {!['delivering', 'delivered', 'shipped', 'completed', 'cancelled'].includes(selectedOrder?.order_status) && getOrderShops(selectedOrder).length > 0 ? (
+                <View style={{ gap: 8, marginBottom: 12 }}>
+                  {getOrderShops(selectedOrder).map((s: any, sIdx: number) => {
+                    const sStatus = getStatusInfo(s.shop_status || s.status || selectedOrder?.order_status);
+                    const sImg = s.shop_image ? getImageUrl(s.shop_image) : getOrderImage(selectedOrder || {});
+                    return (
+                      <View key={sIdx} style={styles.modalSectionCard}>
+                        <View style={styles.modalShopRow}>
+                          <Image source={{ uri: sImg }} style={styles.modalShopImg} />
+                          <View style={{ flex: 1, marginLeft: 10 }}>
+                            <Text style={styles.modalShopName}>{s.shop_name || 'ร้านค้า'}</Text>
+                            <View style={styles.statusRow}>
+                              <View style={[styles.statusDot, { backgroundColor: sStatus.dotColor }]} />
+                              <Text style={[styles.statusLabel, { color: sStatus.textColor }]}>
+                                {sStatus.text}
+                              </Text>
+                            </View>
+                          </View>
+                        </View>
+                      </View>
+                    );
+                  })}
+                </View>
+              ) : (
+                /* เมื่อไรเดอร์รับของครบทุกร้านแล้ว (delivering, delivered, completed) ให้แสดงการ์ดสถานะรวมสถานะเดียว */
+                <View style={styles.modalSectionCard}>
+                  <View style={styles.modalShopRow}>
+                    <Image source={{ uri: getOrderImage(selectedOrder || {}) }} style={styles.modalShopImg} />
+                    <View style={{ flex: 1, marginLeft: 10 }}>
+                      <Text style={styles.modalShopName}>
+                        {getOrderShops(selectedOrder).length > 1
+                          ? `สั่งซื้อจาก ${getOrderShops(selectedOrder).length} ร้านค้า (${getOrderShops(selectedOrder).map((s: any) => s.shop_name).join(', ')})`
+                          : (selectedOrder?.shop_name || 'ร้านค้า')}
                       </Text>
+                      <View style={styles.statusRow}>
+                        <View style={[styles.statusDot, { backgroundColor: getStatusInfo(selectedOrder?.order_status).dotColor }]} />
+                        <Text style={[styles.statusLabel, { color: getStatusInfo(selectedOrder?.order_status).textColor }]}>
+                          {getStatusInfo(selectedOrder?.order_status).text}
+                        </Text>
+                      </View>
                     </View>
                   </View>
                 </View>
-              </View>
+              )}
 
               {/* รายการสินค้า */}
               <View style={styles.modalSectionCard}>
@@ -702,8 +767,27 @@ export default function OrdersScreen() {
                           if (parsed.user_id) currentUserId = Number(parsed.user_id);
                         }
                       } catch(e) {}
-                      setSelectedOrder(null);
-                      router.push({ pathname: '/order-chat' as any, params: { order_id: id, role: 'buyer', target: 'seller', user_id: currentUserId } });
+
+                      const shops = getOrderShops(selectedOrder);
+                      if (shops.length > 1) {
+                        Alert.alert(
+                          'เลือกพูดคุยกับร้านค้า',
+                          'คำสั่งซื้อนี้มีสินค้าจากหลายร้านค้า กรุณาเลือกร้านค้าที่ต้องการติดต่อ:',
+                          [
+                            ...shops.map((s: any) => ({
+                              text: `🏪 ${s.shop_name}`,
+                              onPress: () => {
+                                setSelectedOrder(null);
+                                router.push({ pathname: '/order-chat' as any, params: { order_id: id, role: 'buyer', target: 'seller', shop_id: s.shop_id, user_id: currentUserId } });
+                              }
+                            })),
+                            { text: 'ยกเลิก', style: 'cancel' }
+                          ]
+                        );
+                      } else {
+                        setSelectedOrder(null);
+                        router.push({ pathname: '/order-chat' as any, params: { order_id: id, role: 'buyer', target: 'seller', shop_id: shops[0]?.shop_id, user_id: currentUserId } });
+                      }
                     }}
                   >
                     <Ionicons name="storefront" size={16} color="#d97706" />

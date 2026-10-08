@@ -16,7 +16,7 @@ export default function SellerOrdersScreen() {
     return `${BASE_URL.replace('/api', '')}${imgUrl.startsWith('/') ? '' : '/'}${imgUrl}`;
   };
 
-  const [activeTab, setActiveTab] = useState('new'); // new, preparing, ready, history
+  const [activeTab, setActiveTab] = useState('preparing'); // preparing, ready, history
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -58,8 +58,10 @@ export default function SellerOrdersScreen() {
         text: 'ยืนยัน',
         onPress: async () => {
           try {
+            const shopId = await AsyncStorage.getItem('shop_id');
             await axios.put(`${BASE_URL}/orders/${orderId}/status`, {
-              order_status: newStatus
+              order_status: newStatus,
+              shop_id: shopId
             });
             fetchOrders();
           } catch (error) {
@@ -79,8 +81,7 @@ export default function SellerOrdersScreen() {
       
     if (!searchMatch) return false;
 
-    if (activeTab === 'new') return ['pending', 'paid'].includes(o.order_status);
-    if (activeTab === 'preparing') return o.order_status === 'preparing';
+    if (activeTab === 'preparing') return ['pending', 'paid', 'preparing'].includes(o.order_status);
     if (activeTab === 'ready') return o.order_status === 'ready';
     if (activeTab === 'history') return ['delivering', 'delivered', 'shipped', 'completed', 'cancelled'].includes(o.order_status);
     return false;
@@ -90,7 +91,6 @@ export default function SellerOrdersScreen() {
     switch(status) {
       case 'pending':
       case 'paid':
-        return { text: 'ใหม่', bg: '#fef3c7', color: '#d97706' };
       case 'preparing':
         return { text: 'กำลังเตรียม', bg: '#e0f2fe', color: '#0284c7' };
       case 'ready':
@@ -124,7 +124,6 @@ export default function SellerOrdersScreen() {
       {/* Tabs */}
       <View style={styles.tabContainer}>
         {[
-          { key: 'new', label: 'ใหม่' },
           { key: 'preparing', label: 'กำลังเตรียม' },
           { key: 'ready', label: 'พร้อมส่ง' },
           { key: 'history', label: 'ประวัติ/จัดส่ง' }
@@ -132,11 +131,8 @@ export default function SellerOrdersScreen() {
           const isActive = activeTab === tab.key;
           
           let countText = '';
-          if (tab.key === 'new') {
-            const count = orders.filter(o => ['pending', 'paid'].includes(o.order_status)).length;
-            if (count > 0) countText = ` (${count})`;
-          } else if (tab.key === 'preparing') {
-            const count = orders.filter(o => o.order_status === 'preparing').length;
+          if (tab.key === 'preparing') {
+            const count = orders.filter(o => ['pending', 'paid', 'preparing'].includes(o.order_status)).length;
             if (count > 0) countText = ` (${count})`;
           } else if (tab.key === 'ready') {
             const count = orders.filter(o => o.order_status === 'ready').length;
@@ -225,14 +221,6 @@ export default function SellerOrdersScreen() {
                 <View style={styles.footerRow}>
                   <Text style={styles.totalPrice}>฿{Number(order.subtotal || order.total_amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}</Text>
                   <View style={styles.actionRow}>
-                    {activeTab === 'new' && (
-                      <TouchableOpacity 
-                        style={styles.primaryBtn}
-                        onPress={() => handleUpdateStatus(order.order_id, 'preparing')}
-                      >
-                        <Text style={styles.primaryBtnText}>รับคำสั่งซื้อ</Text>
-                      </TouchableOpacity>
-                    )}
                     {activeTab === 'preparing' && (
                       <TouchableOpacity 
                         style={[styles.primaryBtn, { backgroundColor: '#7c3aed' }]}
