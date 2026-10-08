@@ -58,7 +58,7 @@ export default function CheckoutScreen() {
   const [address, setAddress] = useState<any>(null);
   const [currentUserId, setCurrentUserId] = useState<number>(2);
   const [systemBaseDeliveryFee, setSystemBaseDeliveryFee] = useState<number>(25);
-  const [shopCoords, setShopCoords] = useState<{ latitude: number; longitude: number }>({ latitude: 0, longitude: 0 });
+  const [shopsInfo, setShopsInfo] = useState<{ [key: number]: any }>({});
   const [systemMinOrderValue, setSystemMinOrderValue] = useState<number>(50);
 
   // Coupons State
@@ -73,7 +73,7 @@ export default function CheckoutScreen() {
   useFocusEffect(
     useCallback(() => {
       fetchUserAddressAndCoupons();
-    }, [])
+    }, [cartItems])
   );
 
   const fetchUserAddressAndCoupons = async () => {
@@ -106,7 +106,7 @@ export default function CheckoutScreen() {
         setAddress(null);
       }
 
-            // ดึงการตั้งค่าระบบ (ค่าจัดส่งเริ่มต้น)
+      // ดึงการตั้งค่าระบบ (ค่าจัดส่งเริ่มต้น)
       try {
         const settingsRes = await axios.get(`${BASE_URL}/settings`);
         if (settingsRes.data?.success) {
@@ -122,17 +122,24 @@ export default function CheckoutScreen() {
 
       // ดึงคูปองสะสมของผู้ใช้
       await loadUserCoupons(userId);
-      // ดึงพิกัดของร้านค้าเพื่อคำนวณระยะทางจริง
-      const currentShopId = cartItems[0]?.shop_id || 1;
-      try {
-        const shopRes = await axios.get(`${BASE_URL}/shops/${currentShopId}`);
-        if (shopRes.data?.success && shopRes.data?.shop) {
-          setShopCoords({
-            latitude: parseFloat(shopRes.data.shop.latitude) || 0,
-            longitude: parseFloat(shopRes.data.shop.longitude) || 0
-          });
+
+      // ดึงพิกัดและข้อมูลของทุกร้านค้าที่มีสินค้าในตะกร้า
+      const uniqueShopIds = Array.from(new Set(cartItems.map((item: any) => Number(item.shop_id || 1))));
+      const fetchedShops: { [key: number]: any } = {};
+      for (const sId of uniqueShopIds) {
+        try {
+          const shopRes = await axios.get(`${BASE_URL}/shops/${sId}`);
+          if (shopRes.data?.success && shopRes.data?.shop) {
+            fetchedShops[sId] = shopRes.data.shop;
+          } else {
+            fetchedShops[sId] = { shop_id: sId, name: `ร้านค้า #${sId}`, latitude: 16.2468, longitude: 103.2523 };
+          }
+        } catch (e) {
+          fetchedShops[sId] = { shop_id: sId, name: `ร้านค้า #${sId}`, latitude: 16.2468, longitude: 103.2523 };
         }
-      } catch (e) {}
+      }
+      setShopsInfo(fetchedShops);
+
       await fetchSystemFareSettings();
     } catch (error) {
       console.log('Error initializing checkout data:', error);
@@ -193,7 +200,45 @@ export default function CheckoutScreen() {
     }
   };
 
-  // 2. คำนวณราคาจริง (ปลอดภัยจาก NaN)
+  // จัดกลุ่มสินค้าตามร้านค้า และคำนวณระยะทาง & ค่าส่งแยกตามร้านค้าจริง
+  const shopGroups = React.useMemo(() => {
+    const groups: { [key: number]: { shopId: number; shopName: string; shopImage: string; items: any[]; distanceKm: number; deliveryFee: number; subtotal: number } } = {};
+
+    cartItems.forEach((item: any) => {
+      const sId = Number(item.shop_id || 1);
+      const sInfo = shopsInfo[sId];
+      const sName = sInfo?.name || item.shop_name || `ร้านค้า #${sId}`;
+      const sImg = sInfo?.image_url || '';
+
+      if (!groups[sId]) {
+        const sLat = parseFloat(sInfo?.latitude) || 16.2468;
+        const sLng = parseFloat(sInfo?.longitude) || 103.2523;
+        const uLat = parseFloat(address?.latitude) || 16.2400;
+        const uLng = parseFloat(address?.longitude) || 103.2500;
+        const dist = calculateDistanceKm(sLat, sLng, uLat, uLng);
+        const fare = Math.round((systemFare.baseFee + (dist * systemFare.perKmFee)) * 100) / 100;
+
+        groups[sId] = {
+          shopId: sId,
+          shopName: sName,
+          shopImage: sImg,
+          items: [],
+          distanceKm: dist,
+          deliveryFee: fare,
+          subtotal: 0
+        };
+      }
+
+      groups[sId].items.push(item);
+      const price = parseItemPrice(item);
+      const qty = Number(item?.quantity ?? item?.qty ?? 1) || 1;
+      groups[sId].subtotal += price * qty;
+    });
+
+    return Object.values(groups);
+  }, [cartItems, shopsInfo, address, systemFare]);
+
+  // คำนวณราคาสินค้ารวมทั้งหมด
   const subtotal = cartItems.reduce((sum: number, item: any) => {
     const price = parseItemPrice(item);
     const qty = Number(item?.quantity ?? item?.qty ?? 1) || 1;
@@ -201,15 +246,11 @@ export default function CheckoutScreen() {
     return sum + (isNaN(lineTotal) ? 0 : lineTotal);
   }, 0);
 
-    // คำนวณระยะทางจริงจากร้านค้าไปยังที่อยู่จัดส่งของลูกค้า
-  const currentDistanceKm = calculateDistanceKm(
-    shopCoords.latitude || 16.2468,
-    shopCoords.longitude || 103.2523,
-    address?.latitude || 16.2400,
-    address?.longitude || 103.2500
-  );
-  const calculatedDeliveryFare = Math.round((systemFare.baseFee + (currentDistanceKm * systemFare.perKmFee)) * 100) / 100;
-  const deliveryFee = deliveryMethod === 'delivery' ? calculatedDeliveryFare : 0;
+  // คำนวณค่าจัดส่งรวมของทุกร้าน
+  const totalDeliveryFee = deliveryMethod === 'delivery'
+    ? shopGroups.reduce((sum, g) => sum + g.deliveryFee, 0)
+    : 0;
+  const deliveryFee = totalDeliveryFee;
 
   // คำนวณส่วนลดตามคูปองที่เลือก
   let discount = 0;
@@ -226,7 +267,11 @@ export default function CheckoutScreen() {
   }
 
   const grandTotal = Math.max(0, subtotal + deliveryFee - discount);
-  const deliveryFeeText = deliveryMethod === 'delivery' ? `฿${deliveryFee.toFixed(2)} (~${currentDistanceKm} กม.)` : 'ฟรี (รับเองที่ร้าน)';
+  const deliveryFeeText = deliveryMethod === 'delivery' 
+    ? (shopGroups.length > 1 
+        ? `฿${deliveryFee.toFixed(2)} (${shopGroups.length} ร้านค้า)` 
+        : `฿${deliveryFee.toFixed(2)} (~${shopGroups[0]?.distanceKm || 1.2} กม.)`)
+    : 'ฟรี (รับเองที่ร้าน)';
 
   const handleApplyCustomCode = () => {
     const trimmed = couponCodeInput.trim().toUpperCase();
@@ -270,13 +315,27 @@ export default function CheckoutScreen() {
     try {
       setLoading(true);
 
+      // รวมสินค้าทั้งหมดจากทุกร้านให้อยู่ในคำสั่งซื้อเดียว (1 Single Order)
+      const allOrderItems = cartItems.map((item: any) => ({
+        product_id: item.product_id || item.id,
+        product_name: item.name || item.product_name,
+        price: parseItemPrice(item),
+        quantity: Number(item?.quantity ?? item?.qty ?? 1) || 1,
+        shop_id: Number(item.shop_id || item.shop?.shop_id || 1),
+        shop_name: item.shop_name || item.shop?.name || ''
+      }));
+
+      const primaryShopId = shopGroups[0]?.shopId || 1;
+      const totalDelivery = deliveryMethod === 'delivery' ? totalDeliveryFee : 0;
+      const grandTotalAmount = Math.max(0, subtotal + totalDelivery - discount);
+
       const orderPayload = {
         user_id: currentUserId || 2,
-        shop_id: cartItems[0]?.shop_id || 1,
+        shop_id: primaryShopId,
         subtotal: subtotal,
-        delivery_fee: deliveryFee,
+        delivery_fee: totalDelivery,
         discount: discount,
-        total_amount: grandTotal,
+        total_amount: grandTotalAmount,
         order_status: 'pending',
         delivery_type: deliveryMethod,
         payment_method: paymentMethod,
@@ -288,20 +347,12 @@ export default function CheckoutScreen() {
         latitude: address?.latitude || 0,
         longitude: address?.longitude || 0,
         note_for_rider: deliveryNote,
-        items: cartItems.map((item: any) => ({
-          product_id: item.id || item.product_id,
-          product_name: item.name || item.product_name,
-          price: parseItemPrice(item),
-          quantity: Number(item?.quantity ?? item?.qty ?? 1) || 1,
-          shop_id: item.shop_id || 1
-        }))
+        items: allOrderItems
       };
 
       const res = await axios.post(`${BASE_URL}/orders`, orderPayload);
-
       if (res.status === 200 || res.status === 201) {
-        const createdOrderId = res.data?.order_id || res.data?.id || res.data?.insertId || 1;
-        const currentShopId = cartItems[0]?.shop_id || 1;
+        const createdOrderId = res.data?.order_id || res.data?.id || res.data?.insertId;
 
         // ลบคูปองที่ใช้แล้วออกจาก local storage
         if (selectedCoupon?.code) {
@@ -315,15 +366,21 @@ export default function CheckoutScreen() {
           } catch (e) {}
         }
 
+        // ล้างตะกร้าสินค้า
+        clearCart?.();
+
         // เปลี่ยนเส้นทางไปยังหน้า Payment
         router.replace({
           pathname: '/payment',
           params: {
             order_id: createdOrderId,
-            amount: grandTotal,
-            shop_id: currentShopId
+            amount: grandTotalAmount,
+            shop_id: primaryShopId,
+            order_ids: JSON.stringify([createdOrderId])
           }
         } as any);
+      } else {
+        Alert.alert('ผิดพลาด', 'ไม่สามารถสร้างคำสั่งซื้อได้');
       }
     } catch (error: any) {
       const errorMessage = error.response?.data?.message || error.response?.data || error.message;
@@ -489,53 +546,79 @@ export default function CheckoutScreen() {
           <Text style={styles.securityText}>🔒 ความปลอดภัยสูงสุดผ่านระบบ SSL Encrypted</Text>
         </View>
 
-        {/* สรุปรายการคำสั่งซื้อ */}
+        {/* สรุปรายการคำสั่งซื้อ (แยกตามร้านค้า) */}
         <View style={styles.section}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-            <Text style={styles.sectionTitle}>สรุปรายการคำสั่งซื้อ</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Text style={styles.sectionTitle}>สรุปรายการคำสั่งซื้อ</Text>
+              {shopGroups.length > 1 && (
+                <View style={styles.multiShopBadge}>
+                  <Text style={styles.multiShopBadgeText}>{shopGroups.length} ร้านค้า</Text>
+                </View>
+              )}
+            </View>
             <View style={styles.smartDealTag}><Text style={styles.smartDealText}>Smart Deal ✨</Text></View>
           </View>
 
           {cartItems.length === 0 ? (
             <Text style={{ color: '#888', marginVertical: 10, textAlign: 'center' }}>ไม่มีสินค้าในรายการ</Text>
           ) : (
-            cartItems.map((item: any, index: number) => {
-              const itemPrice = Number(item?.price ?? item?.discount_price ?? 0);
-              const itemOriginalPrice = item?.originalPrice || item?.original_price;
-              const itemQty = Number(item?.quantity ?? item?.qty ?? 1);
-              const itemImg = item?.image || item?.image_url || item?.product_image;
-              const itemName = item?.name || item?.product_name || 'สินค้า';
-
-              return (
-                <View key={item.id || item.product_id || index} style={styles.itemCard}>
-                  {itemImg ? (
-                    <Image source={{ uri: itemImg }} style={styles.itemImg} />
-                  ) : (
-                    <View style={[styles.itemImg, { backgroundColor: '#eee', justifyContent: 'center', alignItems: 'center' }]}>
-                      <MaterialIcons name="fastfood" size={24} color="#ccc" />
-                    </View>
-                  )}
-                  <View style={styles.itemDetail}>
-                    <Text style={styles.itemName} numberOfLines={1}>{itemName}</Text>
-                    <Text style={styles.itemShop}>{item.shop_name || 'ร้านค้า'}</Text>
-                    <View style={styles.itemPriceRow}>
-                      <Text style={styles.itemPrice}>฿{itemPrice.toFixed(2)}</Text>
-                      {itemOriginalPrice && <Text style={styles.itemOldPrice}>฿{Number(itemOriginalPrice).toFixed(2)}</Text>}
-                      <Text style={styles.itemQty}>x{itemQty}</Text>
-                    </View>
+            shopGroups.map((group) => (
+              <View key={group.shopId} style={styles.shopGroupCard}>
+                {/* Shop Header */}
+                <View style={styles.shopGroupHeader}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                    <MaterialIcons name="storefront" size={18} color="#2e7a32" />
+                    <Text style={styles.shopGroupTitle} numberOfLines={1}>{group.shopName}</Text>
                   </View>
+                  {deliveryMethod === 'delivery' && (
+                    <Text style={styles.shopGroupFeeText}>
+                      ค่าส่ง ฿{group.deliveryFee.toFixed(2)} (~{group.distanceKm} กม.)
+                    </Text>
+                  )}
                 </View>
-              );
-            })
+
+                {/* Items in this shop */}
+                {group.items.map((item: any, index: number) => {
+                  const itemPrice = parseItemPrice(item);
+                  const itemOriginalPrice = item?.originalPrice || item?.original_price;
+                  const itemQty = Number(item?.quantity ?? item?.qty ?? 1);
+                  const itemImg = item?.image || item?.image_url || item?.product_image;
+                  const itemName = item?.name || item?.product_name || 'สินค้า';
+
+                  return (
+                    <View key={item.id || item.product_id || index} style={styles.itemCard}>
+                      {itemImg ? (
+                        <Image source={{ uri: itemImg }} style={styles.itemImg} />
+                      ) : (
+                        <View style={[styles.itemImg, { backgroundColor: '#eee', justifyContent: 'center', alignItems: 'center' }]}>
+                          <MaterialIcons name="fastfood" size={24} color="#ccc" />
+                        </View>
+                      )}
+                      <View style={styles.itemDetail}>
+                        <Text style={styles.itemName} numberOfLines={1}>{itemName}</Text>
+                        <View style={styles.itemPriceRow}>
+                          <Text style={styles.itemPrice}>฿{itemPrice.toFixed(2)}</Text>
+                          {itemOriginalPrice && <Text style={styles.itemOldPrice}>฿{Number(itemOriginalPrice).toFixed(2)}</Text>}
+                          <Text style={styles.itemQty}>x{itemQty}</Text>
+                        </View>
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+            ))
           )}
 
           <View style={styles.summaryBox}>
             <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>ยอดรวมสินค้า</Text>
+              <Text style={styles.summaryLabel}>ยอดรวมสินค้า ({cartItems.length} รายการ)</Text>
               <Text style={styles.summaryVal}>฿{subtotal.toFixed(2)}</Text>
             </View>
             <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>ค่าจัดส่ง</Text>
+              <Text style={styles.summaryLabel}>
+                ค่าจัดส่ง {shopGroups.length > 1 ? `(${shopGroups.length} ร้านค้า)` : ''}
+              </Text>
               <Text style={styles.summaryVal}>{deliveryFeeText}</Text>
             </View>
             {discount > 0 && (
@@ -794,8 +877,49 @@ const styles = StyleSheet.create({
 
   smartDealTag: { backgroundColor: '#dcfce7', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 12 },
   smartDealText: { color: '#15803d', fontSize: 10, fontWeight: 'bold' },
+
+  multiShopBadge: {
+    backgroundColor: '#eff6ff',
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  multiShopBadgeText: {
+    fontSize: 11,
+    color: '#2563eb',
+    fontWeight: 'bold',
+  },
+  shopGroupCard: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    padding: 12,
+    marginBottom: 12,
+  },
+  shopGroupHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingBottom: 10,
+    marginBottom: 10,
+    borderBottomWidth: 1,
+    borderColor: '#f1f5f9',
+  },
+  shopGroupTitle: {
+    fontSize: 13,
+    fontWeight: 'bold',
+    color: '#0f172a',
+  },
+  shopGroupFeeText: {
+    fontSize: 11,
+    color: '#16a34a',
+    fontWeight: '600',
+  },
   
-  itemCard: { flexDirection: 'row', backgroundColor: '#fff', padding: 10, borderRadius: 12, marginBottom: 8, borderWidth: 1, borderColor: '#eee' },
+  itemCard: { flexDirection: 'row', backgroundColor: '#f8fafc', padding: 10, borderRadius: 12, marginBottom: 8, borderWidth: 1, borderColor: '#f1f5f9' },
   itemImg: { width: 60, height: 60, borderRadius: 8 },
   itemDetail: { flex: 1, marginLeft: 10, justifyContent: 'space-around' },
   itemName: { fontSize: 13, fontWeight: 'bold', color: '#222' },

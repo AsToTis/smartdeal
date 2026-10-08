@@ -181,7 +181,7 @@ export default function ProfileScreen() {
               type: 'image/jpeg'
             } as any);
 
-                    const uploadData = await new Promise((resolve, reject) => {
+                    const uploadData = await new Promise<any>((resolve, reject) => {
             const xhr = new XMLHttpRequest();
             xhr.open('POST', `${BASE_URL}/users/${userId}/avatar`);
             xhr.onload = () => {

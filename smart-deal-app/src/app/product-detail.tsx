@@ -145,6 +145,7 @@ export default function ProductDetailScreen() {
       price: Number(product.discount_price || product.original_price || 0),
       quantity: quantity,
       shop_id: product.shop_id || 1,
+      shop_name: product.shop_name || '',
       image_url: product.image_url
     };
 
@@ -170,6 +171,7 @@ export default function ProductDetailScreen() {
       quantity: quantity,
       stock_quantity: product.stock_quantity,
       shop_id: product.shop_id || 1,
+      shop_name: product.shop_name || '',
       image_url: product.image_url
     }, quantity);
 
@@ -251,7 +253,7 @@ export default function ProductDetailScreen() {
           <View style={styles.countdownBox}>
             <View style={styles.countdownLeft}>
               <MaterialIcons name="access-time" size={18} color="#16a34a" />
-              <Text style={styles.countdownLabel}>เวลาดีลคงเหลือ:</Text>
+              <Text style={styles.countdownLabel}>หมดอายุใน</Text>
             </View>
 
             <View style={styles.timerGroup}>
@@ -287,7 +289,10 @@ export default function ProductDetailScreen() {
 
         {/* 4. ชื่อสินค้าและร้านค้า */}
         <Text style={styles.titleText}>{product?.name || 'อาหารส่วนเกินคุณภาพพรีเมียม'}</Text>
-        <Text style={styles.shopNameText}>🏬 ร้านค้า: {product?.shop_name || 'ร้านค้าพรีเมียม'}</Text>
+        <View style={styles.shopBadgeRow}>
+          <Ionicons name="storefront" size={14} color="#16a34a" />
+          <Text style={styles.shopNameText}>{product?.shop_name || 'ร้านค้าพรีเมียม'}</Text>
+        </View>
 
         {/* 5. แถวราคาและส่วนลด */}
         <View style={styles.priceRow}>
@@ -520,8 +525,21 @@ const styles = StyleSheet.create({
   ratingText: { fontSize: 13, fontWeight: 'bold', color: '#0f172a' },
   reviewCount: { fontSize: 12, color: '#64748b', fontWeight: 'normal' },
   
-  titleText: { fontSize: 20, fontWeight: 'bold', color: '#0f172a', marginBottom: 4, lineHeight: 26 },
-  shopNameText: { fontSize: 13, color: '#16a34a', fontWeight: '600', marginBottom: 12 },
+  titleText: { fontSize: 20, fontWeight: 'bold', color: '#0f172a', marginBottom: 6, lineHeight: 26 },
+  shopBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 12,
+    alignSelf: 'flex-start',
+    backgroundColor: '#f0fdf4',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+  },
+  shopNameText: { fontSize: 13, color: '#16a34a', fontWeight: '600' },
   
   priceRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 16 },
   priceCurrent: { fontSize: 26, fontWeight: 'bold', color: '#16a34a' },

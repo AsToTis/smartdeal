@@ -21,20 +21,38 @@ export default function AddProductScreen() {
       setImageUri('');
       setIsAuction(false);
       setCategoryId('1');
-      setExpiryDate(new Date());
+      const defaultExp = new Date();
+      defaultExp.setHours(defaultExp.getHours() + 4, 0, 0, 0);
+      setExpiryDate(defaultExp);
     }, [])
   );
 
   const [name, setName] = useState('');
   const [originalPrice, setOriginalPrice] = useState('');
   const [discountPrice, setDiscountPrice] = useState('');
-  const [expiryDate, setExpiryDate] = useState(new Date());
+  const [expiryDate, setExpiryDate] = useState(() => {
+    const d = new Date();
+    d.setHours(d.getHours() + 4, 0, 0, 0);
+    return d;
+  });
   const [showDatePicker, setShowDatePicker] = useState(false);
+  const [showTimePicker, setShowTimePicker] = useState(false);
   
   const onChangeDate = (event: any, selectedDate?: Date) => {
     setShowDatePicker(false);
     if (selectedDate) {
-      setExpiryDate(selectedDate);
+      const newDate = new Date(selectedDate);
+      newDate.setHours(expiryDate.getHours(), expiryDate.getMinutes(), 0, 0);
+      setExpiryDate(newDate);
+    }
+  };
+
+  const onChangeTime = (event: any, selectedTime?: Date) => {
+    setShowTimePicker(false);
+    if (selectedTime) {
+      const newDate = new Date(expiryDate);
+      newDate.setHours(selectedTime.getHours(), selectedTime.getMinutes(), 0, 0);
+      setExpiryDate(newDate);
     }
   };
   const [stockQuantity, setStockQuantity] = useState('');
@@ -60,13 +78,10 @@ export default function AddProductScreen() {
   };
 
   const isExpiringSoon = () => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const exp = new Date(expiryDate);
-    exp.setHours(0, 0, 0, 0);
-    const diffTime = exp.getTime() - today.getTime();
-    const diffDays = diffTime / (1000 * 60 * 60 * 24);
-    return diffDays <= 1;
+    const now = new Date().getTime();
+    const exp = new Date(expiryDate).getTime();
+    const diffHours = (exp - now) / (1000 * 60 * 60);
+    return diffHours > 0 && diffHours <= 24;
   };
 
   const [imageUri, setImageUri] = useState('');
@@ -100,10 +115,7 @@ export default function AddProductScreen() {
         return;
       }
 
-      // Helper function to mock expiry time based on date format
-      // Ideally we use a proper Date Picker component
       let parsedExpiry = new Date(expiryDate);
-      parsedExpiry.setHours(23, 59, 59, 999);
 
       const formData = new FormData();
       formData.append('name', name);
@@ -242,17 +254,19 @@ export default function AddProductScreen() {
           </View>
         </View>
 
-        {/* หมดอายุ & จำนวน */}
+        {/* วันที่และเวลาหมดอายุของดีล (ระดับชั่วโมง/นาที) */}
         <View style={styles.rowGrid}>
           <View style={styles.colHalf}>
             <Text style={styles.inputLabel}>วันหมดอายุของดีล</Text>
             <TouchableOpacity style={styles.inputWithIcon} onPress={() => setShowDatePicker(true)}>
-              <Text style={{ flex: 1, color: '#0f172a' }}>{expiryDate.toLocaleDateString('th-TH')}</Text>
+              <Text style={{ flex: 1, color: '#0f172a', fontSize: 13 }} numberOfLines={1}>
+                {isNaN(expiryDate.getTime()) ? 'เลือกวันที่' : expiryDate.toLocaleDateString('th-TH')}
+              </Text>
               <MaterialIcons name="calendar-today" size={18} color="#94a3b8" />
             </TouchableOpacity>
             {showDatePicker && (
               <DateTimePicker
-                value={expiryDate}
+                value={isNaN(expiryDate.getTime()) ? new Date() : expiryDate}
                 mode="date"
                 display="default"
                 onChange={onChangeDate}
@@ -261,16 +275,33 @@ export default function AddProductScreen() {
             )}
           </View>
           <View style={styles.colHalf}>
-            <Text style={styles.inputLabel}>จำนวนสินค้าที่มี</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="ระบุจำนวน"
-              keyboardType="numeric"
-              value={stockQuantity}
-              onChangeText={setStockQuantity}
-            />
+            <Text style={styles.inputLabel}>เวลาหมดอายุ</Text>
+            <TouchableOpacity style={styles.inputWithIcon} onPress={() => setShowTimePicker(true)}>
+              <Text style={{ flex: 1, color: '#0f172a', fontSize: 13 }} numberOfLines={1}>
+                {isNaN(expiryDate.getTime()) ? 'เลือกเวลา' : expiryDate.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) + ' น.'}
+              </Text>
+              <MaterialIcons name="access-time" size={18} color="#2e7a32" />
+            </TouchableOpacity>
+            {showTimePicker && (
+              <DateTimePicker
+                value={isNaN(expiryDate.getTime()) ? new Date() : expiryDate}
+                mode="time"
+                display="default"
+                onChange={onChangeTime}
+              />
+            )}
           </View>
         </View>
+
+        {/* จำนวนสินค้า */}
+        <Text style={styles.inputLabel}>จำนวนสินค้าที่มี</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="ระบุจำนวน"
+          keyboardType="numeric"
+          value={stockQuantity}
+          onChangeText={setStockQuantity}
+        />
 
         {/* หมวดหมู่ */}
         <Text style={styles.inputLabel}>หมวดหมู่สินค้า</Text>
@@ -583,5 +614,34 @@ const styles = StyleSheet.create({
   },
   stepActive: {
     backgroundColor: '#2e7a32',
+  },
+  presetContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+    marginTop: -8,
+  },
+  presetLabel: {
+    fontSize: 12,
+    color: '#64748b',
+    marginRight: 8,
+    fontWeight: '600',
+  },
+  presetScroll: {
+    gap: 8,
+    paddingVertical: 4,
+  },
+  presetChip: {
+    backgroundColor: '#f0fdf4',
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12,
+  },
+  presetChipText: {
+    fontSize: 12,
+    color: '#16a34a',
+    fontWeight: '600',
   },
 });

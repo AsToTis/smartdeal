@@ -1445,6 +1445,16 @@ app.get('/api/orders/user/:userId', async (req, res) => {
       pickup: 'รับที่ร้าน'
     };
 
+    // Auto self-heal mismatched order_items shop_id to match products table
+    try {
+      await db.query(`
+        UPDATE order_items oi
+        JOIN products p ON oi.product_id = p.product_id
+        SET oi.shop_id = p.shop_id
+        WHERE oi.product_id IS NOT NULL AND (oi.shop_id != p.shop_id OR oi.shop_id IS NULL)
+      `);
+    } catch(e) {}
+
     // Batch fetch all items in 1 single fast query
     const orderIds = orders.map(o => o.order_id);
     let itemsByOrderId = {};
@@ -1453,9 +1463,12 @@ app.get('/api/orders/user/:userId', async (req, res) => {
       let allItems = [];
       try {
         const [rows] = await db.query(
-          `SELECT oi.*, p.name AS db_product_name, p.image_url AS product_image
+          `SELECT oi.*, p.name AS db_product_name, p.image_url AS product_image, p.shop_id AS product_shop_id,
+                  COALESCE(s_p.name, s_oi.name, (SELECT name FROM shops WHERE shop_id = p.shop_id), (SELECT name FROM shops WHERE shop_id = oi.shop_id), '') AS item_shop_name
            FROM order_items oi
            LEFT JOIN products p ON oi.product_id = p.product_id
+           LEFT JOIN shops s_p ON p.shop_id = s_p.shop_id
+           LEFT JOIN shops s_oi ON oi.shop_id = s_oi.shop_id
            WHERE oi.order_id IN (${placeholders})`,
           orderIds
         );
@@ -1479,7 +1492,8 @@ app.get('/api/orders/user/:userId', async (req, res) => {
         ...order,
         items: items.map(item => ({
           ...item,
-          product_name: item.product_name || item.db_product_name || 'สินค้า'
+          product_name: item.product_name || item.db_product_name || 'สินค้า',
+          shop_name: item.item_shop_name || order.shop_name || 'ร้านค้า'
         })),
         item_count: items.reduce((acc, i) => acc + (i.quantity || 1), 0),
         display_title: displayTitle,
@@ -1533,9 +1547,13 @@ app.get('/api/orders/:orderId', async (req, res) => {
 
     const order = orders[0];
     const [items] = await db.execute(
-      `SELECT oi.*, p.name AS db_product_name, COALESCE(p.image_url, (SELECT image_url FROM auctions WHERE title COLLATE utf8mb4_unicode_ci = oi.product_name COLLATE utf8mb4_unicode_ci LIMIT 1)) AS product_image
+      `SELECT oi.*, p.name AS db_product_name, p.shop_id AS product_shop_id,
+              COALESCE(p.image_url, (SELECT image_url FROM auctions WHERE title COLLATE utf8mb4_unicode_ci = oi.product_name COLLATE utf8mb4_unicode_ci LIMIT 1)) AS product_image,
+              COALESCE(s_p.name, s_oi.name, (SELECT name FROM shops WHERE shop_id = p.shop_id), (SELECT name FROM shops WHERE shop_id = oi.shop_id), '') AS item_shop_name
          FROM order_items oi
        LEFT JOIN products p ON oi.product_id = p.product_id
+       LEFT JOIN shops s_p ON p.shop_id = s_p.shop_id
+       LEFT JOIN shops s_oi ON oi.shop_id = s_oi.shop_id
        WHERE oi.order_id = ?`,
       [orderId]
     );
@@ -1548,7 +1566,8 @@ app.get('/api/orders/:orderId', async (req, res) => {
         review: reviews.length > 0 ? reviews[0] : null,
         items: items.map(item => ({
           ...item,
-          product_name: item.product_name || item.db_product_name || 'สินค้า'
+          product_name: item.product_name || item.db_product_name || 'สินค้า',
+          shop_name: item.item_shop_name || order.shop_name || 'ร้านค้า'
         }))
       }
     });
@@ -1692,16 +1711,31 @@ app.post('/api/orders', async (req, res) => {
     const orderId = orderResult.insertId;
 
     // 3. บันทึก order_items และตัดสต็อกสินค้าใน MySQL ทันที
+    const actualShopIdsInOrder = new Set([shop_id]);
+
     if (items && items.length > 0) {
       for (const item of items) {
         const pId = item.product_id || item.id;
         const reqQty = parseInt(item.quantity || 1, 10);
         const itemPrice = parseFloat(item.price ?? item.discount_price ?? 0);
 
+        // ดึง shop_id ที่ถูกต้องตามความเป็นจริงจากตาราง products
+        let actualItemShopId = Number(item.shop_id || shop_id || 1);
+        if (pId) {
+          const [pRows] = await connection.query('SELECT shop_id FROM products WHERE product_id = ?', [pId]);
+          if (pRows.length > 0 && pRows[0].shop_id) {
+            actualItemShopId = Number(pRows[0].shop_id);
+          }
+        }
+
+        if (actualItemShopId) {
+          actualShopIdsInOrder.add(actualItemShopId);
+        }
+
         await connection.query(
           `INSERT INTO order_items (order_id, product_id, product_name, quantity, price, shop_id)
            VALUES (?, ?, ?, ?, ?, ?)`,
-          [orderId, pId || null, item.product_name || item.name || '', reqQty, itemPrice, item.shop_id || shop_id || 1]
+          [orderId, pId || null, item.product_name || item.name || '', reqQty, itemPrice, actualItemShopId]
         );
 
         // ตัดสต็อกสินค้าในตาราง products
@@ -1710,12 +1744,12 @@ app.post('/api/orders', async (req, res) => {
             'UPDATE products SET stock_quantity = GREATEST(0, stock_quantity - ?) WHERE product_id = ? AND stock_quantity >= ?',
             [reqQty, pId, reqQty]
           );
-          console.log(`📦 ตัดสต็อกสินค้า ID: ${pId} จำนวน: ${reqQty} ชิ้น (Affected: ${deductResult.affectedRows})`);
+          console.log(`📦 ตัดสต็อกสินค้า ID: ${pId} (Shop: ${actualItemShopId}) จำนวน: ${reqQty} ชิ้น (Affected: ${deductResult.affectedRows})`);
         }
       }
     }
 
-        // บันทึกการใช้งานคูปอง (ถ้ามี)
+    // บันทึกการใช้งานคูปอง (ถ้ามี)
     if (req.body.coupon_id) {
       await connection.query('UPDATE user_coupons SET is_used = 1 WHERE id = ?', [req.body.coupon_id]);
     } else if (req.body.coupon_code && user_id) {
@@ -1732,6 +1766,31 @@ app.post('/api/orders', async (req, res) => {
         `+${earnedPoints}`
       ]);
     } catch(e) {}
+
+    // Notify All Shop Owners involved & Buyer
+    try {
+      const allShopIds = Array.from(actualShopIdsInOrder).filter(Boolean);
+
+      for (const sId of allShopIds) {
+        if (!sId) continue;
+        const [sRows] = await connection.query('SELECT owner_id, name FROM shops WHERE shop_id = ?', [sId]);
+        if (sRows.length > 0 && sRows[0].owner_id) {
+          await connection.query(
+            'INSERT INTO notifications (user_id, title, message, type, reference_id, is_read, created_at) VALUES (?, ?, ?, "order", ?, 0, NOW())',
+            [sRows[0].owner_id, `🛍️ มีคำสั่งซื้อใหม่เข้ามา! (#${orderId})`, `ร้านของคุณมีรายการสินค้าในคำสั่งซื้อ #${orderId} กรุณาตรวจสอบและเตรียมสินค้า`, String(orderId)]
+          );
+        }
+      }
+
+      if (user_id) {
+        await connection.query(
+          'INSERT INTO notifications (user_id, title, message, type, reference_id, is_read, created_at) VALUES (?, ?, ?, "order", ?, 0, NOW())',
+          [user_id, `📝 สร้างคำสั่งซื้อสำเร็จ (#${orderId})`, `คำสั่งซื้อ #${orderId} อยู่ระหว่างรอร้านค้ารับออเดอร์`, String(orderId)]
+        );
+      }
+    } catch(ne) {
+      console.error('Error sending order creation notifications:', ne.message);
+    }
 
     await connection.commit();
     console.log(`✅ สั่งซื้อและตัดสต็อกสินค้าสำเร็จสำหรับ Order ID: ${orderId}`);
@@ -1887,6 +1946,19 @@ app.put('/api/orders/:orderId/complete', async (req, res) => {
         VALUES ('shop', ?, ?, ?, 'credit', ?)
       `, [shopId, orderId, shopAmount, `รายรับจากออเดอร์ #${orderId}`]);
     }
+
+    // Notify Shop Owner
+    try {
+      if (shopId) {
+        const [sRows] = await connection.query('SELECT owner_id FROM shops WHERE shop_id = ?', [shopId]);
+        if (sRows.length > 0 && sRows[0].owner_id) {
+          await connection.query(
+            'INSERT INTO notifications (user_id, title, message, type, reference_id, is_read, created_at) VALUES (?, ?, ?, "order", ?, 0, NOW())',
+            [sRows[0].owner_id, `💰 ลูกค้ายืนยันรับสินค้าแล้ว (#${orderId})`, `คำสั่งซื้อ #${orderId} เสร็จสมบูรณ์ ยอดเงิน ฿${shopAmount} ได้เข้ากระเป๋าเงินร้านค้าของคุณเรียบร้อยแล้ว`, String(orderId)]
+          );
+        }
+      }
+    } catch(ne) {}
 
     // 3. ปล่อยเงินค่ารอบเข้ากระเป๋าไรเดอร์เมื่อลูกค้ายืนยันรับสินค้าแล้วเท่านั้น (Rider Escrow Release)
     const [delRows] = await connection.query('SELECT rider_id FROM deliveries WHERE order_id = ?', [orderId]);
@@ -3140,7 +3212,7 @@ app.get('/api/shops/:shopId/orders', async (req, res) => {
 
   try {
     let query = `
-      SELECT 
+      SELECT DISTINCT
         o.*,
         u.full_name AS customer_name,
         u.phone AS customer_phone,
@@ -3159,9 +3231,14 @@ app.get('/api/shops/:shopId/orders', async (req, res) => {
       LEFT JOIN deliveries d ON o.order_id = d.order_id
       LEFT JOIN riders r ON (o.rider_id = r.rider_id OR d.rider_id = r.rider_id)
       LEFT JOIN users u_rider ON r.user_id = u_rider.user_id
-      WHERE o.shop_id = ?
+      WHERE (o.shop_id = ? OR o.order_id IN (
+        SELECT DISTINCT oi.order_id 
+        FROM order_items oi 
+        LEFT JOIN products p ON oi.product_id = p.product_id 
+        WHERE (oi.shop_id = ? OR p.shop_id = ?)
+      ))
     `;
-    const params = [shopId];
+    const params = [shopId, shopId, shopId];
 
     if (status && status !== 'all') {
       query += ` AND o.order_status = ?`;
@@ -3178,9 +3255,12 @@ app.get('/api/shops/:shopId/orders', async (req, res) => {
     if (orderIds.length > 0) {
       const placeholders = orderIds.map(() => '?').join(',');
       const [allItems] = await db.execute(
-        `SELECT oi.*, p.name AS db_product_name, p.image_url AS product_image
+        `SELECT oi.*, p.name AS db_product_name, p.image_url AS product_image, p.shop_id AS product_shop_id,
+                COALESCE(s_p.name, s_oi.name, (SELECT name FROM shops WHERE shop_id = p.shop_id), (SELECT name FROM shops WHERE shop_id = oi.shop_id), '') AS item_shop_name
          FROM order_items oi
          LEFT JOIN products p ON oi.product_id = p.product_id
+         LEFT JOIN shops s_p ON p.shop_id = s_p.shop_id
+         LEFT JOIN shops s_oi ON oi.shop_id = s_oi.shop_id
          WHERE oi.order_id IN (${placeholders})`,
         orderIds
       );
@@ -3190,13 +3270,30 @@ app.get('/api/shops/:shopId/orders', async (req, res) => {
       });
     }
 
-    const formattedOrders = orders.map(order => ({
-      ...order,
-      items: (itemsByOrderId[order.order_id] || []).map(item => ({
-        ...item,
-        product_name: item.product_name || item.db_product_name || 'สินค้า'
-      }))
-    }));
+    const formattedOrders = orders.map(order => {
+      const allOrderItems = itemsByOrderId[order.order_id] || [];
+      const myShopItems = allOrderItems.filter(item => 
+        Number(item.product_shop_id || item.shop_id) === Number(shopId) || 
+        (!item.shop_id && !item.product_shop_id && Number(order.shop_id) === Number(shopId))
+      );
+      const itemsToDisplay = myShopItems.length > 0 ? myShopItems : allOrderItems;
+
+      return {
+        ...order,
+        items: itemsToDisplay.map(item => ({
+          ...item,
+          product_name: item.product_name || item.db_product_name || 'สินค้า',
+          shop_name: item.item_shop_name || order.shop_name || 'ร้านค้า'
+        })),
+        all_items: allOrderItems.map(item => ({
+          ...item,
+          product_name: item.product_name || item.db_product_name || 'สินค้า',
+          shop_name: item.item_shop_name || order.shop_name || 'ร้านค้า'
+        })),
+        all_items_count: allOrderItems.length,
+        my_items_count: myShopItems.length
+      };
+    });
 
     res.json({ success: true, orders: formattedOrders });
   } catch (error) {
@@ -3220,6 +3317,45 @@ app.put('/api/orders/:orderId/status', async (req, res) => {
       'UPDATE orders SET order_status = ? WHERE order_id = ?',
       [order_status, orderId]
     );
+
+    // ส่งการแจ้งเตือนไปยังผู้ซื้อ (Buyer Notification)
+    try {
+      const [orderRows] = await db.execute('SELECT user_id, shop_id FROM orders WHERE order_id = ?', [orderId]);
+      if (orderRows.length > 0) {
+        const userId = orderRows[0].user_id;
+        let notifTitle = '';
+        let notifMsg = '';
+
+        if (order_status === 'preparing') {
+          notifTitle = `👨‍🍳 ร้านค้ารับออเดอร์แล้ว (#${orderId})`;
+          notifMsg = 'ร้านค้ากำลังเริ่มจัดเตรียมอาหาร/สินค้าของคุณแล้ว';
+        } else if (order_status === 'ready') {
+          notifTitle = `📦 สินค้าจัดเตรียมเสร็จแล้ว (#${orderId})`;
+          notifMsg = 'สินค้าของคุณจัดเตรียมเสร็จเรียบร้อยแล้ว พร้อมส่งมอบ';
+        } else if (order_status === 'finding_rider') {
+          notifTitle = `🔍 กำลังค้นหาไรเดอร์ (#${orderId})`;
+          notifMsg = 'ระบบกำลังค้นหาไรเดอร์เพื่อจัดส่งสินค้าของคุณ';
+        } else if (order_status === 'delivering' || order_status === 'shipped') {
+          notifTitle = `🛵 สินค้ากำลังจัดส่ง (#${orderId})`;
+          notifMsg = 'สินค้าของคุณอยู่ระหว่างการจัดส่งไปยังที่อยู่ของคุณ';
+        } else if (order_status === 'completed') {
+          notifTitle = `✅ คำสั่งซื้อสำเร็จ (#${orderId})`;
+          notifMsg = 'คำสั่งซื้อของคุณเสร็จสมบูรณ์เรียบร้อยแล้ว ขอบคุณที่ใช้บริการ SmartDeal';
+        } else if (order_status === 'cancelled') {
+          notifTitle = `❌ คำสั่งซื้อถูกยกเลิก (#${orderId})`;
+          notifMsg = 'คำสั่งซื้อของคุณถูกยกเลิกแล้ว';
+        }
+
+        if (notifTitle && userId) {
+          await db.execute(
+            'INSERT INTO notifications (user_id, title, message, type, reference_id, is_read, created_at) VALUES (?, ?, ?, "order", ?, 0, NOW())',
+            [userId, notifTitle, notifMsg, String(orderId)]
+          );
+        }
+      }
+    } catch(notifErr) {
+      console.error('Error inserting order status notification:', notifErr.message);
+    }
 
     res.json({ success: true, message: `อัปเดตสถานะออเดอร์เป็น ${order_status} สำเร็จ` });
   } catch (error) {
@@ -4248,7 +4384,36 @@ app.get('/api/rider/jobs', async (req, res) => {
       ORDER BY o.created_at ASC
     `);
 
+    // Fetch all distinct pickup shops for each order
+    const orderIds = orders.map(o => o.order_id);
+    let shopsByOrderId = {};
+    if (orderIds.length > 0) {
+      const placeholders = orderIds.map(() => '?').join(',');
+      try {
+        const [orderShops] = await db.query(`
+          SELECT DISTINCT oi.order_id, s.shop_id, s.name as shop_name, s.address as shop_address, s.latitude as shop_lat, s.longitude as shop_lng, s.phone as shop_phone
+          FROM order_items oi
+          JOIN shops s ON oi.shop_id = s.shop_id
+          WHERE oi.order_id IN (${placeholders})
+        `, orderIds);
+
+        orderShops.forEach(s => {
+          if (!shopsByOrderId[s.order_id]) shopsByOrderId[s.order_id] = [];
+          shopsByOrderId[s.order_id].push(s);
+        });
+      } catch (shopErr) {
+        console.error('Error fetching order shops for rider:', shopErr.message);
+      }
+    }
+
     const formattedOrders = orders.map(o => {
+      const pickupShops = shopsByOrderId[o.order_id] && shopsByOrderId[o.order_id].length > 0
+        ? shopsByOrderId[o.order_id]
+        : [{ shop_id: o.shop_id, shop_name: o.shop_name, shop_address: o.shop_address, shop_lat: o.shop_lat, shop_lng: o.shop_lng }];
+
+      const shopNames = pickupShops.map(s => s.shop_name).join(' + ');
+      const isMultiShop = pickupShops.length > 1;
+
       const distKm = calculateDistanceKm(o.shop_lat, o.shop_lng, o.customer_lat, o.customer_lng);
       const fareInfo = computeFare(distKm, config.baseFee, config.perKmFee, config.riderSharePercent);
       
@@ -4261,6 +4426,11 @@ app.get('/api/rider/jobs', async (req, res) => {
 
       return {
         ...o,
+        shop_name: isMultiShop ? `${pickupShops[0].shop_name} + อีก ${pickupShops.length - 1} ร้าน (${pickupShops.length} จุดรับ)` : o.shop_name,
+        pickup_shops: pickupShops,
+        pickup_count: pickupShops.length,
+        is_multi_shop: isMultiShop,
+        all_shop_names: shopNames,
         distance: `${distKm} กม.`,
         delivery_fee: finalFee
       };
@@ -4309,6 +4479,31 @@ app.put('/api/rider/deliveries/:order_id/status', async (req, res) => {
         [orderId, rider_id, 'accepted']
       );
       await connection.query('UPDATE orders SET rider_id = ? WHERE order_id = ?', [rider_id, orderId]);
+
+      // Notify Buyer & Shop
+      try {
+        const [oRows] = await connection.query('SELECT user_id, shop_id FROM orders WHERE order_id = ?', [orderId]);
+        if (oRows.length > 0) {
+          const buyerId = oRows[0].user_id;
+          const sId = oRows[0].shop_id;
+          if (buyerId) {
+            await connection.query(
+              'INSERT INTO notifications (user_id, title, message, type, reference_id, is_read, created_at) VALUES (?, ?, ?, "order", ?, 0, NOW())',
+              [buyerId, `🛵 ไรเดอร์รับงานแล้ว (#${orderId})`, 'ไรเดอร์กำลังเดินทางไปรับสินค้าที่ร้านค้า', String(orderId)]
+            );
+          }
+          if (sId) {
+            const [sRows] = await connection.query('SELECT owner_id FROM shops WHERE shop_id = ?', [sId]);
+            if (sRows.length > 0 && sRows[0].owner_id) {
+              await connection.query(
+                'INSERT INTO notifications (user_id, title, message, type, reference_id, is_read, created_at) VALUES (?, ?, ?, "order", ?, 0, NOW())',
+                [sRows[0].owner_id, `🛵 ไรเดอร์กำลังมารับสินค้า (#${orderId})`, `มีไรเดอร์รับงานคำสั่งซื้อ #${orderId} แล้ว กำลังเดินทางมาที่ร้าน`, String(orderId)]
+              );
+            }
+          }
+        }
+      } catch(ne) {}
+
       await connection.commit();
       return res.json({ success: true, message: 'รับงานสำเร็จ' });
     }
@@ -4356,14 +4551,8 @@ app.post('/api/rider/deliveries/:order_id/pickup', upload.single('pickup_image')
       return res.status(404).json({ success: false, message: 'ไม่พบข้อมูลคำสั่งซื้อ' });
     }
 
+    // เมื่อไรเดอร์ถ่ายรูปยืนยันรับสินค้า สามารถรับสินค้าและเปลี่ยนสถานะเป็น delivering ได้ทันที
     const currentOrderStatus = orderRows[0].order_status;
-    if (currentOrderStatus !== 'ready' && currentOrderStatus !== 'delivering') {
-      await connection.rollback();
-      return res.status(400).json({ 
-        success: false, 
-        message: 'ร้านค้ายังเตรียมสินค้าไม่เสร็จ หรือยังไม่ได้กดยืนยันพร้อมส่งสินค้า กรุณารอสักครู่' 
-      });
-    }
 
     await connection.query(
       'UPDATE deliveries SET status = "delivering", pickup_proof_image = ?, pickup_at = NOW() WHERE order_id = ? AND rider_id = ?',
@@ -4374,6 +4563,17 @@ app.post('/api/rider/deliveries/:order_id/pickup', upload.single('pickup_image')
       'UPDATE orders SET order_status = "delivering" WHERE order_id = ?',
       [orderId]
     );
+
+    // Notify Buyer
+    try {
+      const [oRows] = await connection.query('SELECT user_id FROM orders WHERE order_id = ?', [orderId]);
+      if (oRows.length > 0 && oRows[0].user_id) {
+        await connection.query(
+          'INSERT INTO notifications (user_id, title, message, type, reference_id, is_read, created_at) VALUES (?, ?, ?, "order", ?, 0, NOW())',
+          [oRows[0].user_id, `🛵 ไรเดอร์รับสินค้าจากร้านแล้ว (#${orderId})`, 'ไรเดอร์ได้รับสินค้าเรียบร้อยแล้ว และกำลังเดินทางนำส่งให้คุณ', String(orderId)]
+        );
+      }
+    } catch(ne) {}
 
     // Auto post delivery update & photo to Customer (Buyer <-> Rider channel)
     try {
@@ -4409,6 +4609,30 @@ app.post('/api/rider/deliveries/:order_id/complete', upload.single('proof_image'
     );
 
     await db.query('UPDATE orders SET order_status = "delivered", delivered_at = CURRENT_TIMESTAMP WHERE order_id = ?', [orderId]);
+
+    // Notify Buyer & Shop
+    try {
+      const [oRows] = await db.query('SELECT user_id, shop_id FROM orders WHERE order_id = ?', [orderId]);
+      if (oRows.length > 0) {
+        const buyerId = oRows[0].user_id;
+        const sId = oRows[0].shop_id;
+        if (buyerId) {
+          await db.query(
+            'INSERT INTO notifications (user_id, title, message, type, reference_id, is_read, created_at) VALUES (?, ?, ?, "order", ?, 0, NOW())',
+            [buyerId, `🎉 ไรเดอร์จัดส่งสินค้าถึงที่หมายแล้ว (#${orderId})`, 'สินค้าส่งถึงที่หมายแล้ว กรุณาตรวจสอบและกดยืนยันการรับสินค้า', String(orderId)]
+          );
+        }
+        if (sId) {
+          const [sRows] = await db.query('SELECT owner_id FROM shops WHERE shop_id = ?', [sId]);
+          if (sRows.length > 0 && sRows[0].owner_id) {
+            await db.query(
+              'INSERT INTO notifications (user_id, title, message, type, reference_id, is_read, created_at) VALUES (?, ?, ?, "order", ?, 0, NOW())',
+              [sRows[0].owner_id, `🎉 ไรเดอร์ส่งสินค้าเรียบร้อย (#${orderId})`, `คำสั่งซื้อ #${orderId} ถูกจัดส่งถึงลูกค้าเรียบร้อยแล้ว`, String(orderId)]
+            );
+          }
+        }
+      }
+    } catch(ne) {}
 
     // Auto post delivery proof message & photo to Customer (Buyer <-> Rider channel)
     try {
@@ -4478,9 +4702,10 @@ app.get('/api/rider/jobs/:order_id', async (req, res) => {
     const orderId = req.params.order_id;
     const [jobs] = await db.query(`
       SELECT o.order_id as order_id, o.total_amount, o.delivery_fee, o.order_status, o.created_at,
-             s.name as shop_name, s.address as shop_address, s.latitude as shop_lat, s.longitude as shop_lng,
+             s.shop_id, s.name as shop_name, s.address as shop_address, s.latitude as shop_lat, s.longitude as shop_lng, s.phone as shop_phone,
              o.shipping_address as customer_address, o.latitude as customer_lat, o.longitude as customer_lng,
-             u.full_name as customer_name, u.phone as customer_phone, d.status as delivery_status
+             u.full_name as customer_name, u.phone as customer_phone, d.status as delivery_status,
+             o.note_for_rider
       FROM orders o
       JOIN shops s ON o.shop_id = s.shop_id
       LEFT JOIN users u ON o.user_id = u.user_id
@@ -4489,7 +4714,45 @@ app.get('/api/rider/jobs/:order_id', async (req, res) => {
     `, [orderId]);
     
     if (jobs.length > 0) {
-      res.json({ success: true, data: jobs[0] });
+      const job = jobs[0];
+
+      // Get all pickup shops for this order
+      const [orderShops] = await db.query(`
+        SELECT DISTINCT s.shop_id, s.name as shop_name, s.address as shop_address, s.latitude as shop_lat, s.longitude as shop_lng, s.phone as shop_phone
+        FROM order_items oi
+        JOIN shops s ON oi.shop_id = s.shop_id
+        WHERE oi.order_id = ?
+      `, [orderId]);
+
+      const pickupShops = orderShops.length > 0 ? orderShops : [{
+        shop_id: job.shop_id,
+        shop_name: job.shop_name,
+        shop_address: job.shop_address,
+        shop_lat: job.shop_lat,
+        shop_lng: job.shop_lng,
+        shop_phone: job.shop_phone
+      }];
+
+      const [items] = await db.query(`
+        SELECT oi.*, p.name as db_product_name, COALESCE(s.name, '') as shop_name
+        FROM order_items oi
+        LEFT JOIN products p ON oi.product_id = p.product_id
+        LEFT JOIN shops s ON oi.shop_id = s.shop_id
+        WHERE oi.order_id = ?
+      `, [orderId]);
+
+      res.json({
+        success: true,
+        data: {
+          ...job,
+          pickup_shops: pickupShops,
+          is_multi_shop: pickupShops.length > 1,
+          items: items.map(item => ({
+            ...item,
+            product_name: item.product_name || item.db_product_name || 'สินค้า'
+          }))
+        }
+      });
     } else {
       res.status(404).json({ success: false, message: 'Job not found' });
     }
@@ -4720,32 +4983,6 @@ app.put('/api/admin/riders/:id/reject', async (req, res) => {
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });
-// ===============================
-// Rider Jobs
-// ===============================
-app.get('/api/rider/jobs', async (req, res) => {
-  try {
-    const [jobs] = await db.query(`
-      SELECT 
-        o.order_id, 
-        s.name AS shop_name, 
-        s.address AS shop_address, 
-        o.shipping_address AS customer_address, 
-        o.delivery_fee,
-        s.distance
-      FROM orders o
-      JOIN shops s ON o.shop_id = s.shop_id
-      WHERE o.order_status IN ('preparing', 'ready') AND o.delivery_type = 'delivery'
-      ORDER BY o.created_at ASC
-    `);
-    res.json({ success: true, jobs });
-  } catch (error) {
-    console.error('API /api/rider/jobs Error:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
-  }
-});
-
-// ===============================
 
 
 // Admin Ticket Management

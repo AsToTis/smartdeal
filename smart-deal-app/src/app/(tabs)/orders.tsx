@@ -608,9 +608,19 @@ export default function OrdersScreen() {
                 {selectedOrder?.items && selectedOrder.items.length > 0 ? (
                   selectedOrder.items.map((item: any, idx: number) => (
                     <View key={idx} style={styles.modalItemRow}>
-                      <View style={{ flex: 1 }}>
+                      <View style={{ flex: 1, paddingRight: 8 }}>
                         <Text style={styles.modalItemName}>{item.product_name || 'สินค้า'}</Text>
-                        <Text style={styles.modalItemQty}>จำนวน x{item.quantity || 1}</Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, flexWrap: 'wrap', gap: 6 }}>
+                          {(item.shop_name || item.item_shop_name || selectedOrder?.shop_name) && (
+                            <View style={{ backgroundColor: '#f0fdf4', paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6, borderWidth: 0.8, borderColor: '#bbf7d0', flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                              <Ionicons name="storefront" size={11} color="#16a34a" />
+                              <Text style={{ fontSize: 11, color: '#16a34a', fontWeight: '600' }}>
+                                {item.shop_name || item.item_shop_name || selectedOrder?.shop_name}
+                              </Text>
+                            </View>
+                          )}
+                          <Text style={styles.modalItemQty}>จำนวน x{item.quantity || 1}</Text>
+                        </View>
                       </View>
                       <Text style={styles.modalItemPrice}>฿{Number((item.price || 0) * (item.quantity || 1)).toFixed(2)}</Text>
                     </View>

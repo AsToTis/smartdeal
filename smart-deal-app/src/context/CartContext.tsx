@@ -11,6 +11,7 @@ export interface CartItem {
   image_url: string;
   description?: string;
   shop_id?: number;
+  shop_name?: string;
 }
 
 interface CartContextType {
@@ -80,7 +81,8 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const pStock = parseItemStock(product);
     const pName = product.name || product.product_name || product.title || 'อาหารส่วนเกินคุณภาพพรีเมียม';
     const pImage = product.image_url || product.image || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500';
-    const pShopId = Number(product.shop_id || 1);
+    const pShopId = Number(product.shop_id || product.shopId || 1);
+    const pShopName = product.shop_name || product.shop?.name || product.shop_title || '';
     const addQty = Math.max(1, parseInt(String(requestedQty), 10) || 1);
 
     setCart((prev) => {
@@ -95,7 +97,9 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 ...item, 
                 price: pPrice > 0 ? pPrice : (item.price || 0),
                 stock_quantity: maxStock,
-                quantity: newQuantity 
+                quantity: newQuantity,
+                shop_id: pShopId || item.shop_id,
+                shop_name: pShopName || item.shop_name
               }
             : item
         );
@@ -112,7 +116,8 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
           stock_quantity: pStock,
           image_url: pImage,
           description: product.description || '',
-          shop_id: pShopId
+          shop_id: pShopId,
+          shop_name: pShopName
         },
       ];
     });
