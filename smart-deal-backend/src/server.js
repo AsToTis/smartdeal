@@ -5646,7 +5646,7 @@ app.post('/api/refund-request', upload.single('slip_image'), async (req, res) =>
 app.get('/api/admin/refunds', async (req, res) => {
   try {
     const [refunds] = await db.query(`
-      SELECT r.*, u.full_name, u.phone_number 
+      SELECT r.*, u.full_name, u.phone 
       FROM refund_requests r 
       LEFT JOIN users u ON r.user_id = u.user_id 
       ORDER BY r.created_at DESC
