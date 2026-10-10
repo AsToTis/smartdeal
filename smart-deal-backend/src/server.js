@@ -4806,7 +4806,7 @@ app.post('/api/rider/login', async (req, res) => {
     }
 
     // Mock generating a simple token
-    const token = Buffer.from(`${user.user_id}-${Date.now()}`).toString('base64');\n
+    const token = Buffer.from(`${user.user_id}-${Date.now()}`).toString('base64');
       const [ratingResult] = await db.query("SELECT COALESCE((SELECT AVG(rider_rating) FROM reviews WHERE rider_id = ? AND rider_rating > 0), rating, 0) as avg_rating FROM riders WHERE rider_id = ?", [rider.rider_id, rider.rider_id]);
       const avg_rating = ratingResult[0]?.avg_rating ? Number(ratingResult[0].avg_rating).toFixed(1) : 0;
       
