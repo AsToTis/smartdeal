@@ -1235,14 +1235,14 @@ app.get('/api/products/:id', async (req, res) => {
 
     let shopName = 'ร้านค้าพรีเมียม';
     let shopImage = null;
-    let shopAddress = null;
+    let shopAddress = null;\n    let shopRating = null;
 
     if (product.shop_id) {
       const [shops] = await db.execute('SELECT * FROM shops WHERE shop_id = ?', [product.shop_id]);
       if (shops.length > 0) {
         shopName = shops[0].name || shops[0].shop_name || 'ร้านค้าพรีเมียม';
         shopImage = shops[0].image_url;
-        shopAddress = shops[0].address;
+        shopAddress = shops[0].address;\n        shopRating = shops[0].rating;
       }
     }
 
@@ -1262,7 +1262,7 @@ app.get('/api/products/:id', async (req, res) => {
       deal_end_time: formattedExpiresAt,
       shop_name: shopName,
       shop_image: shopImage,
-      shop_address: shopAddress
+      shop_address: shopAddress,\n      shop_rating: shopRating
     };
 
     res.json({ success: true, product: finalProduct });
@@ -4818,6 +4818,7 @@ app.post('/api/rider/login', async (req, res) => {
         vehicle_plate: rider.vehicle_plate,
         status: rider.status,
         rider_status: rider.rider_status,
+        rating: avg_rating,
       }
     });
   } catch (error) {
@@ -5325,7 +5326,11 @@ app.get('/api/rider/wallet', async (req, res) => {
     history.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).reverse();
     history = history.slice(0, 20);
 
-    res.json({ success: true, balance, todayIncome, todayJobs, pendingIncome, history });
+    
+    const [ratingResult] = await db.query("SELECT COALESCE((SELECT AVG(rider_rating) FROM reviews WHERE rider_id = ? AND rider_rating > 0), rating, 0) as avg_rating FROM riders WHERE rider_id = ?", [riderId, riderId]);
+    const rating = ratingResult[0]?.avg_rating ? Number(ratingResult[0].avg_rating).toFixed(1) : 0;
+
+    res.json({ success: true, balance, todayIncome, todayJobs, pendingIncome, history, rating });
   } catch (error) {
     console.error('Wallet API error:', error);
     res.status(500).json({ success: false, message: 'Server error' });
@@ -6078,6 +6083,30 @@ app.put('/api/admin/refund-status/:id', async (req, res) => {
 });
 // ---------------------------------------------------------
 
+
+
+app.get('/api/admin/orders', async (req, res) => {
+  try {
+    const connection = await db.getConnection();
+    try {
+      const [rows] = await connection.execute(`
+        SELECT o.*, 
+               u.username as buyer_name, 
+               s.shop_name 
+        FROM orders o
+        LEFT JOIN users u ON o.user_id = u.user_id
+        LEFT JOIN shops s ON o.shop_id = s.shop_id
+        ORDER BY o.created_at DESC
+      `);
+      res.json({ success: true, orders: rows });
+    } finally {
+      connection.release();
+    }
+  } catch (error) {
+    console.error('API /api/admin/orders error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log('Server is running on port ' + PORT);
