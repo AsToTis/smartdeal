@@ -22,7 +22,8 @@ const db = mysql.createPool({
   port: process.env.DB_PORT ? parseInt(process.env.DB_PORT, 10) : 3306,
   waitForConnections: true,
   connectionLimit: 10,
-  queueLimit: 0
+  queueLimit: 0,
+  dateStrings: true // Fix Date serialization to return strings instead of {}
 });
 
 // ตรวจสอบการเชื่อมต่อ
