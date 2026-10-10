@@ -4248,45 +4248,57 @@ app.get('/api/seller/dashboard/:owner_id', async (req, res) => {
     const shop = shopData[0];
     const shop_id = shop.shop_id;
 
-    // 2. Get Today's Sales
+    const [platformFeeRows] = await db.execute("SELECT setting_value FROM system_settings WHERE setting_key='platform_fee_percent'");
+    const platform_fee = platformFeeRows.length > 0 ? parseFloat(platformFeeRows[0].setting_value) : 0;
+    const fee_multiplier = 1 - (platform_fee / 100);
+
+    // 2. Get Today's Sales (Calculate from order_items for accurate multi-shop totals)
     const [statsData] = await db.execute(`
-      SELECT SUM(subtotal) AS today_sales, SUM(subtotal * (SELECT setting_value FROM system_settings WHERE setting_key='platform_fee_percent') / 100) AS total_gp, COUNT(order_id) AS today_orders 
-      FROM orders 
-      WHERE shop_id = ? AND DATE(created_at) = CURDATE() AND order_status IN ('completed', 'paid', 'delivered', 'shipped')
-    `, [shop_id]);
+      SELECT 
+        SUM(oi.price * oi.quantity) AS today_gross_sales, 
+        COUNT(DISTINCT o.order_id) AS today_orders 
+      FROM orders o
+      JOIN order_items oi ON o.order_id = oi.order_id
+      LEFT JOIN products p ON oi.product_id = p.product_id
+      WHERE (oi.shop_id = ? OR p.shop_id = ?)
+        AND DATE(o.created_at) = CURDATE() 
+        AND o.order_status IN ('completed', 'paid', 'delivered', 'shipped')
+    `, [shop_id, shop_id]);
     
+    const gross_sales = parseFloat(statsData[0].today_gross_sales || 0);
+    const today_sales_net = gross_sales * fee_multiplier;
+
     const stats = {
-      today_sales: (statsData[0].today_sales || 0) - (statsData[0].total_gp || 0),
+      today_sales: today_sales_net,
       today_orders: statsData[0].today_orders || 0
     };
 
-    // 3. Get Recent Orders
+    // 3. Get Recent Orders (Calculate total_amount per shop)
     const [recentOrders] = await db.execute(`
-      SELECT o.order_id, (o.subtotal * (1 - (SELECT setting_value FROM system_settings WHERE setting_key='platform_fee_percent') / 100)) as total_amount, o.order_status, DATE_FORMAT(o.created_at, '%Y-%m-%dT%H:%i:%s') AS created_at, oi.product_id, COALESCE(p.image_url, (SELECT image_url FROM auctions WHERE title COLLATE utf8mb4_unicode_ci = oi.product_name COLLATE utf8mb4_unicode_ci LIMIT 1)) as image_url, COALESCE(p.name, oi.product_name) as product_name
-        FROM orders o
-      LEFT JOIN order_items oi ON o.order_id = oi.order_id
+      SELECT 
+        o.order_id, 
+        o.order_status, 
+        DATE_FORMAT(o.created_at, '%Y-%m-%dT%H:%i:%s') AS created_at,
+        SUM(oi.price * oi.quantity) AS shop_subtotal,
+        (SELECT oi2.product_name FROM order_items oi2 LEFT JOIN products p2 ON oi2.product_id = p2.product_id WHERE oi2.order_id = o.order_id AND (oi2.shop_id = ? OR p2.shop_id = ?) LIMIT 1) as product_name,
+        (SELECT COALESCE(p2.image_url, (SELECT image_url FROM auctions WHERE title COLLATE utf8mb4_unicode_ci = oi2.product_name COLLATE utf8mb4_unicode_ci LIMIT 1)) FROM order_items oi2 LEFT JOIN products p2 ON oi2.product_id = p2.product_id WHERE oi2.order_id = o.order_id AND (oi2.shop_id = ? OR p2.shop_id = ?) LIMIT 1) as image_url
+      FROM orders o
+      JOIN order_items oi ON o.order_id = oi.order_id
       LEFT JOIN products p ON oi.product_id = p.product_id
-      WHERE o.shop_id = ? 
+      WHERE (oi.shop_id = ? OR p.shop_id = ?)
+      GROUP BY o.order_id, o.order_status, o.created_at
       ORDER BY o.created_at DESC 
       LIMIT 5
-    `, [shop_id]);
+    `, [shop_id, shop_id, shop_id, shop_id, shop_id, shop_id]);
 
-    const formattedOrders = [];
-    const orderMap = new Map();
-    
-    recentOrders.forEach(row => {
-      if (!orderMap.has(row.order_id)) {
-        orderMap.set(row.order_id, {
-          order_id: row.order_id,
-          total_amount: row.total_amount,
-          order_status: row.order_status,
-          created_at: row.created_at,
-          image_url: row.image_url,
-          product_name: row.product_name
-        });
-        formattedOrders.push(orderMap.get(row.order_id));
-      }
-    });
+    const formattedOrders = recentOrders.map(row => ({
+      order_id: row.order_id,
+      total_amount: parseFloat(row.shop_subtotal || 0) * fee_multiplier,
+      order_status: row.order_status,
+      created_at: row.created_at,
+      image_url: row.image_url,
+      product_name: row.product_name
+    }));
 
     res.json({
       success: true,
