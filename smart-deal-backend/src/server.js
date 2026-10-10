@@ -1005,15 +1005,24 @@ app.get('/api/home-data', async (req, res) => {
         IFNULL(s.is_open, 1) AS is_open
       FROM products p
       LEFT JOIN shops s ON p.shop_id = s.shop_id
-      WHERE p.stock_quantity > 0 AND p.is_auction = 0 AND (s.is_open IS NULL OR s.is_open = 1) AND (p.deal_end_time > NOW() OR p.deal_end_time IS NULL)
+      WHERE p.stock_quantity > 0 AND p.is_auction = 0 AND (s.is_open IS NULL OR s.is_open = 1) AND (p.deal_end_time > UTC_TIMESTAMP() OR p.deal_end_time IS NULL)
       ORDER BY p.deal_end_time IS NULL ASC, p.deal_end_time ASC
     `);
     
     const [shops] = await db.execute('SELECT *, IFNULL(is_open, 1) AS is_open FROM shops');
 
-    // Filter deals and shops based on is_open (1 = open, 0 = closed)
+    // Filter deals and shops based on is_open (1 = open, 0 = closed) and deal expiry
     const deals = products
-      .filter(p => p.is_open === 1 || p.is_open === true || p.is_open == '1' || p.is_open === null || p.is_open === undefined)
+      .filter(p => {
+        const isOpen = p.is_open === 1 || p.is_open === true || p.is_open == '1' || p.is_open === null || p.is_open === undefined;
+        if (!isOpen) return false;
+        const rawExpires = p.deal_end_time || p.expiry_time || p.expires_at || p.end_time || p.pickup_end_time;
+        if (rawExpires) {
+          const expTime = new Date(rawExpires).getTime();
+          if (!isNaN(expTime) && expTime <= Date.now()) return false;
+        }
+        return true;
+      })
       .map(p => {
         const rawExpires = p.deal_end_time || p.expiry_time || p.expires_at || p.end_time || p.pickup_end_time;
         const formattedExpiresAt = rawExpires ? new Date(rawExpires).toISOString() : null;
@@ -1065,11 +1074,20 @@ app.get('/api/products', async (req, res) => {
         IFNULL(s.is_open, 1) AS is_open
       FROM products p
       LEFT JOIN shops s ON p.shop_id = s.shop_id
-      WHERE p.stock_quantity > 0 AND (s.is_open IS NULL OR s.is_open = 1) AND (p.deal_end_time > NOW() OR p.deal_end_time IS NULL)
+      WHERE p.stock_quantity > 0 AND (s.is_open IS NULL OR s.is_open = 1) AND (p.deal_end_time > UTC_TIMESTAMP() OR p.deal_end_time IS NULL)
       ORDER BY p.deal_end_time IS NULL ASC, p.deal_end_time ASC
     `);
 
-    const formattedProducts = rows.map(p => {
+    const formattedProducts = rows
+      .filter(p => {
+        const rawExpires = p.deal_end_time || p.expiry_time || p.expires_at || p.end_time || p.pickup_end_time;
+        if (rawExpires) {
+          const expTime = new Date(rawExpires).getTime();
+          if (!isNaN(expTime) && expTime <= Date.now()) return false;
+        }
+        return true;
+      })
+      .map(p => {
       const rawExpires = p.deal_end_time || p.expiry_time || p.expires_at || p.end_time || p.pickup_end_time;
       const formattedExpiresAt = rawExpires ? new Date(rawExpires).toISOString() : null;
 
@@ -3559,7 +3577,7 @@ app.get('/api/search', async (req, res) => {
       `SELECT p.*, s.name AS shop_name 
        FROM products p 
        LEFT JOIN shops s ON p.shop_id = s.shop_id 
-       WHERE p.name LIKE ? AND s.status = 'approved' AND p.is_auction = 0 ORDER BY p.deal_end_time IS NULL ASC, p.deal_end_time ASC`,
+       WHERE p.name LIKE ? AND s.status = 'approved' AND p.is_auction = 0 AND (p.deal_end_time > UTC_TIMESTAMP() OR p.deal_end_time IS NULL) AND p.stock_quantity > 0 ORDER BY p.deal_end_time IS NULL ASC, p.deal_end_time ASC`,
       [searchParam]
     );
 

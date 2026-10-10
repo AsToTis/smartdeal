@@ -224,6 +224,17 @@ export default function HomeScreen() {
   };
 
   const filteredDeals = deals.filter((item) => {
+    // กรองสินค้าที่หมดอายุแล้วออกทันที ไม่ให้ผู้ซื้อเห็น
+    if (item.deal_end_time) {
+      const formattedDate = item.deal_end_time.includes('T') 
+        ? item.deal_end_time 
+        : item.deal_end_time.replace(' ', 'T');
+      const targetTime = new Date(formattedDate).getTime();
+      if (!isNaN(targetTime) && targetTime <= Date.now()) {
+        return false;
+      }
+    }
+
     let matchCat = true;
     if (selectedCategory) {
       matchCat = (
