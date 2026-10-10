@@ -197,12 +197,25 @@ export default function NotificationsScreen() {
 
   const unreadTotal = notifications.filter(n => !n.is_read).length;
 
+  // นำทางไปขอคืนเงิน
+  const handleGoToRefund = (item: any) => {
+    handleMarkAsRead(item);
+    router.push({
+      pathname: '/refund' as any,
+      params: {
+        order_id: item.reference_id,
+        user_id: item.user_id
+      }
+    });
+  };
+
   // Render ข้อมูลการแจ้งเตือนแต่ละแบบ
   const renderNotificationCard = (item: any) => {
     const isWon = item.type === 'auction_won';
     const isOutbid = item.type === 'auction_outbid';
     const isLost = item.type === 'auction_lost';
-    const isOrder = item.type === 'order_status';
+    const isOrder = item.type === 'order_status' || item.type === 'order';
+    const isRefund = item.type === 'refund_request';
 
     let cardBg = '#ffffff';
     let borderColor = '#f1f5f9';
@@ -244,6 +257,14 @@ export default function NotificationsScreen() {
       badgeText = '📦 สถานะคำสั่งซื้อ';
       badgeBg = '#dcfce7';
       badgeColor = '#15803d';
+    } else if (isRefund) {
+      cardBg = item.is_read ? '#fff5f5' : '#fee2e2';
+      borderColor = item.is_read ? '#fecaca' : '#ef4444';
+      iconBg = '#fee2e2';
+      iconColor = '#ef4444';
+      badgeText = '💰 ขอคืนเงิน';
+      badgeBg = '#fee2e2';
+      badgeColor = '#b91c1c';
     }
 
     return (
@@ -258,14 +279,14 @@ export default function NotificationsScreen() {
           }
         ]}
         activeOpacity={0.88}
-        onPress={() => handleMarkAsRead(item)}
+        onPress={() => isRefund ? handleGoToRefund(item) : handleMarkAsRead(item)}
       >
         {/* Unread Accent Bar on Left */}
         {!item.is_read && (
           <View
             style={[
               styles.unreadBar,
-              { backgroundColor: isWon ? '#eab308' : isOutbid ? '#f97316' : '#22c55e' }
+              { backgroundColor: isWon ? '#eab308' : isOutbid ? '#f97316' : isRefund ? '#ef4444' : '#22c55e' }
             ]}
           />
         )}
@@ -301,6 +322,8 @@ export default function NotificationsScreen() {
                 <MaterialCommunityIcons name="gavel" size={22} color={iconColor} />
               ) : isLost ? (
                 <Ionicons name="time-outline" size={22} color={iconColor} />
+              ) : isRefund ? (
+                <MaterialIcons name="attach-money" size={22} color={iconColor} />
               ) : (
                 <MaterialIcons name="local-shipping" size={22} color={iconColor} />
               )}
@@ -361,6 +384,19 @@ export default function NotificationsScreen() {
               >
                 <MaterialIcons name="location-on" size={18} color="#ffffff" />
                 <Text style={styles.orderActionBtnText}>ติดตามพัสดุ</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {isRefund && (
+            <View style={styles.actionRow}>
+              <TouchableOpacity
+                style={[styles.payNowBtn, { backgroundColor: '#ef4444' }]}
+                activeOpacity={0.8}
+                onPress={() => handleGoToRefund(item)}
+              >
+                <MaterialIcons name="attach-money" size={18} color="#ffffff" />
+                <Text style={styles.payNowBtnText}>ดำเนินการขอคืนเงิน</Text>
               </TouchableOpacity>
             </View>
           )}

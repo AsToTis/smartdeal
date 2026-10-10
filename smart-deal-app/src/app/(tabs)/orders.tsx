@@ -202,8 +202,11 @@ export default function OrdersScreen() {
     if (s === 'completed') {
       return { dotColor: '#16a34a', textColor: '#16a34a', text: 'สำเร็จแล้ว', isCancelled: false, isActive: false };
     }
+    if (s === 'pending' || s === 'paid') {
+      return { dotColor: '#f59e0b', textColor: '#d97706', text: 'รอร้านค้ารับคำสั่งซื้อ', isCancelled: false, isActive: true };
+    }
     
-    if (s === 'preparing' || s === 'pending' || s === 'paid') {
+    if (s === 'preparing' || s === 'accepted') {
       return { dotColor: '#0ea5e9', textColor: '#0284c7', text: 'ร้านค้ากำลังเตรียมสินค้า', isCancelled: false, isActive: true };
     }
 
@@ -268,6 +271,8 @@ export default function OrdersScreen() {
                   pathname: '/review' as any,
                   params: {
                     order_id: orderToReview?.order_id,
+                    shop_id: orderToReview?.shop_id,
+                    rider_id: orderToReview?.rider_id,
                     shop_name: orderToReview?.shop_name,
                     product_name: orderToReview?.items?.[0]?.product_name || orderToReview?.display_title || 'อาหารจานโปรด',
                     order_date: formatThaiDateTime(orderToReview?.created_at)
@@ -859,6 +864,8 @@ export default function OrdersScreen() {
                         pathname: '/review' as any,
                         params: {
                           order_id: o?.order_id,
+                          shop_id: o?.shop_id,
+                          rider_id: o?.rider_id,
                           shop_name: o?.shop_name,
                           product_name: o?.items?.[0]?.product_name || o?.display_title || 'อาหารจานโปรด',
                           order_date: formatThaiDateTime(o?.created_at)

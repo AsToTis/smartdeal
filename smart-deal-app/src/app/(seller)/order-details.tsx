@@ -439,8 +439,15 @@ export default function OrderDetailsScreen() {
           </TouchableOpacity>
         )}
 
-        {/* Dynamic action based on status (เริ่มต้นที่กำลังเตรียม และมีปุ่มพร้อมส่ง) */}
-        {['pending', 'paid', 'preparing'].includes(order.order_status) && (
+        {['pending', 'paid'].includes(order.order_status) ? (
+          <TouchableOpacity 
+            style={[styles.actionBtn, { backgroundColor: '#f59e0b' }]}
+            onPress={() => handleUpdateStatus('preparing')}
+          >
+            <Ionicons name="restaurant" size={18} color="#fff" style={{ marginRight: 6 }} />
+            <Text style={styles.actionBtnText}>รับออเดอร์</Text>
+          </TouchableOpacity>
+        ) : order.order_status === 'preparing' ? (
           <TouchableOpacity 
             style={[styles.actionBtn, { backgroundColor: '#7c3aed' }]}
             onPress={() => handleUpdateStatus('ready')}
@@ -448,7 +455,7 @@ export default function OrderDetailsScreen() {
             <Ionicons name="checkmark-done" size={18} color="#fff" style={{ marginRight: 6 }} />
             <Text style={styles.actionBtnText}>เตรียมเสร็จแล้ว (พร้อมส่ง)</Text>
           </TouchableOpacity>
-        )}
+        ) : null}
 
         {order.order_status === 'ready' && (
           <View style={styles.statusNoticeBox}>

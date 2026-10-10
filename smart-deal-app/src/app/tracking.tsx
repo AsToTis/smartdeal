@@ -33,6 +33,7 @@ export default function TrackingScreen() {
   const [loading, setLoading] = useState(true);
   const [order, setOrder] = useState<any>(null);
   const [shop, setShop] = useState<any>(null);
+  const [shops, setShops] = useState<any[]>([]);
   const [rider, setRider] = useState<any>(null);
   const [userLocation, setUserLocation] = useState<any>(null);
   const userLocationRef = useRef<any>(null);
@@ -81,17 +82,21 @@ export default function TrackingScreen() {
       const res = await axios.get(`${BASE_URL}/orders/${orderId}/tracking`);
       if (res.data?.success) {
         setOrder(res.data.order);
-        setShop(res.data.shop);
+        const fetchedShops = res.data.shops && res.data.shops.length > 0 
+          ? res.data.shops 
+          : (res.data.shop ? [res.data.shop] : []);
+        setShops(fetchedShops);
+        setShop(res.data.shop || fetchedShops[0]);
         setRider(res.data.rider);
 
         if (res.data.rider?.lat && res.data.rider?.lng) {
           setCenterLat(res.data.rider.lat);
           setCenterLng(res.data.rider.lng);
-          updateMapMarkers(res.data.shop, res.data.order, res.data.rider);
-        } else if (res.data.shop?.lat && res.data.shop?.lng) {
-          setCenterLat(res.data.shop.lat);
-          setCenterLng(res.data.shop.lng);
-          updateMapMarkers(res.data.shop, res.data.order, res.data.rider);
+          updateMapMarkers(fetchedShops, res.data.order, res.data.rider);
+        } else if (fetchedShops.length > 0 && fetchedShops[0]?.lat && fetchedShops[0]?.lng) {
+          setCenterLat(fetchedShops[0].lat);
+          setCenterLng(fetchedShops[0].lng);
+          updateMapMarkers(fetchedShops, res.data.order, res.data.rider);
         }
       }
     } catch (error) {
@@ -109,27 +114,34 @@ export default function TrackingScreen() {
     }, [id])
   );
 
-  const updateMapMarkers = (s: any, o: any, r: any) => {
+  const updateMapMarkers = (sListOrShop: any, o: any, r: any) => {
+    const sList = Array.isArray(sListOrShop) ? sListOrShop : (sListOrShop ? [sListOrShop] : []);
     const safeAddress = o?.shipping_address ? o.shipping_address.replace(/'/g, "\\'").replace(/\n/g, " ") : 'จัดส่งที่นี่';
-    const safeShopName = s?.name ? s.name.replace(/'/g, "\\'").replace(/\n/g, " ") : 'ร้านอาหาร';
     
-    const sLat = s?.lat || 16.1852;
-    const sLng = s?.lng || 103.3013;
-    
+    const firstShopLat = sList[0]?.lat || 16.1852;
+    const firstShopLng = sList[0]?.lng || 103.3013;
     const currentUserLoc = userLocationRef.current;
-    const cLat = currentUserLoc?.latitude || o?.delivery_lat || sLat + 0.008;
-    const cLng = currentUserLoc?.longitude || o?.delivery_lng || sLng + 0.005;
+    const cLat = currentUserLoc?.latitude || o?.delivery_lat || firstShopLat + 0.008;
+    const cLng = currentUserLoc?.longitude || o?.delivery_lng || firstShopLng + 0.005;
     
-    const rLat = r?.lat || sLat + 0.001;
-    const rLng = r?.lng || sLng + 0.001;
+    const rLat = r?.lat || firstShopLat + 0.001;
+    const rLng = r?.lng || firstShopLng + 0.001;
+
+    const shopsPayload = JSON.stringify(sList.map((s: any, idx: number) => ({
+      name: (s.name || `ร้านค้า ${idx + 1}`).replace(/'/g, "\\'"),
+      address: (s.address || '').replace(/'/g, "\\'"),
+      lat: s.lat || (firstShopLat + idx * 0.003),
+      lng: s.lng || (firstShopLng + idx * 0.003),
+      status: s.status || ''
+    })));
 
     const jsCode = `
       if (window.updateMarkers) {
         window.updateMarkers(
-          ${sLat}, ${sLng}, 
+          ${shopsPayload}, 
           ${cLat}, ${cLng}, 
           ${rLat}, ${rLng},
-          '${safeAddress}', '${safeShopName}'
+          '${safeAddress}'
         );
       }
       true;
@@ -145,15 +157,16 @@ export default function TrackingScreen() {
     }
   };
 
-  const handleCallShop = () => {
-    if (shop?.phone) {
-      Linking.openURL(`tel:${shop.phone}`);
+  const handleCallShop = (phoneNum?: string) => {
+    const targetPhone = phoneNum || shop?.phone;
+    if (targetPhone) {
+      Linking.openURL(`tel:${targetPhone}`);
     } else {
       Alert.alert('แจ้งเตือน', 'ไม่พบเบอร์โทรศัพท์ร้านค้า');
     }
   };
 
-  const handleOpenChat = async (target: 'seller' | 'rider') => {
+  const handleOpenChat = async (target: 'seller' | 'rider', targetShop?: any) => {
     let currentUserId = 1;
     try {
       const u = await AsyncStorage.getItem('user');
@@ -169,6 +182,8 @@ export default function TrackingScreen() {
         order_id: order?.order_id || id, 
         role: 'buyer', 
         target: target,
+        target_shop_id: targetShop?.shop_id || undefined,
+        shop_name: targetShop?.name || undefined,
         user_id: currentUserId 
       } 
     });
@@ -236,7 +251,7 @@ export default function TrackingScreen() {
   // Status mapping
   const getStatusIndex = (status: string) => {
     if (['pending', 'paid'].includes(status)) return 0;
-    if (['preparing'].includes(status)) return 1;
+    if (['preparing', 'accepted'].includes(status)) return 1;
     if (['ready'].includes(status)) return 2;
     if (['delivering', 'shipped'].includes(status)) return 3;
     if (['delivered'].includes(status)) return 4;
@@ -244,11 +259,11 @@ export default function TrackingScreen() {
     return 0;
   };
 
-  const statusIdx = getStatusIndex(order?.status || 'preparing');
+  const statusIdx = getStatusIndex(order?.status || 'pending');
 
   const getStatusTitle = () => {
-    if (statusIdx === 0) return 'ร้านค้ารับคำสั่งซื้อแล้ว';
-    if (statusIdx === 1) return 'ร้านค้ากำลังจัดเตรียมสินค้า 🍳';
+    if (statusIdx === 0) return 'รอร้านค้ารับคำสั่งซื้อ ⏳';
+    if (statusIdx === 1) return 'ร้านค้ารับออเดอร์และกำลังเตรียมสินค้า 🍳';
     if (statusIdx === 2) return 'สินค้าพร้อมแล้ว กำลังรอไรเดอร์มารับ 🛵';
     if (statusIdx === 3) return 'ไรเดอร์รับสินค้าแล้ว กำลังนำส่งคุณ 🛵💨';
     if (statusIdx === 4) return 'ไรเดอร์จัดส่งถึงที่หมายแล้ว 📦';
@@ -345,13 +360,34 @@ export default function TrackingScreen() {
           maxZoom: 19
         }).addTo(map);
 
-        var shopMarker, customerMarker, riderMarker, routeLine;
+        var shopMarkers = [];
+        var customerMarker, riderMarker, routeLine;
 
-        window.updateMarkers = function(sLat, sLng, cLat, cLng, rLat, rLng, custAddr, shopName) {
-          if (shopMarker) map.removeLayer(shopMarker);
+        window.updateMarkers = function(shopsOrLat, cLatOrLng, rLatOrCLat, rLngOrCLng, custAddrOrRLat, shopNameOrRLng, legacyAddr, legacyShop) {
+          shopMarkers.forEach(function(m) { map.removeLayer(m); });
+          shopMarkers = [];
           if (customerMarker) map.removeLayer(customerMarker);
           if (riderMarker) map.removeLayer(riderMarker);
           if (routeLine) map.removeLayer(routeLine);
+
+          var shopsList = [];
+          var cLat, cLng, rLat, rLng, custAddr;
+
+          if (Array.isArray(shopsOrLat)) {
+            shopsList = shopsOrLat;
+            cLat = cLatOrLng;
+            cLng = rLatOrCLat;
+            rLat = rLngOrCLng;
+            rLng = custAddrOrRLat;
+            custAddr = shopNameOrRLng || 'จุดส่งสินค้า';
+          } else {
+            shopsList = [{ name: legacyShop || 'ร้านค้า', lat: shopsOrLat, lng: cLatOrLng }];
+            cLat = rLatOrCLat;
+            cLng = rLngOrCLng;
+            rLat = custAddrOrRLat;
+            rLng = shopNameOrRLng;
+            custAddr = legacyAddr || 'จุดส่งสินค้า';
+          }
 
           var shopIcon = L.divIcon({
             className: 'custom-div-icon',
@@ -359,8 +395,17 @@ export default function TrackingScreen() {
             iconSize: [32, 32],
             iconAnchor: [16, 16]
           });
-          shopMarker = L.marker([sLat, sLng], { icon: shopIcon }).addTo(map)
-            .bindPopup("<b>" + shopName + "</b><br>ร้านค้า");
+
+          var allLatLngs = [];
+
+          shopsList.forEach(function(s, idx) {
+            if (s && s.lat && s.lng) {
+              var sMarker = L.marker([s.lat, s.lng], { icon: shopIcon }).addTo(map)
+                .bindPopup("<b>" + (s.name || ('ร้านค้า ' + (idx + 1))) + "</b><br>" + (s.address || 'ร้านค้า'));
+              shopMarkers.push(sMarker);
+              allLatLngs.push([s.lat, s.lng]);
+            }
+          });
 
           var customerIcon = L.divIcon({
             className: 'custom-div-icon',
@@ -370,6 +415,7 @@ export default function TrackingScreen() {
           });
           customerMarker = L.marker([cLat, cLng], { icon: customerIcon }).addTo(map)
             .bindPopup("<b>จุดส่งสินค้า</b><br>" + custAddr);
+          allLatLngs.push([cLat, cLng]);
 
           var riderIcon = L.divIcon({
             className: 'custom-div-icon',
@@ -378,12 +424,13 @@ export default function TrackingScreen() {
             iconAnchor: [30, 45]
           });
           riderMarker = L.marker([rLat, rLng], { icon: riderIcon }).addTo(map);
+          allLatLngs.push([rLat, rLng]);
 
-          var latlngs = [[sLat, sLng], [rLat, rLng], [cLat, cLng]];
-          routeLine = L.polyline(latlngs, { color: '#16a34a', weight: 4, dashArray: '6, 8' }).addTo(map);
-
-          var bounds = L.latLngBounds([ [sLat, sLng], [cLat, cLng], [rLat, rLng] ]);
-          map.fitBounds(bounds, { padding: [40, 40] });
+          if (allLatLngs.length > 1) {
+            routeLine = L.polyline(allLatLngs, { color: '#16a34a', weight: 4, dashArray: '6, 8' }).addTo(map);
+            var bounds = L.latLngBounds(allLatLngs);
+            map.fitBounds(bounds, { padding: [40, 40] });
+          }
         };
       </script>
     </body>
@@ -513,28 +560,67 @@ export default function TrackingScreen() {
 
         {/* Location & Shop Card */}
         <View style={styles.locationCard}>
-          {/* Shop */}
-          <View style={styles.locationItem}>
-            <View style={[styles.locationDot, { backgroundColor: '#f57c00' }]} />
-            <View style={styles.locationContent}>
-              <Text style={styles.locationLabel}>ร้านค้า</Text>
-              <View style={styles.locationTitleRow}>
-                <Text style={styles.locationTitle} numberOfLines={1}>{shop?.name || 'ร้านค้า'}</Text>
-                <View style={styles.locationShopActions}>
-                  <TouchableOpacity style={styles.locIconBtn} onPress={handleCallShop}>
-                    <Ionicons name="call" size={16} color="#f57c00" />
-                  </TouchableOpacity>
-                  <TouchableOpacity style={[styles.locChatBtn, { backgroundColor: '#fffbeb', borderColor: '#fed7aa' }]} onPress={() => handleOpenChat('seller')}>
-                    <Ionicons name="storefront" size={14} color="#d97706" />
-                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#d97706', marginLeft: 3 }}>แชทร้านค้า</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-              <Text style={styles.locationDesc} numberOfLines={2}>{shop?.address || 'ที่อยู่ร้านค้า'}</Text>
-            </View>
-          </View>
+          {/* Shops */}
+          {(shops.length > 0 ? shops : (shop ? [shop] : [])).map((s: any, sIdx: number) => {
+            const isPicked = s?.is_picked_up || s?.status === 'picked_up';
+            return (
+              <React.Fragment key={s?.shop_id || sIdx}>
+                <View style={styles.locationItem}>
+                  <View style={[styles.locationDot, { backgroundColor: '#f57c00' }]} />
+                  <View style={styles.locationContent}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
+                      <Text style={styles.locationLabel}>
+                        {shops.length > 1 ? `ร้านค้า #${sIdx + 1}` : 'ร้านค้า'}
+                      </Text>
+                      {s?.status && (
+                        <View style={{
+                          paddingHorizontal: 6,
+                          paddingVertical: 2,
+                          borderRadius: 6,
+                          backgroundColor: isPicked ? '#f0fdf4' : '#fffbeb'
+                        }}>
+                          <Text style={{
+                            fontSize: 10,
+                            fontWeight: '700',
+                            color: isPicked ? '#16a34a' : '#d97706'
+                          }}>
+                            {isPicked ? 'รับของแล้ว' : 'กำลังเตรียม'}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                    <View style={styles.locationTitleRow}>
+                      <Text style={styles.locationTitle} numberOfLines={1}>{s?.name || 'ร้านค้า'}</Text>
+                      <View style={styles.locationShopActions}>
+                        <TouchableOpacity style={styles.locIconBtn} onPress={() => handleCallShop(s?.phone)}>
+                          <Ionicons name="call" size={16} color="#f57c00" />
+                        </TouchableOpacity>
+                        <TouchableOpacity 
+                          style={[styles.locChatBtn, { backgroundColor: '#fffbeb', borderColor: '#fed7aa' }]} 
+                          onPress={() => handleOpenChat('seller', s)}
+                        >
+                          <Ionicons name="storefront" size={14} color="#d97706" />
+                          <Text style={{ fontSize: 11, fontWeight: '700', color: '#d97706', marginLeft: 3 }}>แชทร้านค้า</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                    <Text style={styles.locationDesc} numberOfLines={2}>{s?.address || 'ที่อยู่ร้านค้า'}</Text>
 
-          <View style={styles.locationDivider} />
+                    {s?.pickup_proof_image && (
+                      <TouchableOpacity 
+                        onPress={() => setPreviewImage(getImageUrl(s.pickup_proof_image))}
+                        style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, gap: 4 }}
+                      >
+                        <Ionicons name="image-outline" size={13} color="#16a34a" />
+                        <Text style={{ fontSize: 11, color: '#16a34a', fontWeight: '600' }}>ดูรูปรับสินค้าจากร้านนี้</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                </View>
+                <View style={styles.locationDivider} />
+              </React.Fragment>
+            );
+          })}
 
           {/* Destination */}
           <View style={styles.locationItem}>
@@ -555,8 +641,8 @@ export default function TrackingScreen() {
           <Text style={styles.timelineHeader}>ลำดับสถานะคำสั่งซื้อ</Text>
 
           {[
-            { title: 'รับคำสั่งซื้อเรียบร้อย', desc: 'ร้านค้าได้รับคำสั่งซื้อของคุณแล้ว', time: formatThaiTime(order?.created_at), active: statusIdx >= 0 },
-            { title: 'ร้านค้ากำลังเตรียมสินค้า', desc: 'ร้านค้ากำลังปรุงหรือเตรียมสินค้า', time: formatThaiTime(order?.prepared_at), active: statusIdx >= 1 },
+            { title: 'รอร้านค้ารับคำสั่งซื้อ', desc: 'กำลังรอร้านค้ายืนยันรับออเดอร์', time: formatThaiTime(order?.created_at), active: statusIdx >= 0 },
+            { title: 'ร้านค้ารับออเดอร์และกำลังเตรียมสินค้า', desc: 'ร้านค้ากำลังปรุงหรือเตรียมสินค้า', time: formatThaiTime(order?.prepared_at), active: statusIdx >= 1 },
             { title: 'สินค้าพร้อมส่ง (รอไรเดอร์)', desc: 'สินค้าบรรจุเสร็จพร้อมส่งมอบให้ไรเดอร์', time: '', active: statusIdx >= 2 },
             { title: 'ไรเดอร์รับสินค้าแล้ว กำลังนำส่ง', desc: 'ไรเดอร์รับของจากร้านและกำลังเดินทางมาส่งคุณ', time: formatThaiTime(order?.picked_up_at || order?.pickup_at), active: statusIdx >= 3 },
             { title: 'จัดส่งถึงที่หมายแล้ว', desc: 'ไรเดอร์นำส่งถึงปลายทางพร้อมถ่ายรูปยืนยัน', time: formatThaiTime(order?.delivered_at), active: statusIdx >= 4 },

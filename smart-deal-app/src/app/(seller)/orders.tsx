@@ -91,6 +91,7 @@ export default function SellerOrdersScreen() {
     switch(status) {
       case 'pending':
       case 'paid':
+        return { text: 'รอรับออเดอร์', bg: '#fef3c7', color: '#d97706' };
       case 'preparing':
         return { text: 'กำลังเตรียม', bg: '#e0f2fe', color: '#0284c7' };
       case 'ready':
@@ -222,12 +223,23 @@ export default function SellerOrdersScreen() {
                   <Text style={styles.totalPrice}>฿{Number(order.subtotal || order.total_amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}</Text>
                   <View style={styles.actionRow}>
                     {activeTab === 'preparing' && (
-                      <TouchableOpacity 
-                        style={[styles.primaryBtn, { backgroundColor: '#7c3aed' }]}
-                        onPress={() => handleUpdateStatus(order.order_id, 'ready')}
-                      >
-                        <Text style={styles.primaryBtnText}>พร้อมส่ง</Text>
-                      </TouchableOpacity>
+                      <>
+                        {['pending', 'paid'].includes(order.order_status) ? (
+                          <TouchableOpacity 
+                            style={[styles.primaryBtn, { backgroundColor: '#f59e0b' }]}
+                            onPress={() => handleUpdateStatus(order.order_id, 'preparing')}
+                          >
+                            <Text style={styles.primaryBtnText}>รับออเดอร์</Text>
+                          </TouchableOpacity>
+                        ) : order.order_status === 'preparing' ? (
+                          <TouchableOpacity 
+                            style={[styles.primaryBtn, { backgroundColor: '#7c3aed' }]}
+                            onPress={() => handleUpdateStatus(order.order_id, 'ready')}
+                          >
+                            <Text style={styles.primaryBtnText}>พร้อมส่ง</Text>
+                          </TouchableOpacity>
+                        ) : null}
+                      </>
                     )}
                     {['preparing', 'ready', 'delivering', 'delivered', 'shipped', 'completed'].includes(order.order_status) && (
                       <TouchableOpacity 

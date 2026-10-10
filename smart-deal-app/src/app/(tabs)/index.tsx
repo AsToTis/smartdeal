@@ -575,6 +575,7 @@ export default function HomeScreen() {
               const stock = parseInt(item.stock_quantity !== undefined && item.stock_quantity !== null ? item.stock_quantity : 5, 10);
               const isOutOfStock = stock <= 0;
               const isLowStock = stock > 0 && stock <= 3;
+              const isMyShop = Boolean(myShopId && item.shop_id && String(myShopId) === String(item.shop_id));
 
               return (
                 <TouchableOpacity 

@@ -30,6 +30,62 @@ const transporter = nodemailer.createTransport({
 
 const app = express();
 app.use(cors());
+
+// ==========================================
+// AUTO-MIGRATION: Reviews & Rating System
+// ==========================================
+(async () => {
+  try {
+    const [cols] = await db.query("SHOW COLUMNS FROM reviews LIKE 'rider_rating'");
+    if (cols.length === 0) {
+      console.log('🔄 [Migration] Adding rider columns to reviews table...');
+      try { await db.query("ALTER TABLE reviews ADD COLUMN rider_id INT NULL"); } catch(e){}
+      try { await db.query("ALTER TABLE reviews ADD COLUMN rider_rating TINYINT NULL"); } catch(e){}
+      try { await db.query("ALTER TABLE reviews ADD COLUMN rider_comment TEXT NULL"); } catch(e){}
+      console.log('✅ [Migration] reviews table updated for rider rating.');
+    }
+  } catch (err) {
+    console.log('Notice: auto-migration check:', err.message);
+  }
+})();
+
+app.get('/api/admin/migrate-rating-system', async (req, res) => {
+  try {
+    const changes = [];
+    const [cols] = await db.query("SHOW COLUMNS FROM reviews LIKE 'rider_rating'");
+    if (cols.length === 0) {
+      try { await db.query("ALTER TABLE reviews ADD COLUMN rider_id INT NULL"); changes.push('added rider_id'); } catch(e){}
+      try { await db.query("ALTER TABLE reviews ADD COLUMN rider_rating TINYINT NULL"); changes.push('added rider_rating'); } catch(e){}
+      try { await db.query("ALTER TABLE reviews ADD COLUMN rider_comment TEXT NULL"); changes.push('added rider_comment'); } catch(e){}
+    } else {
+      changes.push('rider columns already exist');
+    }
+    await db.query(`
+      UPDATE shops s 
+      SET rating = COALESCE(
+        (SELECT ROUND(AVG(r.rating), 1) FROM reviews r WHERE r.shop_id = s.shop_id),
+        s.rating,
+        0.0
+      )
+    `);
+    changes.push('recalculated all shop ratings');
+
+    await db.query(`
+      UPDATE riders r 
+      SET rating = COALESCE(
+        (SELECT ROUND(AVG(r2.rider_rating), 1) FROM reviews r2 WHERE r2.rider_id = r.rider_id AND r2.rider_rating IS NOT NULL),
+        r.rating,
+        5.0
+      )
+    `);
+    changes.push('recalculated all rider ratings');
+
+    res.json({ success: true, message: 'Rating system migration completed successfully', changes });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
@@ -1405,6 +1461,81 @@ app.get('/api/orders/:id/tracking', async (req, res) => {
     }
 
     const o = orders[0];
+
+    // Query all distinct shops involved in this order
+    let shopsList = [];
+    try {
+      const [itemShops] = await db.query(`
+        SELECT 
+          s.shop_id, 
+          s.name, 
+          s.address, 
+          s.image_url,
+          s.latitude AS lat, 
+          s.longitude AS lng,
+          u.phone,
+          u.user_id as owner_user_id
+        FROM (
+          SELECT DISTINCT COALESCE(oi.shop_id, p.shop_id, o.shop_id) AS shop_id
+          FROM orders o
+          LEFT JOIN order_items oi ON o.order_id = oi.order_id
+          LEFT JOIN products p ON oi.product_id = p.product_id
+          WHERE o.order_id = ?
+        ) item_shops
+        JOIN shops s ON item_shops.shop_id = s.shop_id
+        LEFT JOIN users u ON s.owner_id = u.user_id
+      `, [orderId]);
+
+      let parsedShopStatuses = {};
+      if (o.shop_statuses) {
+        try { parsedShopStatuses = typeof o.shop_statuses === 'string' ? JSON.parse(o.shop_statuses) : o.shop_statuses; } catch(e) {}
+      }
+      let parsedPickupProofs = {};
+      if (o.pickup_proofs) {
+        try { parsedPickupProofs = typeof o.pickup_proofs === 'string' ? JSON.parse(o.pickup_proofs) : o.pickup_proofs; } catch(e) {}
+      }
+
+      if (itemShops && itemShops.length > 0) {
+        shopsList = itemShops.map(s => {
+          const sid = String(s.shop_id);
+          const isPickedUp = !!(parsedPickupProofs[sid] && parsedPickupProofs[sid].proof_image);
+          let sStatus = parsedShopStatuses[sid] || o.order_status;
+          if (isPickedUp) sStatus = 'picked_up';
+          return {
+            shop_id: s.shop_id,
+            name: s.name,
+            address: s.address,
+            image_url: s.image_url,
+            phone: s.phone,
+            owner_user_id: s.owner_user_id,
+            lat: s.lat ? parseFloat(s.lat) : null,
+            lng: s.lng ? parseFloat(s.lng) : null,
+            status: sStatus,
+            is_picked_up: isPickedUp,
+            pickup_proof_image: parsedPickupProofs[sid]?.proof_image || null
+          };
+        });
+      }
+    } catch (sErr) {
+      console.error('Error fetching order shops for tracking:', sErr.message);
+    }
+
+    if (shopsList.length === 0) {
+      shopsList = [{
+        shop_id: o.shop_id || 1,
+        name: o.shop_name || 'ร้านค้า',
+        address: o.shop_address || '',
+        image_url: null,
+        phone: null,
+        owner_user_id: null,
+        lat: o.shop_lat ? parseFloat(o.shop_lat) : null,
+        lng: o.shop_lng ? parseFloat(o.shop_lng) : null,
+        status: o.order_status,
+        is_picked_up: false,
+        pickup_proof_image: null
+      }];
+    }
+
     res.json({
       success: true,
       order: {
@@ -1426,12 +1557,8 @@ app.get('/api/orders/:id/tracking', async (req, res) => {
         receiver_phone: o.receiver_phone,
         note_for_rider: o.note_for_rider
       },
-      shop: {
-        name: o.shop_name,
-        address: o.shop_address,
-        lat: o.shop_lat ? parseFloat(o.shop_lat) : null,
-        lng: o.shop_lng ? parseFloat(o.shop_lng) : null
-      },
+      shop: shopsList[0],
+      shops: shopsList,
       rider: o.rider_name ? {
         name: o.rider_name,
         phone: o.rider_phone,
@@ -2816,22 +2943,99 @@ app.put('/api/notifications/read-all/:userId', async (req, res) => {
 
 // 1. บันทึกรีวิวและคะแนนดาว
 app.post('/api/reviews', async (req, res) => {
-  const { order_id, user_id, product_id, shop_id, rating, comment, image_url } = req.body;
+  const { 
+    order_id, 
+    user_id, 
+    product_id, 
+    shop_id, 
+    rating, 
+    comment, 
+    image_url,
+    rider_id,
+    rider_rating,
+    rider_comment
+  } = req.body;
+
   try {
+    let effectiveShopId = shop_id;
+    let effectiveRiderId = rider_id;
+
+    // Auto-resolve shop_id and rider_id from order if missing
+    if (order_id && (!effectiveShopId || !effectiveRiderId)) {
+      try {
+        const [ordRows] = await db.execute(
+          `SELECT o.shop_id, o.rider_id, d.rider_id as del_rider_id 
+           FROM orders o 
+           LEFT JOIN deliveries d ON o.order_id = d.order_id 
+           WHERE o.order_id = ? LIMIT 1`,
+          [order_id]
+        );
+        if (ordRows.length > 0) {
+          if (!effectiveShopId) effectiveShopId = ordRows[0].shop_id;
+          if (!effectiveRiderId) effectiveRiderId = ordRows[0].del_rider_id || ordRows[0].rider_id;
+        }
+      } catch (err) {
+        console.error('Order lookup error in review:', err.message);
+      }
+    }
+
     const [result] = await db.execute(
-      `INSERT INTO reviews (order_id, user_id, product_id, shop_id, rating, comment, image_url)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [order_id || null, user_id || 2, product_id || null, shop_id || 1, rating || 5, comment || '', image_url || null]
+      `INSERT INTO reviews (order_id, user_id, product_id, shop_id, rating, comment, image_url, rider_id, rider_rating, rider_comment)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        order_id || null, 
+        user_id || 2, 
+        product_id || null, 
+        effectiveShopId || 1, 
+        rating !== undefined && rating !== null ? rating : 5, 
+        comment || '', 
+        image_url || null,
+        effectiveRiderId || null,
+        rider_rating !== undefined && rider_rating !== null ? rider_rating : null,
+        rider_comment || null
+      ]
     );
 
-    // ให้คะแนน Point โบนัสแก่ผู้ใช้ 50 คะแนนเมื่อรีวิว
+    // Recalculate & Update Shop Rating
+    if (effectiveShopId) {
+      try {
+        await db.execute(
+          `UPDATE shops 
+           SET rating = (SELECT ROUND(AVG(rating), 1) FROM reviews WHERE shop_id = ?) 
+           WHERE shop_id = ?`,
+          [effectiveShopId, effectiveShopId]
+        );
+      } catch (e) {
+        console.error('Update shop rating error:', e.message);
+      }
+    }
+
+    // Recalculate & Update Rider Rating
+    if (effectiveRiderId && rider_rating !== undefined && rider_rating !== null) {
+      try {
+        await db.execute(
+          `UPDATE riders 
+           SET rating = (SELECT ROUND(AVG(rider_rating), 1) FROM reviews WHERE rider_id = ? AND rider_rating IS NOT NULL) 
+           WHERE rider_id = ?`,
+          [effectiveRiderId, effectiveRiderId]
+        );
+      } catch (e) {
+        console.error('Update rider rating error:', e.message);
+      }
+    }
+
+    // Give points to user
     await db.execute(
       `INSERT INTO user_points (user_id, points) VALUES (?, 1300)
        ON DUPLICATE KEY UPDATE points = points + 50`,
       [user_id || 2]
     );
 
-    res.json({ success: true, message: 'ส่งรีวิวสำเร็จ ขอบคุณสำหรับคำติชม!', review_id: result.insertId });
+    res.json({ 
+      success: true, 
+      message: 'บันทึกรีวิวสำเร็จ ขอบคุณที่แบ่งปันความคิดเห็น!', 
+      review_id: result.insertId 
+    });
   } catch (error) {
     console.error('❌ POST /api/reviews error:', error.message);
     res.status(500).json({ success: false, error: error.message });
@@ -3830,7 +4034,7 @@ app.get('/api/admin/shops', async (req, res) => {
 app.get('/api/admin/shops/:id/insights', async (req, res) => {
   const shopId = req.params.id;
   try {
-    const [shopInfo] = await db.execute('SELECT s.*, u.full_name AS owner_name, u.phone AS owner_phone, u.email AS owner_email FROM shops s LEFT JOIN users u ON s.owner_id = u.user_id WHERE s.shop_id = ?', [shopId]);
+    const [shopInfo] = await db.execute('SELECT s.*, COALESCE(ROUND((SELECT AVG(r.rating) FROM reviews r WHERE r.shop_id = s.shop_id), 1), s.rating, 0.0) AS rating, u.full_name AS owner_name, u.phone AS owner_phone, u.email AS owner_email FROM shops s LEFT JOIN users u ON s.owner_id = u.user_id WHERE s.shop_id = ?', [shopId]);
     
     if (shopInfo.length === 0) {
       return res.status(404).json({ error: 'Shop not found' });
@@ -5285,7 +5489,7 @@ app.get('/api/admin/riders', async (req, res) => {
         r.vehicle_plate as license_plate, 
         r.rider_status,
         r.status,
-        r.rating AS average_rating,
+        COALESCE((SELECT ROUND(AVG(rev.rider_rating), 1) FROM reviews rev WHERE rev.rider_id = r.rider_id AND rev.rider_rating IS NOT NULL), r.rating, 5.0) AS average_rating,
         u.email,
         (SELECT COUNT(*) FROM deliveries d WHERE d.rider_id = r.rider_id AND d.status = 'delivered') AS total_jobs
       FROM riders r 
@@ -5356,13 +5560,18 @@ app.get('/api/admin/riders/:id/details', async (req, res) => {
     let reviews = [];
     try {
       const [reviewData] = await db.query(`
-        SELECT r.rating, r.comment, r.created_at
+        SELECT 
+          COALESCE(r.rider_rating, r.rating) AS rating, 
+          COALESCE(r.rider_comment, r.comment) AS comment, 
+          r.created_at,
+          u.full_name AS customer_name
         FROM reviews r
-        JOIN orders o ON r.order_id = o.order_id
-        WHERE o.rider_id = ?
+        LEFT JOIN users u ON r.user_id = u.user_id
+        LEFT JOIN orders o ON r.order_id = o.order_id
+        WHERE (r.rider_id = ? OR o.rider_id = ?) AND (r.rider_rating IS NOT NULL OR r.rider_comment IS NOT NULL)
         ORDER BY r.created_at DESC
-        LIMIT 10
-      `, [profile.rider_id]);
+        LIMIT 20
+      `, [profile.rider_id, profile.rider_id]);
       reviews = reviewData;
     } catch (e) {
       console.log('Reviews error:', e.message);

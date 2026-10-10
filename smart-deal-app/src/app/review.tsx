@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   StyleSheet, Text, View, Image, TouchableOpacity, 
   TextInput, ScrollView, Alert, ActivityIndicator 
@@ -13,15 +13,62 @@ import { BASE_URL } from '../constants/api';
 export default function ReviewScreen() {
   const params = useLocalSearchParams();
   const orderId = params.order_id ? Number(params.order_id) : 24;
-  const productName = (params.product_name as string) || 'ข้าวกะเพราไก่ไข่ดาว';
-  const shopName = (params.shop_name as string) || 'ร้านอาหารไทยรสเด็ด';
-  const orderDate = (params.order_date as string) || '24 ต.ค. 2566';
-  const productImage = (params.product_image as string) || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=600';
 
-  const [rating, setRating] = useState(5);
-  const [comment, setComment] = useState('');
-  const [hasPhoto, setHasPhoto] = useState(false);
-  const [loading, setLoading] = useState(false);
+  // Shop & Food Details
+  const [shopId, setShopId] = useState<number | null>(params.shop_id ? Number(params.shop_id) : null);
+  const [productName, setProductName] = useState<string>((params.product_name as string) || 'เมนูอาหาร');
+  const [shopName, setShopName] = useState<string>((params.shop_name as string) || 'ร้านค้า');
+  const [orderDate, setOrderDate] = useState<string>((params.order_date as string) || 'เมื่อสักครู่');
+  const [productImage, setProductImage] = useState<string>((params.product_image as string) || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=600');
+
+  // Rider Details
+  const [riderId, setRiderId] = useState<number | null>(params.rider_id ? Number(params.rider_id) : null);
+  const [riderName, setRiderName] = useState<string>((params.rider_name as string) || '');
+  const [riderVehicle, setRiderVehicle] = useState<string>((params.vehicle_plate as string) || '');
+  const [hasRider, setHasRider] = useState<boolean>(true);
+
+  // Ratings & Comments
+  const [shopRating, setShopRating] = useState<number>(5);
+  const [shopComment, setShopComment] = useState<string>('');
+  const [hasPhoto, setHasPhoto] = useState<boolean>(false);
+
+  const [riderRating, setRiderRating] = useState<number>(5);
+  const [riderComment, setRiderComment] = useState<string>('');
+
+  const [loading, setLoading] = useState<boolean>(false);
+  const [fetchingInfo, setFetchingInfo] = useState<boolean>(false);
+
+  // Fetch full order tracking info if shop_id or rider_id is missing
+  useEffect(() => {
+    const fetchOrderDetails = async () => {
+      if (!orderId) return;
+      try {
+        setFetchingInfo(true);
+        const res = await axios.get(`${BASE_URL}/orders/${orderId}/tracking`);
+        if (res.data?.success) {
+          const t = res.data;
+          if (t.shop?.name) setShopName(t.shop.name);
+          if (t.shop_id) setShopId(t.shop_id);
+          if (t.order?.shop_id) setShopId(t.order.shop_id);
+
+          if (t.rider) {
+            setHasRider(true);
+            if (t.rider.rider_id) setRiderId(t.rider.rider_id);
+            if (t.rider.name) setRiderName(t.rider.name);
+            if (t.rider.vehicle_plate || t.rider.vehicle) {
+              setRiderVehicle(t.rider.vehicle_plate || t.rider.vehicle);
+            }
+          }
+        }
+      } catch (e) {
+        console.log('Notice: Auto-fetch order details for review:', e);
+      } finally {
+        setFetchingInfo(false);
+      }
+    };
+
+    fetchOrderDetails();
+  }, [orderId]);
 
   const handleSubmitReview = async () => {
     try {
@@ -38,20 +85,28 @@ export default function ReviewScreen() {
       await axios.post(`${BASE_URL}/reviews`, {
         order_id: orderId,
         user_id: userId,
-        rating: rating,
-        comment: comment,
-        image_url: hasPhoto ? productImage : null
+        shop_id: shopId,
+        rating: shopRating,
+        comment: shopComment,
+        image_url: hasPhoto ? productImage : null,
+        rider_id: riderId,
+        rider_rating: hasRider ? riderRating : null,
+        rider_comment: hasRider ? riderComment : null
       });
 
-      Alert.alert('สำเร็จ 🎉', 'ส่งรีวิวเรียบร้อยแล้ว ได้รับโบนัส +50 พอยท์!', [
-        {
-          text: 'ดูประวัติคำสั่งซื้อ',
-          onPress: () => router.replace('/(tabs)/orders' as any)
-        }
-      ]);
+      Alert.alert(
+        'รีวิวสำเร็จ ✨', 
+        'ขอบคุณสำหรับการให้คะแนน! คุณได้รับโบนัสแต้ม +50 พอยท์เรียบร้อยแล้ว', 
+        [
+          {
+            text: 'ดูรายการคำสั่งซื้อ',
+            onPress: () => router.replace('/(tabs)/orders' as any)
+          }
+        ]
+      );
     } catch (error: any) {
       console.error('Submit review error:', error);
-      Alert.alert('สำเร็จ', 'ส่งรีวิวเรียบร้อยแล้ว!', [
+      Alert.alert('เกิดข้อผิดพลาด', 'ไม่สามารถบันทึกรีวิวได้ในขณะนี้ กรุณาลองใหม่อีกครั้ง', [
         { text: 'ตกลง', onPress: () => router.back() }
       ]);
     } finally {
@@ -78,79 +133,158 @@ export default function ReviewScreen() {
         showsVerticalScrollIndicator={false} 
         contentContainerStyle={styles.scrollContent}
       >
-        {/* 2. การ์ดอาหารที่สั่ง */}
-        <View style={styles.productCard}>
-          <Image 
-            source={{ uri: productImage }} 
-            style={styles.foodImage} 
-          />
-          <View style={styles.productDetails}>
-            <Text style={styles.foodTitle}>{productName}</Text>
-            <Text style={styles.shopNameText}>{shopName}</Text>
-            <Text style={styles.orderDateText}>สั่งเมื่อ: {orderDate}</Text>
+        {/* ======================================================== */}
+        {/* PART 1: ร้านค้าและอาหาร (Shop & Food Rating) */}
+        {/* ======================================================== */}
+        <View style={styles.reviewCard}>
+          <View style={styles.cardBadge}>
+            <MaterialIcons name="storefront" size={16} color="#16a34a" />
+            <Text style={styles.cardBadgeText}>รีวิวร้านค้า & เมนูอาหาร</Text>
           </View>
+
+          <View style={styles.productInfoRow}>
+            <Image 
+              source={{ uri: productImage }} 
+              style={styles.foodThumb} 
+            />
+            <View style={styles.productDetails}>
+              <Text style={styles.foodTitle} numberOfLines={1}>{productName}</Text>
+              <Text style={styles.shopNameText} numberOfLines={1}>{shopName}</Text>
+              <Text style={styles.orderDateText}>วันที่สั่ง: {orderDate}</Text>
+            </View>
+          </View>
+
+          <View style={styles.divider} />
+
+          <Text style={styles.ratingQuestion}>รสชาติและความพึงพอใจของอาหาร</Text>
+
+          <View style={styles.starRow}>
+            {[1, 2, 3, 4, 5].map((starNum) => {
+              const isSelected = starNum <= shopRating;
+              return (
+                <TouchableOpacity
+                  key={starNum}
+                  style={styles.starCol}
+                  onPress={() => setShopRating(starNum)}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.starCircle, isSelected && styles.starCircleActive]}>
+                    <MaterialIcons 
+                      name={isSelected ? 'star' : 'star-border'} 
+                      size={28} 
+                      color={isSelected ? '#16a34a' : '#94a3b8'} 
+                    />
+                  </View>
+                  <Text style={[styles.starNumber, isSelected && styles.starNumberActive]}>
+                    {starNum}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          <Text style={styles.sectionHeading}>ความคิดเห็นเกี่ยวกับอาหาร/ร้านค้า</Text>
+          <View style={styles.textareaContainer}>
+            <TextInput
+              style={styles.textarea}
+              multiline
+              placeholder="รสชาติอร่อยไหม? ปริมาณเหมาะสมและตรงปกหรือไม่..."
+              placeholderTextColor="#94a3b8"
+              value={shopComment}
+              onChangeText={setShopComment}
+            />
+            <MaterialIcons name="edit" size={14} color="#cbd5e1" style={styles.textareaCornerIcon} />
+          </View>
+
+          {/* แนบรูปภาพ */}
+          <TouchableOpacity 
+            style={[styles.addPhotoCard, hasPhoto && styles.addPhotoCardActive]}
+            onPress={() => {
+              setHasPhoto(!hasPhoto);
+              Alert.alert('รูปภาพ', hasPhoto ? 'ยกเลิกการแนบรูปภาพ' : 'เพิ่มรูปภาพอาหารเรียบร้อย');
+            }}
+            activeOpacity={0.75}
+          >
+            <MaterialIcons 
+              name="add-a-photo" 
+              size={24} 
+              color="#16a34a" 
+            />
+            <Text style={styles.addPhotoText}>
+              {hasPhoto ? '✓ มีรูปภาพแนบแล้ว (คลิกเพื่อยกเลิก)' : 'แนบรูปภาพอาหารประกอบรีวิว'}
+            </Text>
+          </TouchableOpacity>
         </View>
 
-        {/* 3. คำถามให้คะแนนดาว 1-5 */}
-        <Text style={styles.ratingQuestion}>คุณให้คะแนนอาหารจานนี้เท่าไหร่?</Text>
+        {/* ======================================================== */}
+        {/* PART 2: พนักงานส่งของ (Rider & Delivery Rating) */}
+        {/* ======================================================== */}
+        {hasRider && (
+          <View style={[styles.reviewCard, styles.riderCard]}>
+            <View style={[styles.cardBadge, styles.riderBadge]}>
+              <MaterialIcons name="two-wheeler" size={16} color="#d97706" />
+              <Text style={[styles.cardBadgeText, { color: '#d97706' }]}>รีวิวการจัดส่ง & ไรเดอร์</Text>
+            </View>
 
-        <View style={styles.starRow}>
-          {[1, 2, 3, 4, 5].map((starNum) => {
-            const isSelected = starNum <= rating;
-            return (
-              <TouchableOpacity
-                key={starNum}
-                style={styles.starCol}
-                onPress={() => setRating(starNum)}
-                activeOpacity={0.7}
-              >
-                <View style={[styles.starCircle, isSelected && styles.starCircleActive]}>
-                  <MaterialIcons 
-                    name={isSelected ? 'star' : 'star-border'} 
-                    size={28} 
-                    color={isSelected ? '#16a34a' : '#94a3b8'} 
-                  />
-                </View>
-                <Text style={[styles.starNumber, isSelected && styles.starNumberActive]}>
-                  {starNum}
+            <View style={styles.riderProfileRow}>
+              <View style={styles.riderAvatarBox}>
+                <MaterialIcons name="person" size={28} color="#d97706" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.riderNameText}>
+                  {riderName || 'พนักงานจัดส่ง Smart Deal'}
                 </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
+                <Text style={styles.riderVehicleText}>
+                  {riderVehicle ? `ยานพาหนะ: ${riderVehicle}` : 'จัดส่งด้วยมอเตอร์ไซค์'}
+                </Text>
+              </View>
+            </View>
 
-        {/* 4. กล่องเขียนรีวิว */}
-        <Text style={styles.sectionHeading}>เขียนรีวิวของคุณ</Text>
-        <View style={styles.textareaContainer}>
-          <TextInput
-            style={styles.textarea}
-            multiline
-            placeholder="บอกความรู้สึกของคุณเกี่ยวกับรสชาติอาหาร..."
-            placeholderTextColor="#94a3b8"
-            value={comment}
-            onChangeText={setComment}
-          />
-          <MaterialIcons name="edit" size={14} color="#cbd5e1" style={styles.textareaCornerIcon} />
-        </View>
+            <View style={styles.divider} />
 
-        {/* 5. เพิ่มรูปภาพประกอบ */}
-        <TouchableOpacity 
-          style={[styles.addPhotoCard, hasPhoto && styles.addPhotoCardActive]}
-          onPress={() => {
-            setHasPhoto(!hasPhoto);
-            Alert.alert('รูปภาพ', hasPhoto ? 'ยกเลิกรูปภาพประกอบ' : 'แนบรูปภาพอาหารเรียบร้อย');
-          }}
-          activeOpacity={0.75}
-        >
-          <MaterialIcons 
-            name="add-a-photo" 
-            size={28} 
-            color="#16a34a" 
-          />
-          <Text style={styles.addPhotoText}>
-            {hasPhoto ? '✓ แนบรูปภาพแล้ว (แตะเพื่อเปลี่ยน)' : 'เพิ่มรูปภาพประกอบ'}
-          </Text>
-        </TouchableOpacity>
+            <Text style={[styles.ratingQuestion, { color: '#d97706' }]}>
+              ความสุภาพและความรวดเร็วในการส่ง
+            </Text>
+
+            <View style={styles.starRow}>
+              {[1, 2, 3, 4, 5].map((starNum) => {
+                const isSelected = starNum <= riderRating;
+                return (
+                  <TouchableOpacity
+                    key={starNum}
+                    style={styles.starCol}
+                    onPress={() => setRiderRating(starNum)}
+                    activeOpacity={0.7}
+                  >
+                    <View style={[styles.starCircle, isSelected && styles.riderStarCircleActive]}>
+                      <MaterialIcons 
+                        name={isSelected ? 'star' : 'star-border'} 
+                        size={28} 
+                        color={isSelected ? '#f59e0b' : '#94a3b8'} 
+                      />
+                    </View>
+                    <Text style={[styles.starNumber, isSelected && { color: '#d97706', fontWeight: 'bold' }]}>
+                      {starNum}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <Text style={styles.sectionHeading}>ความคิดเห็นเกี่ยวกับพนักงานส่งของ</Text>
+            <View style={styles.textareaContainer}>
+              <TextInput
+                style={styles.textarea}
+                multiline
+                placeholder="พนักงานสุภาพไหม? จัดส่งรวดเร็วและโทรแจ้งก่อนหรือไม่..."
+                placeholderTextColor="#94a3b8"
+                value={riderComment}
+                onChangeText={setRiderComment}
+              />
+              <MaterialIcons name="two-wheeler" size={14} color="#cbd5e1" style={styles.textareaCornerIcon} />
+            </View>
+          </View>
+        )}
 
         {/* 6. ปุ่มส่งรีวิว */}
         <TouchableOpacity 
@@ -162,7 +296,12 @@ export default function ReviewScreen() {
           {loading ? (
             <ActivityIndicator color="#fff" />
           ) : (
-            <Text style={styles.submitBtnText}>ส่งรีวิว</Text>
+            <View style={styles.submitContent}>
+              <Text style={styles.submitBtnText}>ส่งคะแนนรีวิว</Text>
+              <View style={styles.pointsPill}>
+                <Text style={styles.pointsPillText}>+50 แต้ม</Text>
+              </View>
+            </View>
           )}
         </TouchableOpacity>
 
@@ -192,105 +331,198 @@ export default function ReviewScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fdfefe' },
+  container: { flex: 1, backgroundColor: '#f8fafc' },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 14,
-    backgroundColor: '#fdfefe'
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9'
   },
   backBtn: { width: 40, height: 40, justifyContent: 'center' },
   headerTitle: { fontSize: 18, fontWeight: 'bold', color: '#0f172a' },
-  scrollContent: { paddingHorizontal: 20, paddingBottom: 30 },
-  productCard: {
+  scrollContent: { paddingHorizontal: 16, paddingVertical: 16, paddingBottom: 40 },
+
+  reviewCard: {
     backgroundColor: '#fff',
-    borderRadius: 28,
-    overflow: 'hidden',
+    borderRadius: 24,
+    padding: 18,
     borderWidth: 1,
-    borderColor: '#f1f5f9',
-    elevation: 2,
+    borderColor: '#e2e8f0',
+    marginBottom: 16,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
-    marginBottom: 20,
-    marginTop: 6
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 2
   },
-  foodImage: { width: '100%', height: 160, resizeMode: 'cover' },
-  productDetails: { padding: 16 },
-  foodTitle: { fontSize: 17, fontWeight: 'bold', color: '#0f172a', marginBottom: 4 },
-  shopNameText: { fontSize: 13, color: '#16a34a', fontWeight: '600', marginBottom: 4 },
-  orderDateText: { fontSize: 12, color: '#94a3b8' },
+  riderCard: {
+    borderColor: '#fef3c7'
+  },
+  cardBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#f0fdf4',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    alignSelf: 'flex-start',
+    marginBottom: 12
+  },
+  riderBadge: {
+    backgroundColor: '#fffbeb'
+  },
+  cardBadgeText: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#16a34a'
+  },
+  productInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12
+  },
+  foodThumb: {
+    width: 60,
+    height: 60,
+    borderRadius: 14,
+    backgroundColor: '#f1f5f9'
+  },
+  productDetails: { flex: 1 },
+  foodTitle: { fontSize: 15, fontWeight: 'bold', color: '#0f172a', marginBottom: 2 },
+  shopNameText: { fontSize: 13, color: '#16a34a', fontWeight: '600', marginBottom: 2 },
+  orderDateText: { fontSize: 11, color: '#94a3b8' },
+
+  riderProfileRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12
+  },
+  riderAvatarBox: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#fef3c7',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  riderNameText: {
+    fontSize: 15,
+    fontWeight: 'bold',
+    color: '#0f172a'
+  },
+  riderVehicleText: {
+    fontSize: 12,
+    color: '#64748b',
+    marginTop: 2
+  },
+
+  divider: {
+    height: 1,
+    backgroundColor: '#f1f5f9',
+    marginVertical: 14
+  },
   ratingQuestion: {
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: 'bold',
     color: '#16a34a',
     textAlign: 'center',
-    marginTop: 8,
-    marginBottom: 16
+    marginBottom: 14
   },
   starRow: {
     flexDirection: 'row',
     justifyContent: 'space-around',
     paddingHorizontal: 10,
-    marginBottom: 24
+    marginBottom: 16
   },
   starCol: { alignItems: 'center' },
   starCircle: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: '#f1f5f9',
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#f8fafc',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 6
+    marginBottom: 4,
+    borderWidth: 1,
+    borderColor: '#e2e8f0'
   },
-  starCircleActive: { backgroundColor: '#e8f5e9' },
-  starNumber: { fontSize: 13, fontWeight: '600', color: '#94a3b8' },
+  starCircleActive: { 
+    backgroundColor: '#f0fdf4',
+    borderColor: '#86efac'
+  },
+  riderStarCircleActive: {
+    backgroundColor: '#fffbeb',
+    borderColor: '#fde68a'
+  },
+  starNumber: { fontSize: 12, fontWeight: '600', color: '#94a3b8' },
   starNumberActive: { color: '#0f172a', fontWeight: 'bold' },
-  sectionHeading: { fontSize: 14, fontWeight: 'bold', color: '#0f172a', marginBottom: 8 },
+
+  sectionHeading: { fontSize: 13, fontWeight: 'bold', color: '#334155', marginBottom: 8 },
   textareaContainer: {
-    backgroundColor: '#fff',
-    borderRadius: 20,
+    backgroundColor: '#f8fafc',
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: '#e2e8f0',
-    padding: 14,
-    minHeight: 110,
+    padding: 12,
+    minHeight: 80,
     position: 'relative',
-    marginBottom: 16
+    marginBottom: 12
   },
-  textarea: { fontSize: 14, color: '#0f172a', lineHeight: 20, textAlignVertical: 'top' },
-  textareaCornerIcon: { position: 'absolute', bottom: 10, right: 10 },
+  textarea: { fontSize: 13, color: '#0f172a', lineHeight: 18, textAlignVertical: 'top' },
+  textareaCornerIcon: { position: 'absolute', bottom: 8, right: 8 },
+
   addPhotoCard: {
-    backgroundColor: '#fff',
-    borderRadius: 24,
-    borderWidth: 1.5,
+    backgroundColor: '#f8fafc',
+    borderRadius: 16,
+    borderWidth: 1,
     borderColor: '#bbf7d0',
     borderStyle: 'dashed',
-    paddingVertical: 20,
+    paddingVertical: 12,
     alignItems: 'center',
     justifyContent: 'center',
+    flexDirection: 'row',
     gap: 8,
-    marginBottom: 24
+    marginTop: 4
   },
   addPhotoCardActive: { backgroundColor: '#f0fdf4', borderColor: '#16a34a' },
-  addPhotoText: { fontSize: 13, fontWeight: '600', color: '#16a34a' },
+  addPhotoText: { fontSize: 12, fontWeight: '600', color: '#16a34a' },
+
   submitBtn: {
-    backgroundColor: '#2e7a32',
-    paddingVertical: 15,
-    borderRadius: 28,
+    backgroundColor: '#16a34a',
+    paddingVertical: 14,
+    borderRadius: 24,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#2e7a32',
+    shadowColor: '#16a34a',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.25,
     shadowRadius: 10,
     elevation: 4,
-    marginBottom: 20
+    marginVertical: 8
+  },
+  submitContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8
   },
   submitBtnText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
+  pointsPill: {
+    backgroundColor: 'rgba(255,255,255,0.25)',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 12
+  },
+  pointsPillText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 'bold'
+  },
+
   bottomNav: {
     flexDirection: 'row',
     backgroundColor: '#fff',
