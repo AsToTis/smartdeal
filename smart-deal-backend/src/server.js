@@ -302,6 +302,7 @@ const initExtendedChatAndProofTables = async () => {
     try { await db.execute('ALTER TABLE order_messages MODIFY sender_type VARCHAR(50)'); } catch(e) {}
     try { await db.execute('ALTER TABLE order_messages ADD COLUMN receiver_type VARCHAR(50) DEFAULT "all"'); } catch(e) {}
     try { await db.execute('ALTER TABLE order_messages ADD COLUMN image_url LONGTEXT NULL'); } catch(e) {}
+    try { await db.execute('ALTER TABLE order_messages ADD COLUMN shop_id INT DEFAULT NULL'); } catch(e) {}
 
     // 2. deliveries table proof columns
     try { await db.execute('ALTER TABLE deliveries ADD COLUMN pickup_proof_image LONGTEXT NULL'); } catch(e) {}
@@ -4506,7 +4507,8 @@ const PORT = process.env.PORT || 5000;
 // ==========================================
 app.get('/api/orders/:order_id/messages', async (req, res) => {
   const orderId = req.params.order_id;
-  const target = req.query.target || req.query.channel; // 'seller' | 'rider' | 'buyer'
+  const target = req.query.target || req.query.channel;
+  const shop_id = req.query.shop_id; // 'seller' | 'rider' | 'buyer'
   const role = req.query.role; // 'seller' | 'rider' | 'buyer'
   try {
     let query = `SELECT id, order_id, sender_id, sender_type, receiver_type, message, image_url, 
@@ -4526,6 +4528,7 @@ app.get('/api/orders/:order_id/messages', async (req, res) => {
     // 3. ช่องทาง: ลูกค้า ↔ ร้านค้า (Customer <-> Shop)
     else {
       query += ' AND ((sender_type = "buyer" AND receiver_type = "seller") OR (sender_type = "seller" AND receiver_type = "buyer"))';
+      if (shop_id) { query += ' AND shop_id = ?'; params.push(shop_id); }
     }
 
     query += ' ORDER BY id ASC';
@@ -4541,6 +4544,7 @@ app.get('/api/orders/:order_id/messages', async (req, res) => {
 app.post('/api/orders/:order_id/messages', upload.single('image'), async (req, res) => {
   const orderId = req.params.order_id;
   const { sender_id, sender_type, message } = req.body;
+  const shop_id = req.body.shop_id || null;
   let receiver_type = req.body.receiver_type;
   
   // กำหนดผู้รับปลายทางอย่างแม่นยำ ไม่ให้ข้อความปนกัน
@@ -4561,8 +4565,8 @@ app.post('/api/orders/:order_id/messages', upload.single('image'), async (req, r
   
   try {
     const [result] = await db.query(
-      'INSERT INTO order_messages (order_id, sender_id, sender_type, receiver_type, message, image_url) VALUES (?, ?, ?, ?, ?, ?)',
-      [orderId, sender_id, sender_type, receiver_type, message || '', image_url || null]
+      'INSERT INTO order_messages (order_id, sender_id, sender_type, receiver_type, message, image_url, shop_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [orderId, sender_id, sender_type, receiver_type, message || '', image_url || null, shop_id]
     );
     res.json({ 
       success: true, 
