@@ -4116,7 +4116,9 @@ app.get('/api/admin/shops/:id/insights', async (req, res) => {
       console.error('API /api/admin/shops/:id/insights Error:', error);
       res.status(500).json({ error: 'Database error' });
     }
-  });\n  \n  app.put('/api/admin/shops/:id/suspend', async (req, res) => {
+  });
+  
+  app.put('/api/admin/shops/:id/suspend', async (req, res) => {
   try {
     const [result] = await db.execute('UPDATE shops SET status = "suspended" WHERE shop_id = ?', [req.params.id]);
     if (result.affectedRows === 0) return res.status(404).json({ error: 'Shop not found' });
