@@ -3350,6 +3350,26 @@ app.get('/api/shops/:shopId', async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 });
+
+// GET /api/shops/:shopId/reviews
+app.get('/api/shops/:shopId/reviews', async (req, res) => {
+  const { shopId } = req.params;
+  try {
+    const [reviews] = await db.execute(
+      `SELECT r.*, u.full_name AS user_name, u.avatar_url AS user_avatar
+       FROM reviews r 
+       LEFT JOIN users u ON r.user_id = u.user_id
+       WHERE r.shop_id = ? 
+       ORDER BY r.created_at DESC`,
+      [shopId]
+    );
+    res.json({ success: true, reviews });
+  } catch (error) {
+    console.error('Error fetching shop reviews:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 app.get('/api/shops/:shopId/stats', async (req, res) => {
   const { shopId } = req.params;
   try {
