@@ -6102,7 +6102,8 @@ app.get('/api/admin/orders', async (req, res) => {
                  (
                    SELECT GROUP_CONCAT(DISTINCT s.name SEPARATOR ', ')
                    FROM order_items oi
-                   JOIN shops s ON oi.shop_id = s.shop_id
+                   LEFT JOIN products p ON oi.product_id = p.product_id
+                   JOIN shops s ON s.shop_id = COALESCE(oi.shop_id, p.shop_id)
                    WHERE oi.order_id = o.order_id
                  ),
                  s_fallback.name
