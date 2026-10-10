@@ -3776,7 +3776,7 @@ app.get('/api/admin/dashboard', async (req, res) => {
     const [sales_trend] = await db.execute(salesTrendQuery);
 
     
-    const [category_stats] = await db.execute(`SELECT shops.tag1 AS name, COUNT(shops.shop_id) AS value FROM shops WHERE shops.tag1 IS NOT NULL AND shops.tag1 != '' GROUP BY shops.tag1`);
+    const [category_stats] = await db.execute(`SELECT categories.name AS name, COUNT(shops.shop_id) AS value FROM shops JOIN categories ON shops.category_id = categories.category_id GROUP BY categories.name`);
 
     res.json({
       stats: {
@@ -5746,3 +5746,4 @@ app.get('/api/seller/notifications/:shopId', async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 });
+
