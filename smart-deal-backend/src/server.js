@@ -1106,6 +1106,7 @@ app.get('/api/home-data', async (req, res) => {
         p.*,
         s.name AS shop_name,
         s.image_url AS shop_image,
+        s.rating AS shop_rating,
         IFNULL(s.is_open, 1) AS is_open
       FROM products p
       LEFT JOIN shops s ON p.shop_id = s.shop_id
@@ -1144,6 +1145,7 @@ app.get('/api/home-data', async (req, res) => {
           deal_end_time: formattedExpiresAt,
           expires_at: formattedExpiresAt,
           shop_name: p.shop_name || 'ร้านค้าพรีเมียม',
+          shop_rating: p.shop_rating,
           shop_image: p.shop_image || ''
         };
       });
@@ -1213,6 +1215,7 @@ app.get('/api/products', async (req, res) => {
         deal_end_time: formattedExpiresAt,
         expires_at: formattedExpiresAt,
         shop_name: p.shop_name || 'ร้านค้าพรีเมียม',
+          shop_rating: p.shop_rating,
         shop_image: p.shop_image || ''
       };
     });

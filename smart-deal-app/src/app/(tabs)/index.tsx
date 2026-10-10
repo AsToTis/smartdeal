@@ -636,9 +636,19 @@ export default function HomeScreen() {
                       )}
                     </View>
 
-                    <Text style={[styles.shopName, isMyShop && { color: '#0284c7' }]} numberOfLines={1}>
-                      🏬 {item.shop_name || 'ร้านค้าพรีเมียม'} {isMyShop ? '(ร้านของคุณ)' : ''}
-                    </Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4, marginBottom: 2 }}>
+                      <Text style={[styles.shopName, { marginTop: 0, marginBottom: 0, flex: 1 }, isMyShop && { color: '#0284c7' }]} numberOfLines={1}>
+                        🏬 {item.shop_name || 'ร้านค้าพรีเมียม'} {isMyShop ? '(ร้านของคุณ)' : ''}
+                      </Text>
+                      {item.shop_rating !== undefined && item.shop_rating > 0 && (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 4 }}>
+                          <Ionicons name="star" size={12} color="#f59e0b" />
+                          <Text style={{ fontSize: 11, color: '#666', marginLeft: 2, fontWeight: 'bold' }}>
+                            {Number(item.shop_rating).toFixed(1)}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
                     
                     <View style={styles.priceRow}>
                       <Text style={[styles.price, isOutOfStock && { color: '#94a3b8' }]}>
