@@ -4682,32 +4682,78 @@ app.get('/api/rider/jobs', async (req, res) => {
       ORDER BY o.created_at ASC
     `);
 
-    // Fetch all distinct pickup shops for each order
+    // Fetch all distinct pickup shops and items for each order
     const orderIds = orders.map(o => o.order_id);
     let shopsByOrderId = {};
+    let itemsByOrderId = {};
     if (orderIds.length > 0) {
       const placeholders = orderIds.map(() => '?').join(',');
       try {
         const [orderShops] = await db.query(`
-          SELECT DISTINCT oi.order_id, s.shop_id, s.name as shop_name, s.address as shop_address, s.latitude as shop_lat, s.longitude as shop_lng, s.phone as shop_phone
+          SELECT DISTINCT oi.order_id, s.shop_id, s.name as shop_name, s.address as shop_address, s.latitude as shop_lat, s.longitude as shop_lng, owner.phone as shop_phone
           FROM order_items oi
-          JOIN shops s ON oi.shop_id = s.shop_id
-          WHERE oi.order_id IN (${placeholders})
+          LEFT JOIN products p ON oi.product_id = p.product_id
+          LEFT JOIN shops s ON (oi.shop_id = s.shop_id OR p.shop_id = s.shop_id)
+          LEFT JOIN users owner ON s.owner_id = owner.user_id
+          WHERE oi.order_id IN (${placeholders}) AND s.shop_id IS NOT NULL
         `, orderIds);
 
         orderShops.forEach(s => {
           if (!shopsByOrderId[s.order_id]) shopsByOrderId[s.order_id] = [];
-          shopsByOrderId[s.order_id].push(s);
+          if (!shopsByOrderId[s.order_id].some(existing => existing.shop_id === s.shop_id)) {
+            shopsByOrderId[s.order_id].push({
+              ...s,
+              shop_phone: s.shop_phone || '021234567',
+              items: []
+            });
+          }
         });
       } catch (shopErr) {
         console.error('Error fetching order shops for rider:', shopErr.message);
       }
+
+      try {
+        const [orderItems] = await db.query(`
+          SELECT oi.*, p.name as db_product_name, COALESCE(s.name, '') as shop_name, COALESCE(s.shop_id, oi.shop_id) as item_shop_id
+          FROM order_items oi
+          LEFT JOIN products p ON oi.product_id = p.product_id
+          LEFT JOIN shops s ON (oi.shop_id = s.shop_id OR p.shop_id = s.shop_id)
+          WHERE oi.order_id IN (${placeholders})
+        `, orderIds);
+
+        orderItems.forEach(item => {
+          const formattedItem = {
+            ...item,
+            name: item.product_name || item.db_product_name || 'สินค้า',
+            product_name: item.product_name || item.db_product_name || 'สินค้า',
+            quantity: item.quantity || 1,
+            price: item.price || 0
+          };
+          if (!itemsByOrderId[item.order_id]) itemsByOrderId[item.order_id] = [];
+          itemsByOrderId[item.order_id].push(formattedItem);
+
+          if (shopsByOrderId[item.order_id]) {
+            const matchedShop = shopsByOrderId[item.order_id].find(s => s.shop_id == item.item_shop_id);
+            if (matchedShop) {
+              if (!matchedShop.items) matchedShop.items = [];
+              matchedShop.items.push(formattedItem);
+            }
+          }
+        });
+      } catch (itemErr) {
+        console.error('Error fetching order items for rider jobs:', itemErr.message);
+      }
     }
 
     const formattedOrders = orders.map(o => {
-      const pickupShops = shopsByOrderId[o.order_id] && shopsByOrderId[o.order_id].length > 0
+      let pickupShops = shopsByOrderId[o.order_id] && shopsByOrderId[o.order_id].length > 0
         ? shopsByOrderId[o.order_id]
-        : [{ shop_id: o.shop_id, shop_name: o.shop_name, shop_address: o.shop_address, shop_lat: o.shop_lat, shop_lng: o.shop_lng }];
+        : [{ shop_id: o.shop_id, shop_name: o.shop_name, shop_address: o.shop_address, shop_lat: o.shop_lat, shop_lng: o.shop_lng, items: [] }];
+
+      const orderItems = itemsByOrderId[o.order_id] || [];
+      if (pickupShops.length === 1 && (!pickupShops[0].items || pickupShops[0].items.length === 0)) {
+        pickupShops[0].items = orderItems;
+      }
 
       const shopNames = pickupShops.map(s => s.shop_name).join(' + ');
       const isMultiShop = pickupShops.length > 1;
@@ -4725,10 +4771,12 @@ app.get('/api/rider/jobs', async (req, res) => {
       return {
         ...o,
         shop_name: isMultiShop ? `${pickupShops[0].shop_name} + อีก ${pickupShops.length - 1} ร้าน (${pickupShops.length} จุดรับ)` : o.shop_name,
+        shops: pickupShops,
         pickup_shops: pickupShops,
         pickup_count: pickupShops.length,
         is_multi_shop: isMultiShop,
         all_shop_names: shopNames,
+        items: orderItems,
         distance: `${distKm} กม.`,
         delivery_fee: finalFee
       };
