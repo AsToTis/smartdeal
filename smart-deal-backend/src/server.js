@@ -87,6 +87,47 @@ const storage = multer.diskStorage({
 const upload = multer({ storage: storage });
 
 // ==========================================
+// 🚀 HIGH-PERFORMANCE IN-MEMORY CACHE (Speed Booster)
+// ==========================================
+const cacheStore = new Map();
+
+const getCache = (key) => {
+  const item = cacheStore.get(key);
+  if (!item) return null;
+  if (Date.now() > item.expiresAt) {
+    cacheStore.delete(key);
+    return null;
+  }
+  return item.data;
+};
+
+const setCache = (key, data, ttlSeconds = 45) => {
+  cacheStore.set(key, {
+    data,
+    expiresAt: Date.now() + (ttlSeconds * 1000)
+  });
+};
+
+const clearCache = (prefix = '') => {
+  if (!prefix) {
+    cacheStore.clear();
+    return;
+  }
+  for (const key of cacheStore.keys()) {
+    if (key.startsWith(prefix)) {
+      cacheStore.delete(key);
+    }
+  }
+};
+
+// Health Check Endpoint (Keep-Alive)
+app.get(['/health', '/api/health'], (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    uptime: Math.round(process.uptime()), 
+    timestamp: new Date().toISOString() 
+  });
+});
 
 // === BASE64 IMAGE SUPPORT ===
 const initBase64ImageSupport = async () => {
@@ -994,6 +1035,12 @@ app.post('/api/forgot-password/reset-password', async (req, res) => {
 
 app.get('/api/home-data', async (req, res) => {
   try {
+    // 1. ตรวจสอบ In-Memory Cache (ความเร็ว 5ms แทน 2000ms)
+    const cachedData = getCache('home-data');
+    if (cachedData) {
+      return res.json(cachedData);
+    }
+
     const [categories] = await db.execute('SELECT * FROM categories');
     
     // Get products with shop open status
@@ -1051,12 +1098,17 @@ app.get('/api/home-data', async (req, res) => {
         name: s.name || s.shop_name || ''
       }));
 
-    res.json({
+    const responsePayload = {
       success: true,
       categories,
       deals,
       shops: formattedShops
-    });
+    };
+
+    // เก็บลง Cache นาน 45 วินาที
+    setCache('home-data', responsePayload, 45);
+
+    res.json(responsePayload);
 
   } catch (err) {
     console.error('❌ Error (/api/home-data):', err.message);
@@ -1956,6 +2008,9 @@ app.post('/api/orders', async (req, res) => {
     await connection.commit();
     console.log(`✅ สั่งซื้อและตัดสต็อกสินค้าสำเร็จสำหรับ Order ID: ${orderId}`);
 
+    // เคลียร์แคชหน้าแรกทันทีเพื่ออัปเดตสต็อกสินค้าสดใหม่
+    clearCache('home-data');
+
     res.json({ 
       success: true, 
       message: 'สั่งซื้อและตัดสต็อกสินค้าเรียบร้อยแล้ว', 
@@ -2154,6 +2209,11 @@ app.put('/api/orders/:orderId/complete', async (req, res) => {
 // 1. ดึงห้องประมูลที่กำลังเปิดอยู่ (สำหรับหน้าแรกและห้องประมูล)
 app.get(['/api/auctions', '/api/auctions/active'], async (req, res) => {
   try {
+    const cachedAuctions = getCache('auctions-active');
+    if (cachedAuctions) {
+      return res.json(cachedAuctions);
+    }
+
     const [auctions] = await db.execute(`
       SELECT a.*, CAST(a.end_time AS CHAR) AS end_time_str,
         (SELECT COUNT(*) FROM auction_bids WHERE auction_id = a.auction_id) AS total_bids
@@ -2199,7 +2259,12 @@ app.get(['/api/auctions', '/api/auctions/active'], async (req, res) => {
     });
 
     const validAuctions = result.filter(a => a.time_remaining_ms > 0);
-    res.json({ success: true, auctions: result, active_auction: validAuctions[0] || null });
+    const auctionResponse = { success: true, auctions: result, active_auction: validAuctions[0] || null };
+
+    // แคชห้องประมูล 15 วินาที
+    setCache('auctions-active', auctionResponse, 15);
+
+    res.json(auctionResponse);
   } catch (error) {
     console.error('❌ GET /api/auctions error:', error.message);
     res.status(500).json({ success: false, error: error.message });
@@ -3238,6 +3303,9 @@ app.post('/api/shops/:shopId/products', upload.single('image'), async (req, res)
       ]);
     }
 
+    clearCache('home-data');
+    clearCache('auctions');
+
     res.status(201).json({
       success: true,
       message: 'เพิ่มสินค้าสำเร็จ',
@@ -3328,6 +3396,9 @@ app.post('/api/shops/:shopId/products/:productId', upload.single('image'), async
       }
     }
 
+    clearCache('home-data');
+    clearCache('auctions');
+
     res.json({ success: true, message: 'แก้ไขข้อมูลสินค้าสำเร็จ' });
   } catch (error) {
     console.error(`❌ POST /api/shops/${shopId}/products/${productId} error:`, error.message);
@@ -3358,6 +3429,9 @@ app.delete('/api/shops/:shopId/products/:productId', async (req, res) => {
         ['cancelled', shopId, productName, 'active']
       );
     }
+
+    clearCache('home-data');
+    clearCache('auctions');
 
     res.json({ success: true, message: 'ลบสินค้าเรียบร้อยแล้ว' });
   } catch (error) {
@@ -4286,8 +4360,15 @@ app.post('/api/orders/:order_id/messages', upload.single('image'), async (req, r
 // ==========================================
 app.get('/api/banners', async (req, res) => {
   try {
+    const cachedBanners = getCache('banners');
+    if (cachedBanners) {
+      return res.json(cachedBanners);
+    }
+
     const [banners] = await db.query('SELECT * FROM banners WHERE is_active = true ORDER BY id ASC');
-    res.json({ success: true, banners });
+    const bannersPayload = { success: true, banners };
+    setCache('banners', bannersPayload, 120); // แคชแบนเนอร์ 2 นาที
+    res.json(bannersPayload);
   } catch (error) {
     console.error('Error fetching banners:', error);
     res.status(500).json({ success: false, message: 'ไม่สามารถดึงแบนเนอร์ได้' });
