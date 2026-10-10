@@ -1151,7 +1151,7 @@ app.get('/api/home-data', async (req, res) => {
       .filter(s => s.is_open === 1 || s.is_open === true || s.is_open == '1' || s.is_open === null || s.is_open === undefined)
       .map(s => ({
         ...s,
-        name: s.name || s.shop_name || ''
+        name: s.name || s.name as shop_name || ''
       }));
 
     const responsePayload = {
