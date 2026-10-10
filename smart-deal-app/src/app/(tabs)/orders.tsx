@@ -631,7 +631,17 @@ export default function OrdersScreen() {
               {getOrderShops(selectedOrder).length > 0 ? (
                 <View style={{ gap: 8, marginBottom: 12 }}>
                   {getOrderShops(selectedOrder).map((s: any, sIdx: number) => {
-                    const sStatus = getStatusInfo(s.shop_status || s.status || selectedOrder?.order_status);
+                    const rawShopStatus = (s.shop_status || s.status || selectedOrder?.order_status || '').toLowerCase();
+                    const oStatus = (selectedOrder?.order_status || '').toLowerCase();
+                    let effectiveStatus = rawShopStatus;
+
+                    if (['delivered', 'completed', 'cancelled'].includes(oStatus)) {
+                      effectiveStatus = oStatus;
+                    } else if (['delivering', 'shipped'].includes(oStatus)) {
+                      effectiveStatus = s.is_picked_up || rawShopStatus === 'picked_up' ? 'picked_up' : 'delivering';
+                    }
+
+                    const sStatus = getStatusInfo(effectiveStatus);
                     const sImg = s.shop_image ? getImageUrl(s.shop_image) : getOrderImage(selectedOrder || {});
                     return (
                       <View key={sIdx} style={styles.modalSectionCard}>

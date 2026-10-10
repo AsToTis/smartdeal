@@ -1504,6 +1504,13 @@ app.get('/api/orders/:id/tracking', async (req, res) => {
           const isPickedUp = !!(parsedPickupProofs[sid] && parsedPickupProofs[sid].proof_image);
           let sStatus = parsedShopStatuses[sid] || o.order_status;
           if (isPickedUp) sStatus = 'picked_up';
+
+          if (['delivered', 'completed', 'cancelled'].includes(o.order_status)) {
+            sStatus = o.order_status;
+          } else if (['delivering', 'shipped'].includes(o.order_status)) {
+            sStatus = isPickedUp ? 'picked_up' : 'delivering';
+          }
+
           return {
             shop_id: s.shop_id,
             name: s.name,
@@ -1724,6 +1731,13 @@ app.get('/api/orders/user/:userId', async (req, res) => {
         if (isPickedUp) {
           sStatus = 'picked_up';
         }
+
+        if (['delivered', 'completed', 'cancelled'].includes(order.order_status)) {
+          sStatus = order.order_status;
+        } else if (['delivering', 'shipped'].includes(order.order_status)) {
+          sStatus = isPickedUp ? 'picked_up' : 'delivering';
+        }
+
         return {
           ...s,
           shop_status: sStatus,
@@ -1838,6 +1852,13 @@ app.get('/api/orders/:orderId', async (req, res) => {
       const isPickedUp = !!(parsedPickupProofs[sid] && parsedPickupProofs[sid].proof_image);
       let sStatus = parsedShopStatuses[sid] || order.order_status;
       if (isPickedUp) sStatus = 'picked_up';
+
+      if (['delivered', 'completed', 'cancelled'].includes(order.order_status)) {
+        sStatus = order.order_status;
+      } else if (['delivering', 'shipped'].includes(order.order_status)) {
+        sStatus = isPickedUp ? 'picked_up' : 'delivering';
+      }
+
       return {
         ...s,
         shop_status: sStatus,

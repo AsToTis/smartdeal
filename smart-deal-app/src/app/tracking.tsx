@@ -562,7 +562,32 @@ export default function TrackingScreen() {
         <View style={styles.locationCard}>
           {/* Shops */}
           {(shops.length > 0 ? shops : (shop ? [shop] : [])).map((s: any, sIdx: number) => {
-            const isPicked = s?.is_picked_up || s?.status === 'picked_up';
+            const oStatus = (order?.status || order?.delivery_status || '').toLowerCase();
+            const rawShopStatus = (s?.status || s?.shop_status || oStatus).toLowerCase();
+            const isDelivered = oStatus === 'delivered' || oStatus === 'completed';
+            const isDelivering = oStatus === 'delivering' || oStatus === 'shipped';
+            const isPicked = s?.is_picked_up || rawShopStatus === 'picked_up' || isDelivering || isDelivered;
+
+            let dotColor = '#0284c7';
+            let statusText = 'ร้านค้ากำลังเตรียมสินค้า';
+
+            if (isDelivered) {
+              dotColor = '#2563eb';
+              statusText = 'จัดส่งถึงที่หมายแล้ว 📦';
+            } else if (isDelivering || isPicked) {
+              dotColor = '#16a34a';
+              statusText = 'ไรเดอร์รับสินค้าแล้ว 🛵';
+            } else if (rawShopStatus === 'ready') {
+              dotColor = '#7c3aed';
+              statusText = 'สินค้าพร้อมส่ง (รอไรเดอร์)';
+            } else if (rawShopStatus === 'preparing' || rawShopStatus === 'accepted') {
+              dotColor = '#0284c7';
+              statusText = 'ร้านค้ากำลังเตรียมสินค้า';
+            } else if (rawShopStatus === 'pending' || rawShopStatus === 'paid') {
+              dotColor = '#d97706';
+              statusText = 'รอร้านค้ารับคำสั่งซื้อ';
+            }
+
             return (
               <React.Fragment key={s?.shop_id || sIdx}>
                 <View style={styles.locationItem}>
@@ -597,14 +622,14 @@ export default function TrackingScreen() {
                         width: 7, 
                         height: 7, 
                         borderRadius: 3.5, 
-                        backgroundColor: isPicked ? '#16a34a' : (s?.status === 'ready' ? '#7c3aed' : '#0284c7') 
+                        backgroundColor: dotColor 
                       }} />
                       <Text style={{ 
                         fontSize: 12, 
                         fontWeight: '600', 
-                        color: isPicked ? '#16a34a' : (s?.status === 'ready' ? '#7c3aed' : '#0284c7') 
+                        color: dotColor 
                       }}>
-                        {isPicked ? 'ไรเดอร์รับสินค้าแล้ว 🛵' : (s?.status === 'ready' ? 'สินค้าพร้อมส่ง (รอไรเดอร์)' : 'ร้านค้ากำลังเตรียมสินค้า')}
+                        {statusText}
                       </Text>
                     </View>
 
