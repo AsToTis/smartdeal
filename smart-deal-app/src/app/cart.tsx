@@ -6,6 +6,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons, Ionicons } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
 import { BASE_URL } from '../constants/api';
 import { useCart, parseItemPrice, parseItemStock } from '../context/CartContext';
@@ -59,11 +60,26 @@ export default function CartScreen() {
   const finalTotal = Math.max(0, safeTotalAmount + deliveryFee - safeDiscount);
 
   // ตรวจสอบและไปหน้าชำระเงิน
-  const handleProceedToCheckout = () => {
+  const handleProceedToCheckout = async () => {
     if (cart.length === 0) {
       Alert.alert('แจ้งเตือน', 'ไม่มีสินค้าในตะกร้า');
       return;
     }
+
+    // ป้องกันการสั่งซื้อสินค้าจากร้านของตนเอง
+    try {
+      const storedShopId = await AsyncStorage.getItem('shop_id');
+      if (storedShopId) {
+        const ownItem = cart.find(item => String(item.shop_id) === String(storedShopId));
+        if (ownItem) {
+          Alert.alert(
+            'ไม่อนุญาตให้สั่งซื้อ',
+            `สินค้า "${ownItem.name}" เป็นสินค้าจากร้านค้าของคุณเอง ไม่สามารถสั่งซื้อสินค้าของตนเองได้ กรุณาลบรายการนี้ออกจากตะกร้าก่อนดำเนินการต่อ`
+          );
+          return;
+        }
+      }
+    } catch (e) {}
 
     // ตรวจสอบว่ามีสินค้าชิ้นใดเกินสต็อกหรือไม่
     for (const item of cart) {

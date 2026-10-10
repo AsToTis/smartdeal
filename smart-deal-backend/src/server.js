@@ -1762,6 +1762,33 @@ app.post('/api/orders', async (req, res) => {
   try {
     await connection.beginTransaction();
 
+    // 0. ป้องกันการปั่นยอดและโกงส่วนลด: ห้ามเจ้าของร้านสั่งสินค้าจากร้านตัวเอง (Fraud Prevention)
+    if (user_id) {
+      const distinctShopIds = new Set();
+      if (shop_id) distinctShopIds.add(Number(shop_id));
+      if (items && items.length > 0) {
+        for (const item of items) {
+          if (item.shop_id) distinctShopIds.add(Number(item.shop_id));
+        }
+      }
+
+      if (distinctShopIds.size > 0) {
+        const [ownedShops] = await connection.query(
+          `SELECT shop_id, name FROM shops WHERE owner_id = ? AND shop_id IN (?)`,
+          [user_id, Array.from(distinctShopIds)]
+        );
+
+        if (ownedShops.length > 0) {
+          await connection.rollback();
+          connection.release();
+          return res.status(400).json({
+            success: false,
+            message: `คุณไม่สามารถสั่งซื้อสินค้าจากร้านค้าของตนเองได้ ("${ownedShops[0].name}")`
+          });
+        }
+      }
+    }
+
     // 1. ตรวจสอบสต็อกสินค้าก่อนทุกรายการ (Stock Availability Check)
     if (items && items.length > 0) {
       for (const item of items) {

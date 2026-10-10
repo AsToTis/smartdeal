@@ -312,6 +312,21 @@ export default function CheckoutScreen() {
       return;
     }
 
+    // ป้องกันการสั่งซื้อสินค้าจากร้านของตนเอง
+    try {
+      const storedShopId = await AsyncStorage.getItem('shop_id');
+      if (storedShopId) {
+        const ownItem = cartItems.find((item: any) => String(item.shop_id || item.shop?.shop_id) === String(storedShopId));
+        if (ownItem) {
+          Alert.alert(
+            'ไม่อนุญาตให้สั่งซื้อ',
+            `สินค้า "${ownItem.name || ownItem.product_name}" เป็นสินค้าจากร้านค้าของคุณเอง ไม่สามารถสั่งซื้อสินค้าของตนเองได้`
+          );
+          return;
+        }
+      }
+    } catch (e) {}
+
     try {
       setLoading(true);
 

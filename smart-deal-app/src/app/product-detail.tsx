@@ -6,6 +6,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons, Ionicons, FontAwesome5 } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
 import { BASE_URL } from '../constants/api';
 import { useCart } from '../context/CartContext';
@@ -18,6 +19,7 @@ export default function ProductDetailScreen() {
   const [product, setProduct] = useState<any>(null);
   const [isExpanded, setIsExpanded] = useState(false);
   const [addedToCart, setAddedToCart] = useState(false);
+  const [myShopId, setMyShopId] = useState<string | number | null>(null);
   
   // จำนวนที่เลือกสั่งซื้อ
   const [quantity, setQuantity] = useState<number>(1);
@@ -34,6 +36,31 @@ export default function ProductDetailScreen() {
       fetchProductDetail();
     }
   }, [id]);
+
+  useEffect(() => {
+    const checkMyShop = async () => {
+      try {
+        const storedShopId = await AsyncStorage.getItem('shop_id');
+        if (storedShopId) {
+          setMyShopId(storedShopId);
+        } else {
+          const userData = await AsyncStorage.getItem('user');
+          if (userData) {
+            const u = JSON.parse(userData);
+            if (u?.shop_data?.shop_id) {
+              setMyShopId(u.shop_data.shop_id);
+            }
+          }
+        }
+      } catch (e) {}
+    };
+    checkMyShop();
+  }, []);
+
+  const isMyShop = Boolean(
+    (myShopId && product && String(product.shop_id) === String(myShopId)) ||
+    params.is_my_shop === 'true'
+  );
 
   const fetchProductDetail = async () => {
     try {
@@ -133,6 +160,11 @@ export default function ProductDetailScreen() {
   };
 
   const handleBuyNow = () => {
+    if (isMyShop) {
+      Alert.alert('ร้านของคุณ (Preview)', 'คุณเป็นเจ้าของร้านนี้ ไม่สามารถสั่งซื้อสินค้าของตัวเองได้ตามมาตรฐานสากล');
+      return;
+    }
+
     if (!product || isOutOfStock) {
       Alert.alert('แจ้งเตือน', 'สินค้านี้หมดแล้ว ไม่สามารถสั่งซื้อได้');
       return;
@@ -158,6 +190,11 @@ export default function ProductDetailScreen() {
   };
 
   const handleAddToCart = () => {
+    if (isMyShop) {
+      Alert.alert('ร้านของคุณ (Preview)', 'คุณเป็นเจ้าของร้านนี้ ไม่สามารถสั่งซื้อสินค้าของตัวเองได้ตามมาตรฐานสากล');
+      return;
+    }
+
     if (!product || isOutOfStock) {
       Alert.alert('แจ้งเตือน', 'สินค้านี้หมดแล้ว');
       return;
@@ -236,6 +273,21 @@ export default function ProductDetailScreen() {
         showsVerticalScrollIndicator={false} 
         contentContainerStyle={styles.scrollContent}
       >
+        {/* Banner แจ้งเตือนมุมมองเจ้าของร้าน (Seller Preview Mode) */}
+        {isMyShop && (
+          <View style={styles.myShopBanner}>
+            <View style={styles.myShopBannerIconBg}>
+              <MaterialIcons name="storefront" size={22} color="#0284c7" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.myShopBannerTitle}>สินค้าในร้านของคุณ (โหมดแสดงตัวอย่าง)</Text>
+              <Text style={styles.myShopBannerSubtitle}>
+                คุณกำลังดูภาพรวมสินค้าตามมุมมองของลูกค้า ไม่สามารถสั่งซื้อสินค้าของตนเองได้
+              </Text>
+            </View>
+          </View>
+        )}
+
         {/* 2. การ์ดภาพสินค้า + กล่องนับเวลาถอยหลังด้านใน */}
         <View style={styles.imageCardContainer}>
           <Image 
@@ -416,6 +468,11 @@ export default function ProductDetailScreen() {
           <View style={styles.disabledOrderBtn}>
             <MaterialIcons name="block" size={20} color="#94a3b8" />
             <Text style={styles.disabledOrderBtnText}>สินค้าหมดชั่วคราว</Text>
+          </View>
+        ) : isMyShop ? (
+          <View style={styles.myShopBottomBar}>
+            <MaterialIcons name="visibility" size={20} color="#0284c7" />
+            <Text style={styles.myShopBottomBarText}>โหมดแสดงตัวอย่าง (ร้านของคุณ - ไม่สามารถสั่งซื้อได้)</Text>
           </View>
         ) : (
           <>
@@ -662,5 +719,52 @@ const styles = StyleSheet.create({
     backgroundColor: '#f1f5f9',
     gap: 8
   },
-  disabledOrderBtnText: { fontSize: 14, fontWeight: 'bold', color: '#94a3b8' }
+  disabledOrderBtnText: { fontSize: 14, fontWeight: 'bold', color: '#94a3b8' },
+  myShopBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f0f9ff',
+    borderColor: '#7dd3fc',
+    borderWidth: 1.5,
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 16,
+    gap: 10,
+  },
+  myShopBannerIconBg: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#e0f2fe',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  myShopBannerTitle: {
+    fontSize: 13,
+    fontWeight: 'bold',
+    color: '#0369a1',
+  },
+  myShopBannerSubtitle: {
+    fontSize: 11,
+    color: '#0284c7',
+    marginTop: 2,
+    lineHeight: 15,
+  },
+  myShopBottomBar: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    borderRadius: 28,
+    backgroundColor: '#e0f2fe',
+    borderWidth: 1.5,
+    borderColor: '#7dd3fc',
+    gap: 8,
+  },
+  myShopBottomBarText: {
+    fontSize: 13,
+    fontWeight: 'bold',
+    color: '#0369a1',
+  },
 });

@@ -129,6 +129,31 @@ export default function HomeScreen() {
   // State สำหรับควบคุม Modal แจ้งเตือน
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [selectedProductName, setSelectedProductName] = useState('');
+  const [myShopId, setMyShopId] = useState<string | number | null>(null);
+
+  const fetchUserShopId = async () => {
+    try {
+      const storedShopId = await AsyncStorage.getItem('shop_id');
+      if (storedShopId) {
+        setMyShopId(storedShopId);
+        return;
+      }
+      const userData = await AsyncStorage.getItem('user');
+      if (userData) {
+        const u = JSON.parse(userData);
+        if (u?.shop_data?.shop_id) {
+          setMyShopId(u.shop_data.shop_id);
+          await AsyncStorage.setItem('shop_id', String(u.shop_data.shop_id));
+        } else if (u?.user_id) {
+          const shopRes = await axios.get(`${BASE_URL}/users/${u.user_id}/shop`);
+          if (shopRes.data?.success && shopRes.data?.hasShop && shopRes.data?.shop?.shop_id) {
+            setMyShopId(shopRes.data.shop.shop_id);
+            await AsyncStorage.setItem('shop_id', String(shopRes.data.shop.shop_id));
+          }
+        }
+      }
+    } catch (e) {}
+  };
 
   const fetchUnreadNotifications = async () => {
     try {
@@ -203,10 +228,12 @@ export default function HomeScreen() {
   useFocusEffect(
     useCallback(() => {
       fetchHomeData();
+      fetchUserShopId();
     }, [])
   );
 
   const handleSelectProduct = (item: any) => {
+    const isMyShop = Boolean(myShopId && String(item.shop_id) === String(myShopId));
     router.push({
       pathname: '/product-detail' as any,
       params: {
@@ -218,7 +245,8 @@ export default function HomeScreen() {
         image: item.image_url,
         stock_quantity: item.stock_quantity ?? 5,
         shop_id: item.shop_id || 1,
-        shop_name: item.shop_name || 'ร้านค้าพรีเมียม'
+        shop_name: item.shop_name || 'ร้านค้าพรีเมียม',
+        is_my_shop: isMyShop ? 'true' : 'false'
       }
     });
   };
@@ -551,7 +579,7 @@ export default function HomeScreen() {
               return (
                 <TouchableOpacity 
                   key={item.product_id} 
-                  style={[styles.dealCard, isOutOfStock && styles.dealCardDisabled]}
+                  style={[styles.dealCard, isOutOfStock && styles.dealCardDisabled, isMyShop && styles.dealCardMyShop]}
                   onPress={() => handleSelectProduct(item)}
                   activeOpacity={0.8}
                 >
@@ -568,6 +596,11 @@ export default function HomeScreen() {
                     {isOutOfStock && (
                       <View style={styles.soldOutOverlay}>
                         <Text style={styles.soldOutText}>สินค้าหมด</Text>
+                      </View>
+                    )}
+                    {isMyShop && (
+                      <View style={styles.myShopFloatingBadge}>
+                        <Text style={styles.myShopFloatingBadgeText}>ร้านของคุณ</Text>
                       </View>
                     )}
                   </View>
@@ -602,7 +635,9 @@ export default function HomeScreen() {
                       )}
                     </View>
 
-                    <Text style={styles.shopName} numberOfLines={1}>🏬 {item.shop_name || 'ร้านค้าพรีเมียม'}</Text>
+                    <Text style={[styles.shopName, isMyShop && { color: '#0284c7' }]} numberOfLines={1}>
+                      🏬 {item.shop_name || 'ร้านค้าพรีเมียม'} {isMyShop ? '(ร้านของคุณ)' : ''}
+                    </Text>
                     
                     <View style={styles.priceRow}>
                       <Text style={[styles.price, isOutOfStock && { color: '#94a3b8' }]}>
@@ -612,11 +647,21 @@ export default function HomeScreen() {
                         <Text style={styles.oldPrice}>฿{item.original_price}</Text>
                       )}
                       
-                      {/* ปุ่มกดเพิ่มลงตะกร้า */}
+                      {/* ปุ่มกดเพิ่มลงตะกร้า / หรือปุ่ม Preview สำหรับร้านของตัวเอง */}
                       {isOutOfStock ? (
                         <View style={styles.disabledAddCartBtn}>
                           <MaterialIcons name="remove-shopping-cart" size={16} color="#94a3b8" />
                         </View>
+                      ) : isMyShop ? (
+                        <TouchableOpacity 
+                          style={styles.myShopPreviewBtn} 
+                          onPress={(e) => {
+                            e.stopPropagation();
+                            Alert.alert('ร้านของคุณ (Preview)', 'นี่คือสินค้าในร้านของคุณเอง ไม่สามารถสั่งซื้อสินค้าของตัวเองได้ตามมาตรฐานสากล');
+                          }}
+                        >
+                          <MaterialIcons name="storefront" size={16} color="#0284c7" />
+                        </TouchableOpacity>
                       ) : (
                         <TouchableOpacity 
                           style={styles.addCartBtn} 
@@ -951,4 +996,32 @@ const styles = StyleSheet.create({
     borderRadius: 16
   },
   joinAuctionBtnText: { color: '#fff', fontSize: 12, fontWeight: 'bold' },
+  dealCardMyShop: {
+    borderColor: '#38bdf8',
+    borderWidth: 1.5,
+  },
+  myShopFloatingBadge: {
+    position: 'absolute',
+    bottom: 6,
+    left: 6,
+    backgroundColor: '#0284c7',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  myShopFloatingBadgeText: {
+    color: '#fff',
+    fontSize: 9,
+    fontWeight: 'bold',
+  },
+  myShopPreviewBtn: {
+    backgroundColor: '#e0f2fe',
+    borderWidth: 1,
+    borderColor: '#7dd3fc',
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
 });
