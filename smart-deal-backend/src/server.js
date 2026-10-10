@@ -4108,7 +4108,7 @@ app.get('/api/admin/dashboard', async (req, res) => {
     const [[{ total_users }]] = await db.execute(`SELECT COUNT(*) AS total_users FROM users`);
     const [[{ total_shops }]] = await db.execute(`SELECT COUNT(*) AS total_shops FROM shops`);
     
-    const [top_shops] = await db.execute(`SELECT shops.name AS shop_name, SUM(orders.total_amount) AS total_sales FROM orders JOIN shops ON orders.shop_id = shops.shop_id GROUP BY shops.shop_id ORDER BY total_sales DESC LIMIT 5`);
+    const [top_shops] = await db.execute(`SELECT s.name AS shop_name, SUM(oi.price * oi.quantity) AS total_sales FROM order_items oi LEFT JOIN products p ON oi.product_id = p.product_id JOIN shops s ON s.shop_id = COALESCE(oi.shop_id, p.shop_id) JOIN orders o ON oi.order_id = o.order_id WHERE o.order_status IN ('completed', 'paid', 'delivered') GROUP BY s.shop_id ORDER BY total_sales DESC LIMIT 5`);
     
     const [recent_orders] = await db.execute(`SELECT orders.order_id, COALESCE((SELECT GROUP_CONCAT(DISTINCT s.name SEPARATOR ', ') FROM order_items oi LEFT JOIN products p ON oi.product_id = p.product_id JOIN shops s ON s.shop_id = COALESCE(oi.shop_id, p.shop_id) WHERE oi.order_id = orders.order_id), shops_fallback.name) as shop_name, orders.total_amount FROM orders LEFT JOIN shops shops_fallback ON orders.shop_id = shops_fallback.shop_id ORDER BY orders.created_at DESC LIMIT 5`);
 
