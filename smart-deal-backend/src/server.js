@@ -6094,7 +6094,7 @@ app.get('/api/admin/orders', async (req, res) => {
     try {
       const [rows] = await connection.execute(`
         SELECT o.*, 
-               u.username as buyer_name, 
+               u.full_name as buyer_name, 
                s.shop_name 
         FROM orders o
         LEFT JOIN users u ON o.user_id = u.user_id
