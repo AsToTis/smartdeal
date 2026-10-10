@@ -1235,14 +1235,16 @@ app.get('/api/products/:id', async (req, res) => {
 
     let shopName = 'ร้านค้าพรีเมียม';
     let shopImage = null;
-    let shopAddress = null;\n    let shopRating = null;
+    let shopAddress = null;
+    let shopRating = null;
 
     if (product.shop_id) {
       const [shops] = await db.execute('SELECT * FROM shops WHERE shop_id = ?', [product.shop_id]);
       if (shops.length > 0) {
         shopName = shops[0].name || shops[0].shop_name || 'ร้านค้าพรีเมียม';
         shopImage = shops[0].image_url;
-        shopAddress = shops[0].address;\n        shopRating = shops[0].rating;
+        shopAddress = shops[0].address;
+        shopRating = shops[0].rating;
       }
     }
 
@@ -1262,7 +1264,8 @@ app.get('/api/products/:id', async (req, res) => {
       deal_end_time: formattedExpiresAt,
       shop_name: shopName,
       shop_image: shopImage,
-      shop_address: shopAddress,\n      shop_rating: shopRating
+      shop_address: shopAddress,
+      shop_rating: shopRating
     };
 
     res.json({ success: true, product: finalProduct });
