@@ -1005,7 +1005,7 @@ app.get('/api/home-data', async (req, res) => {
         IFNULL(s.is_open, 1) AS is_open
       FROM products p
       LEFT JOIN shops s ON p.shop_id = s.shop_id
-      WHERE p.stock_quantity > 0 AND p.is_auction = 0 AND (s.is_open IS NULL OR s.is_open = 1)
+      WHERE p.stock_quantity > 0 AND p.is_auction = 0 AND (s.is_open IS NULL OR s.is_open = 1) AND (p.deal_end_time > NOW() OR p.deal_end_time IS NULL)
       ORDER BY p.deal_end_time IS NULL ASC, p.deal_end_time ASC
     `);
     
@@ -1065,7 +1065,7 @@ app.get('/api/products', async (req, res) => {
         IFNULL(s.is_open, 1) AS is_open
       FROM products p
       LEFT JOIN shops s ON p.shop_id = s.shop_id
-      WHERE p.stock_quantity > 0 AND (s.is_open IS NULL OR s.is_open = 1)
+      WHERE p.stock_quantity > 0 AND (s.is_open IS NULL OR s.is_open = 1) AND (p.deal_end_time > NOW() OR p.deal_end_time IS NULL)
       ORDER BY p.deal_end_time IS NULL ASC, p.deal_end_time ASC
     `);
 
