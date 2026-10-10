@@ -6098,10 +6098,18 @@ app.get('/api/admin/orders', async (req, res) => {
       const [rows] = await connection.execute(`
         SELECT o.*, 
                u.full_name as buyer_name, 
-               s.name as shop_name 
+               COALESCE(
+                 (
+                   SELECT GROUP_CONCAT(DISTINCT s.name SEPARATOR ', ')
+                   FROM order_items oi
+                   JOIN shops s ON oi.shop_id = s.shop_id
+                   WHERE oi.order_id = o.order_id
+                 ),
+                 s_fallback.name
+               ) as shop_name
         FROM orders o
         LEFT JOIN users u ON o.user_id = u.user_id
-        LEFT JOIN shops s ON o.shop_id = s.shop_id
+        LEFT JOIN shops s_fallback ON o.shop_id = s_fallback.shop_id
         ORDER BY o.created_at DESC
       `);
       res.json({ success: true, orders: rows });
