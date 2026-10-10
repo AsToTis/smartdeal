@@ -2244,7 +2244,7 @@ app.post(['/api/payments', '/api/payments/confirm'], async (req, res) => {
       await connection.query(`
         INSERT INTO wallet_transactions (user_type, target_id, order_id, amount, type, description)
         VALUES ('shop', ?, ?, ?, 'credit', ?)
-      `, [targetShopId, effectiveOrderId, shopAmount, const stats = { today_sales: (statsData[0].today_sales || 0) - (statsData[0].total_gp || 0), today_orders: statsData[0].today_orders || 0 };`รายรับจากออเดอร์ #${effectiveOrderId}const stats = {const stats = {\n      today_sales: (statsData[0].today_sales || 0) - (statsData[0].total_gp || 0),\n      today_orders: statsData[0].today_orders || 0\n    };n      today_sales: (statsData[0].today_sales || 0) - (statsData[0].total_gp || 0),\n      today_orders: statsData[0].today_orders || 0\n    };`]);
+      `, [targetShopId, effectiveOrderId, shopAmount, const stats = { today_sales: (statsData[0].today_sales || 0) - (statsData[0].total_gp || 0), today_orders: statsData[0].today_orders || 0 };`รายรับจากออเดอร์ #${effectiveOrderId}const stats = {const stats = {\n      today_sales: (statsData[0].today_sales || 0) - (statsData[0].total_gp || 0),\n      today_orders: statsData[0].today_orders || 0\n    };n      today_sales: (statsData[0].today_sales || 0) - (statsData[0].total_gp || 0),\n      today_orders: statsData[0].today_orders || 0\n        // INJECTED LINE TO FIND\n    };`]);
     }
     */
 
@@ -4806,7 +4806,10 @@ app.post('/api/rider/login', async (req, res) => {
     }
 
     // Mock generating a simple token
-    const token = Buffer.from(`${user.user_id}-${Date.now()}`).toString('base64');
+    const token = Buffer.from(`${user.user_id}-${Date.now()}`).toString('base64');\n
+      const [ratingResult] = await db.query("SELECT COALESCE((SELECT AVG(rider_rating) FROM reviews WHERE rider_id = ? AND rider_rating > 0), rating, 0) as avg_rating FROM riders WHERE rider_id = ?", [rider.rider_id, rider.rider_id]);
+      const avg_rating = ratingResult[0]?.avg_rating ? Number(ratingResult[0].avg_rating).toFixed(1) : 0;
+      
 
     res.json({
       success: true,
