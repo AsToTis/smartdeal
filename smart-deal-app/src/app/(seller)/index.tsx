@@ -18,6 +18,7 @@ export default function SellerDashboardScreen() {
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [chartType, setChartType] = useState<'week' | 'month' | 'year'>('week');
   const [dashboardData, setDashboardData] = useState<any>({
     shop: { name: 'Smart Deal Seller', is_open: 1 },
     stats: { today_sales: 0, today_orders: 0 },
@@ -192,32 +193,43 @@ export default function SellerDashboardScreen() {
               </View>
             </View>
 
-            {/* กราฟหลอก */}
+            {/* Real Chart */}
             <View style={styles.chartCard}>
               <View style={styles.chartHeader}>
-                <Text style={styles.chartTitle}>สรุปยอดขายรายสัปดาห์</Text>
-                <View style={styles.chartBadge}>
-                  <Text style={styles.chartBadgeText}>สัปดาห์นี้ <MaterialIcons name="keyboard-arrow-down" size={14} /></Text>
+                <Text style={styles.chartTitle}>สรุปยอดขาย</Text>
+                <View style={{ flexDirection: 'row', gap: 6 }}>
+                  <TouchableOpacity onPress={() => setChartType('week')} style={[styles.chartBadge, chartType === 'week' && { backgroundColor: '#16a34a' }]}>
+                    <Text style={[styles.chartBadgeText, chartType === 'week' && { color: '#fff' }]}>สัปดาห์</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => setChartType('month')} style={[styles.chartBadge, chartType === 'month' && { backgroundColor: '#16a34a' }]}>
+                    <Text style={[styles.chartBadgeText, chartType === 'month' && { color: '#fff' }]}>เดือน</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => setChartType('year')} style={[styles.chartBadge, chartType === 'year' && { backgroundColor: '#16a34a' }]}>
+                    <Text style={[styles.chartBadgeText, chartType === 'year' && { color: '#fff' }]}>ปี</Text>
+                  </TouchableOpacity>
                 </View>
               </View>
               
-              <View style={styles.dummyChartSpace}>
-                {/* Dummy Chart Bars */}
-                {['จ.', 'อ.', 'พ.', 'พฤ.', 'ศ.', 'ส.', 'อา.'].map((day, i) => {
-                  const todayIndex = (new Date().getDay() + 6) % 7;
-                  const isToday = i === todayIndex;
-                  return (
-                    <View key={i} style={styles.chartCol}>
-                      <View style={[styles.chartBar, { height: isToday ? 80 : Math.random() * 50 + 20, backgroundColor: isToday ? '#16a34a' : '#e2e8f0' }]} />
-                      <Text style={[styles.chartDayText, isToday && { fontWeight: 'bold', color: '#0f172a' }]}>{day}</Text>
-                    </View>
-                  );
-                })}
-              </View>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ minWidth: '100%' }}>
+                <View style={styles.dummyChartSpace}>
+                  {dashboardData.chart_data?.[chartType] ? dashboardData.chart_data[chartType].map((item: any, i: number) => {
+                    const maxVal = Math.max(...dashboardData.chart_data[chartType].map((d:any) => d.value), 100);
+                    const heightPercent = (item.value / maxVal) * 100;
+                    const barHeight = Math.max(heightPercent * 0.8, 4); // min height 4px, max 80px approx
+                    const isToday = chartType === 'week' && i === 6; // last item in week is today
+                    return (
+                      <View key={i} style={[styles.chartCol, { width: chartType === 'year' ? 30 : 40, marginRight: 8 }]}>
+                        <View style={[styles.chartBar, { height: barHeight, backgroundColor: (isToday || item.value > 0) ? '#16a34a' : '#e2e8f0' }]} />
+                        <Text style={[styles.chartDayText, isToday && { fontWeight: 'bold', color: '#0f172a' }]} numberOfLines={1}>{item.label}</Text>
+                      </View>
+                    );
+                  }) : <Text style={{ color: '#94a3b8', marginTop: 30, textAlign: 'center', width: '100%' }}>ไม่มีข้อมูลกราฟ</Text>}
+                </View>
+              </ScrollView>
 
               <View style={styles.chartFooter}>
-                <Text style={styles.chartFooterLabel}>เฉลี่ยต่อวัน</Text>
-                <Text style={styles.chartFooterValue}>฿{formatMoney((dashboardData.stats?.today_sales || 0) / 1.5)}</Text>
+                <Text style={styles.chartFooterLabel}>รวมยอดขาย ({chartType === 'week' ? 'สัปดาห์' : chartType === 'month' ? 'เดือน' : 'ปี'})</Text>
+                <Text style={styles.chartFooterValue}>฿{formatMoney(dashboardData.chart_data?.[chartType]?.reduce((a:any,b:any)=>a+b.value,0) || 0)}</Text>
               </View>
             </View>
 
