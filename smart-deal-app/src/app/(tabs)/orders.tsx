@@ -627,8 +627,8 @@ export default function OrdersScreen() {
             </View>
 
             <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 420 }}>
-              {/* ร้านค้า & สถานะ (แสดงแยกรายร้านตามรูปที่ 2 ในช่วงร้านเตรียมของ และรวมเป็นสถานะเดียวเมื่อไรเดอร์รับของครบแล้ว) */}
-              {!['delivering', 'delivered', 'shipped', 'completed', 'cancelled'].includes(selectedOrder?.order_status) && getOrderShops(selectedOrder).length > 0 ? (
+              {/* ร้านค้า & สถานะ (แสดงแยกการ์ดตามแต่ละร้านค้าตามที่ต้องการ) */}
+              {getOrderShops(selectedOrder).length > 0 ? (
                 <View style={{ gap: 8, marginBottom: 12 }}>
                   {getOrderShops(selectedOrder).map((s: any, sIdx: number) => {
                     const sStatus = getStatusInfo(s.shop_status || s.status || selectedOrder?.order_status);
@@ -652,16 +652,11 @@ export default function OrdersScreen() {
                   })}
                 </View>
               ) : (
-                /* เมื่อไรเดอร์รับของครบทุกร้านแล้ว (delivering, delivered, completed) ให้แสดงการ์ดสถานะรวมสถานะเดียว */
                 <View style={styles.modalSectionCard}>
                   <View style={styles.modalShopRow}>
                     <Image source={{ uri: getOrderImage(selectedOrder || {}) }} style={styles.modalShopImg} />
                     <View style={{ flex: 1, marginLeft: 10 }}>
-                      <Text style={styles.modalShopName}>
-                        {getOrderShops(selectedOrder).length > 1
-                          ? `สั่งซื้อจาก ${getOrderShops(selectedOrder).length} ร้านค้า (${getOrderShops(selectedOrder).map((s: any) => s.shop_name).join(', ')})`
-                          : (selectedOrder?.shop_name || 'ร้านค้า')}
-                      </Text>
+                      <Text style={styles.modalShopName}>{selectedOrder?.shop_name || 'ร้านค้า'}</Text>
                       <View style={styles.statusRow}>
                         <View style={[styles.statusDot, { backgroundColor: getStatusInfo(selectedOrder?.order_status).dotColor }]} />
                         <Text style={[styles.statusLabel, { color: getStatusInfo(selectedOrder?.order_status).textColor }]}>

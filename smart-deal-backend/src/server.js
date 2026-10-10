@@ -1470,13 +1470,15 @@ app.get('/api/orders/:id/tracking', async (req, res) => {
           s.shop_id, 
           s.name, 
           s.address, 
-          s.image_url,
+          COALESCE(s.image_url, MAX(item_shops.product_image)) AS image_url,
           s.latitude AS lat, 
           s.longitude AS lng,
           u.phone,
           u.user_id as owner_user_id
         FROM (
-          SELECT DISTINCT COALESCE(oi.shop_id, p.shop_id, o.shop_id) AS shop_id
+          SELECT 
+            COALESCE(oi.shop_id, p.shop_id, o.shop_id) AS shop_id,
+            COALESCE(p.image_url, (SELECT image_url FROM auctions WHERE title COLLATE utf8mb4_unicode_ci = oi.product_name COLLATE utf8mb4_unicode_ci LIMIT 1), '') AS product_image
           FROM orders o
           LEFT JOIN order_items oi ON o.order_id = oi.order_id
           LEFT JOIN products p ON oi.product_id = p.product_id
@@ -1484,6 +1486,7 @@ app.get('/api/orders/:id/tracking', async (req, res) => {
         ) item_shops
         JOIN shops s ON item_shops.shop_id = s.shop_id
         LEFT JOIN users u ON s.owner_id = u.user_id
+        GROUP BY s.shop_id, s.name, s.address, s.image_url, s.latitude, s.longitude, u.phone, u.user_id
       `, [orderId]);
 
       let parsedShopStatuses = {};

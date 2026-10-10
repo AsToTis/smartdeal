@@ -566,31 +566,17 @@ export default function TrackingScreen() {
             return (
               <React.Fragment key={s?.shop_id || sIdx}>
                 <View style={styles.locationItem}>
-                  <View style={[styles.locationDot, { backgroundColor: '#f57c00' }]} />
+                  {s?.image_url || s?.shop_image ? (
+                    <Image 
+                      source={{ uri: getImageUrl(s.image_url || s.shop_image) }} 
+                      style={{ width: 40, height: 40, borderRadius: 20, marginRight: 10, marginTop: 2, backgroundColor: '#f1f5f9' }} 
+                    />
+                  ) : (
+                    <View style={[styles.locationDot, { backgroundColor: '#f57c00' }]} />
+                  )}
                   <View style={styles.locationContent}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
-                      <Text style={styles.locationLabel}>
-                        {shops.length > 1 ? `ร้านค้า #${sIdx + 1}` : 'ร้านค้า'}
-                      </Text>
-                      {s?.status && (
-                        <View style={{
-                          paddingHorizontal: 6,
-                          paddingVertical: 2,
-                          borderRadius: 6,
-                          backgroundColor: isPicked ? '#f0fdf4' : '#fffbeb'
-                        }}>
-                          <Text style={{
-                            fontSize: 10,
-                            fontWeight: '700',
-                            color: isPicked ? '#16a34a' : '#d97706'
-                          }}>
-                            {isPicked ? 'รับของแล้ว' : 'กำลังเตรียม'}
-                          </Text>
-                        </View>
-                      )}
-                    </View>
                     <View style={styles.locationTitleRow}>
-                      <Text style={styles.locationTitle} numberOfLines={1}>{s?.name || 'ร้านค้า'}</Text>
+                      <Text style={styles.locationTitle} numberOfLines={1}>{s?.name || s?.shop_name || 'ร้านค้า'}</Text>
                       <View style={styles.locationShopActions}>
                         <TouchableOpacity style={styles.locIconBtn} onPress={() => handleCallShop(s?.phone)}>
                           <Ionicons name="call" size={16} color="#f57c00" />
@@ -604,6 +590,24 @@ export default function TrackingScreen() {
                         </TouchableOpacity>
                       </View>
                     </View>
+
+                    {/* Status bullet matching Image 1 */}
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4, gap: 6 }}>
+                      <View style={{ 
+                        width: 7, 
+                        height: 7, 
+                        borderRadius: 3.5, 
+                        backgroundColor: isPicked ? '#16a34a' : (s?.status === 'ready' ? '#7c3aed' : '#0284c7') 
+                      }} />
+                      <Text style={{ 
+                        fontSize: 12, 
+                        fontWeight: '600', 
+                        color: isPicked ? '#16a34a' : (s?.status === 'ready' ? '#7c3aed' : '#0284c7') 
+                      }}>
+                        {isPicked ? 'ไรเดอร์รับสินค้าแล้ว 🛵' : (s?.status === 'ready' ? 'สินค้าพร้อมส่ง (รอไรเดอร์)' : 'ร้านค้ากำลังเตรียมสินค้า')}
+                      </Text>
+                    </View>
+
                     <Text style={styles.locationDesc} numberOfLines={2}>{s?.address || 'ที่อยู่ร้านค้า'}</Text>
 
                     {s?.pickup_proof_image && (
