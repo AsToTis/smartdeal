@@ -2973,6 +2973,20 @@ app.put('/api/notifications/read-all/:userId', async (req, res) => {
 // ==========================================
 
 // 1. บันทึกรีวิวและคะแนนดาว
+// 0. อัปโหลดรูปภาพรีวิว
+app.post('/api/reviews/upload', upload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: 'กรุณาแนบไฟล์รูปภาพ' });
+    }
+    const imageUrl = '/uploads/' + req.file.filename;
+    res.json({ success: true, image_url: imageUrl });
+  } catch (error) {
+    console.error('Upload review image error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 app.post('/api/reviews', async (req, res) => {
   const { 
     order_id, 
