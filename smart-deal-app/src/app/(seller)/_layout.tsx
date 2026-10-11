@@ -103,6 +103,13 @@ export default function SellerLayout() {
           headerShown: false
         }}
       />
+      <Tabs.Screen
+        name="reviews"
+        options={{
+          href: null,
+          headerShown: false
+        }}
+      />
     </Tabs>
   );
 }

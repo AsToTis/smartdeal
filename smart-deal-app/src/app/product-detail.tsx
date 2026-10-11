@@ -67,7 +67,18 @@ export default function ProductDetailScreen() {
       setLoading(true);
       const res = await axios.get(`${BASE_URL}/products/${id}`);
       if (res.data.success && res.data.product) {
-        const prod = res.data.product;
+        let prod = res.data.product;
+        // Fetch shop rating as fallback since products API might not include it
+        if (prod.shop_id) {
+          try {
+            const shopRes = await axios.get(`${BASE_URL}/shops/${prod.shop_id}`);
+            if (shopRes.data?.success && shopRes.data?.shop?.rating !== undefined) {
+              prod = { ...prod, shop_rating: shopRes.data.shop.rating };
+            }
+          } catch(e: any) { 
+            console.log('shop rating fetch err', e?.message); 
+          }
+        }
         setProduct(prod);
         // ถ้าสินค้าหมด ให้ quantity เป็น 0
         const stock = parseInt(prod.stock_quantity !== undefined && prod.stock_quantity !== null ? prod.stock_quantity : 0, 10);
@@ -335,7 +346,7 @@ export default function ProductDetailScreen() {
 
           <View style={styles.ratingRow}>
             <MaterialIcons name="star" size={16} color="#f59e0b" />
-            <Text style={styles.ratingText}>4.9 <Text style={styles.reviewCount}>(120 รีวิว)</Text></Text>
+            <Text style={styles.ratingText}>{product?.shop_rating > 0 ? Number(product?.shop_rating).toFixed(1) : 'ใหม่'} <Text style={styles.reviewCount}>(เรตติ้งร้านค้า)</Text></Text>
           </View>
         </View>
 

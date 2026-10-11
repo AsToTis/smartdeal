@@ -4498,7 +4498,7 @@ app.post('/api/admin/withdrawals/:id/reject', async (req, res) => {
 app.get('/api/seller/settings/:owner_id', async (req, res) => {
   try {
     const owner_id = req.params.owner_id;
-    const [rows] = await db.execute('SELECT s.shop_id, s.name, s.address, s.opening_hours, s.bank_name, s.bank_account, s.image_url, s.latitude, s.longitude, IFNULL(s.is_open, 1) AS is_open, u.full_name AS owner_name FROM shops s JOIN users u ON s.owner_id = u.user_id WHERE s.owner_id = ?', [owner_id]);
+    const [rows] = await db.execute('SELECT s.shop_id, s.name, s.address, s.opening_hours, s.bank_name, s.bank_account, s.image_url, s.latitude, s.longitude, IFNULL(s.is_open, 1) AS is_open, IFNULL(s.rating, 5.0) AS rating, u.full_name AS owner_name FROM shops s JOIN users u ON s.owner_id = u.user_id WHERE s.owner_id = ?', [owner_id]);
     if (rows.length === 0) return res.json({ success: false, message: 'Shop not found' });
     res.json({ success: true, data: rows[0] });
   } catch (error) {

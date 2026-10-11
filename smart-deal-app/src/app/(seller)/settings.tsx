@@ -297,6 +297,27 @@ export default function SellerSettingsScreen() {
             </View>
             <MaterialIcons name="chevron-right" size={24} color="#cbd5e1" />
           </TouchableOpacity>
+          <View style={styles.divider} />
+
+          <TouchableOpacity 
+            style={styles.settingItem} 
+            activeOpacity={0.7} 
+            onPress={() => router.push({
+              pathname: '/(seller)/reviews' as any,
+              params: { shop_id: shopInfo?.shop_id || 1 }
+            })}
+          >
+            <View style={[styles.iconCircle, { backgroundColor: '#fef3c7' }]}>
+              <MaterialIcons name="star" size={20} color="#f59e0b" />
+            </View>
+            <View style={styles.settingInfo}>
+              <Text style={styles.settingLabel}>รีวิวและคะแนนร้านค้า</Text>
+              <Text style={[styles.settingValue, { color: '#b45309', fontWeight: 'bold' }]}>
+                {shopInfo?.rating ? `⭐ ${Number(shopInfo.rating).toFixed(1)} / 5.0 (ดูรีวิวลูกค้า)` : 'ดูรีวิวและแชทกับลูกค้า'}
+              </Text>
+            </View>
+            <MaterialIcons name="chevron-right" size={24} color="#cbd5e1" />
+          </TouchableOpacity>
         </View>
 
         {/* การเงินและการตั้งค่า */}

@@ -257,6 +257,25 @@ export default function SellerDashboardScreen() {
               </TouchableOpacity>
             </View>
 
+            {/* การ์ดรีวิวและคะแนนร้านค้า */}
+            <TouchableOpacity 
+              style={[styles.actionCard, { marginTop: 10, width: '100%', borderColor: '#fef3c7', borderWidth: 1 }]} 
+              activeOpacity={0.7}
+              onPress={() => router.push({
+                pathname: '/(seller)/reviews' as any,
+                params: { shop_id: dashboardData?.shop_id || 1 }
+              })}
+            >
+              <View style={[styles.actionIconCircle, { backgroundColor: '#fef3c7' }]}>
+                <MaterialIcons name="star" size={24} color="#f59e0b" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.actionTitle}>รีวิวจากลูกค้า ⭐</Text>
+                <Text style={styles.actionDesc}>ดูความคิดเห็นจากลูกค้าและทักแชทได้ทันที</Text>
+              </View>
+              <MaterialIcons name="chevron-right" size={24} color="#cbd5e1" />
+            </TouchableOpacity>
+
             {/* รายการล่าสุด */}
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionTitle}>รายการสั่งซื้อล่าสุด</Text>
