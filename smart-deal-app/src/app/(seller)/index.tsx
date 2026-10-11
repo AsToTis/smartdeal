@@ -271,7 +271,7 @@ export default function SellerDashboardScreen() {
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.actionTitle}>รีวิวจากลูกค้า ⭐</Text>
-                <Text style={styles.actionDesc}>ดูความคิดเห็นจากลูกค้าและทักแชทได้ทันที</Text>
+                <Text style={styles.actionDesc}>ดูคะแนนดาวและความคิดเห็นจากลูกค้า</Text>
               </View>
               <MaterialIcons name="chevron-right" size={24} color="#cbd5e1" />
             </TouchableOpacity>

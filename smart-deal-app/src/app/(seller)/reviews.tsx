@@ -158,27 +158,6 @@ export default function SellerReviewsScreen() {
     return reviews;
   }, [reviews, selectedFilter]);
 
-  // Handle direct chat with customer
-  const handleChatCustomer = (item: any) => {
-    if (!item.order_id) {
-      Alert.alert('แจ้งเตือน', 'ไม่พบหมายเลขคำสั่งซื้อสำหรับรีวิวนี้');
-      return;
-    }
-
-    router.push({
-      pathname: '/order-chat' as any,
-      params: {
-        order_id: item.order_id,
-        role: 'seller',
-        target: 'buyer',
-        user_id: shopId || 1,
-        shop_id: shopId || 1,
-        target_shop_id: shopId || 1,
-        customer_name: item.user_name || 'ลูกค้า'
-      }
-    });
-  };
-
   const renderStars = (rating: number) => {
     const stars = [];
     const fullStars = Math.floor(rating);
@@ -250,18 +229,6 @@ export default function SellerReviewsScreen() {
             </View>
           </TouchableOpacity>
         )}
-
-        {/* Bottom Actions: Chat with customer */}
-        <View style={styles.cardActionsRow}>
-          <TouchableOpacity 
-            style={styles.chatCustomerBtn}
-            activeOpacity={0.8}
-            onPress={() => handleChatCustomer(item)}
-          >
-            <Ionicons name="chatbubble-ellipses" size={16} color="#fff" />
-            <Text style={styles.chatCustomerBtnText}>ทักแชทลูกค้า</Text>
-          </TouchableOpacity>
-        </View>
       </View>
     );
   };

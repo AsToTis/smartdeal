@@ -313,7 +313,7 @@ export default function SellerSettingsScreen() {
             <View style={styles.settingInfo}>
               <Text style={styles.settingLabel}>รีวิวและคะแนนร้านค้า</Text>
               <Text style={[styles.settingValue, { color: '#b45309', fontWeight: 'bold' }]}>
-                {shopInfo?.rating ? `⭐ ${Number(shopInfo.rating).toFixed(1)} / 5.0 (ดูรีวิวลูกค้า)` : 'ดูรีวิวและแชทกับลูกค้า'}
+                {shopInfo?.rating ? `⭐ ${Number(shopInfo.rating).toFixed(1)} / 5.0 (ดูรีวิวลูกค้า)` : 'ดูรีวิวจากลูกค้า'}
               </Text>
             </View>
             <MaterialIcons name="chevron-right" size={24} color="#cbd5e1" />
