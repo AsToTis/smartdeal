@@ -45,7 +45,7 @@ export default function SellerWalletScreen() {
         setStats({
           balance: res.data.balance || 0,
           pending: res.data.pending_amount || 0,
-          withdrawn_this_month: 0
+          withdrawn_this_month: res.data.withdrawn_this_month || 0
         });
         
         // Format history
@@ -57,10 +57,10 @@ export default function SellerWalletScreen() {
            return {
              id: item.id || index,
              type: item.type, // 'sale' or 'withdrawal'
-             title: item.type === 'sale' ? `ออเดอร์ #${item.id} (หัก GP)` : 'ถอนเงิน',
+             title: item.type === 'sale' ? (item.description || `ออเดอร์ #${item.id} (หัก GP ${res.data.platform_fee_percent || 15}%)`) : 'ถอนเงิน',
              date: formattedDate,
              amount: item.amount,
-             status: item.status === 'completed' ? 'สำเร็จ' : (item.status === 'pending' ? 'รอดำเนินการ' : item.status),
+             status: item.status === 'completed' ? 'สำเร็จ' : (item.status === 'pending' ? 'รอดำเนินการ' : (item.type === 'sale' ? 'สำเร็จ' : (item.status || 'สำเร็จ'))),
              icon: item.type === 'sale' ? 'utensils' : 'money-check-alt'
            };
         });

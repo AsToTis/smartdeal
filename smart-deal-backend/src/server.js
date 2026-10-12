@@ -338,6 +338,181 @@ const initComplaintsTable = async () => {
 };
 initComplaintsTable();
 
+// ==========================================
+// Multi-vendor Escrow & Wallet Synchronization
+// ==========================================
+const syncShopWalletBalances = async (specificShopId = null) => {
+  try {
+    const [feeRows] = await db.execute("SELECT setting_value FROM system_settings WHERE setting_key='platform_fee_percent'");
+    const platform_fee = feeRows.length > 0 ? parseFloat(feeRows[0].setting_value) : 15;
+    const fee_multiplier = 1 - (platform_fee / 100);
+
+    // 1. อัปเดตรายการเครดิตใน wallet_transactions ให้เป็นยอดสุทธิของร้านนั้นจริงหลังหัก GP
+    let txQuery = `
+      SELECT wt.id, wt.target_id as shop_id, wt.order_id, wt.amount 
+      FROM wallet_transactions wt 
+      WHERE wt.user_type = 'shop' AND wt.type = 'credit' AND wt.order_id IS NOT NULL
+    `;
+    const txParams = [];
+    if (specificShopId) {
+      txQuery += ' AND wt.target_id = ?';
+      txParams.push(specificShopId);
+    }
+    const [txRows] = await db.execute(txQuery, txParams);
+
+    for (const tx of txRows) {
+      const [itemRows] = await db.execute(`
+        SELECT SUM(oi.price * oi.quantity) as gross
+        FROM order_items oi
+        LEFT JOIN products p ON oi.product_id = p.product_id
+        WHERE oi.order_id = ? AND (oi.shop_id = ? OR p.shop_id = ?)
+      `, [tx.order_id, tx.shop_id, tx.shop_id]);
+
+      let gross = parseFloat(itemRows[0]?.gross || 0);
+      if (gross > 0) {
+        const correctNet = parseFloat((gross * fee_multiplier).toFixed(2));
+        if (Math.abs(correctNet - parseFloat(tx.amount)) > 0.009) {
+          await db.execute(`
+            UPDATE wallet_transactions 
+            SET amount = ?, description = ? 
+            WHERE id = ?
+          `, [correctNet, `รายรับจากออเดอร์ #${tx.order_id} (หัก GP ${platform_fee}%)`, tx.id]);
+        }
+      }
+    }
+
+    // 2. เติมออเดอร์ที่ completed แล้วแต่ร้านค้านั้นยังไม่มี record ใน wallet_transactions
+    let coQuery = `
+      SELECT DISTINCT o.order_id, COALESCE(oi.shop_id, p.shop_id, o.shop_id) as item_shop_id
+      FROM orders o
+      JOIN order_items oi ON o.order_id = oi.order_id
+      LEFT JOIN products p ON oi.product_id = p.product_id
+      WHERE o.order_status = 'completed'
+    `;
+    const coParams = [];
+    if (specificShopId) {
+      coQuery += ' AND (oi.shop_id = ? OR p.shop_id = ? OR o.shop_id = ?)';
+      coParams.push(specificShopId, specificShopId, specificShopId);
+    }
+    const [completedOrders] = await db.execute(coQuery, coParams);
+
+    for (const co of completedOrders) {
+      const targetSId = co.item_shop_id;
+      if (!targetSId) continue;
+      const [existing] = await db.execute(`
+        SELECT id FROM wallet_transactions 
+        WHERE user_type = 'shop' AND target_id = ? AND order_id = ? AND type = 'credit'
+      `, [targetSId, co.order_id]);
+
+      if (existing.length === 0) {
+        const [iRows] = await db.execute(`
+          SELECT SUM(oi.price * oi.quantity) as gross
+          FROM order_items oi
+          LEFT JOIN products p ON oi.product_id = p.product_id
+          WHERE oi.order_id = ? AND (oi.shop_id = ? OR p.shop_id = ?)
+        `, [co.order_id, targetSId, targetSId]);
+        const gross = parseFloat(iRows[0]?.gross || 0);
+        if (gross > 0) {
+          const net = parseFloat((gross * fee_multiplier).toFixed(2));
+          await db.execute(`
+            INSERT INTO wallet_transactions (user_type, target_id, order_id, amount, type, description)
+            VALUES ('shop', ?, ?, ?, 'credit', ?)
+          `, [targetSId, co.order_id, net, `รายรับจากออเดอร์ #${co.order_id} (หัก GP ${platform_fee}%)`]);
+        }
+      }
+    }
+
+    // 3. ปรับยอด balance ใน shop_wallets ให้ตรงกับความเป็นจริง (ยอดเครดิตสุทธิ - ยอดถอนทั้งหมด)
+    let shopQuery = 'SELECT shop_id FROM shops';
+    const sParams = [];
+    if (specificShopId) {
+      shopQuery += ' WHERE shop_id = ?';
+      sParams.push(specificShopId);
+    }
+    const [shopsToSync] = await db.execute(shopQuery, sParams);
+
+    for (const s of shopsToSync) {
+      const sId = s.shop_id;
+      const [creditRows] = await db.execute('SELECT SUM(amount) as total_credits FROM wallet_transactions WHERE target_id = ? AND user_type = "shop" AND type = "credit"', [sId]);
+      const totalCredits = parseFloat(creditRows[0]?.total_credits || 0);
+
+      const [withdrawnRows] = await db.execute('SELECT SUM(amount) as total_withdrawals FROM withdrawals WHERE shop_id = ?', [sId]);
+      const totalWithdrawals = parseFloat(withdrawnRows[0]?.total_withdrawals || 0);
+
+      const correctBalance = Math.max(0, parseFloat((totalCredits - totalWithdrawals).toFixed(2)));
+      await db.execute(`
+        INSERT INTO shop_wallets (shop_id, balance) VALUES (?, ?)
+        ON DUPLICATE KEY UPDATE balance = ?
+      `, [sId, correctBalance, correctBalance]);
+    }
+  } catch (err) {
+    console.error('❌ Error synchronizing shop wallets:', err.message);
+  }
+};
+syncShopWalletBalances();
+
+// ==========================================
+// Sync Receipts & Legacy Transactions
+// ==========================================
+const syncReceiptsAndTransactions = async () => {
+  try {
+    // 1. Sync receipts for all orders in database
+    const [ordersWithoutReceipts] = await db.execute(`
+      SELECT o.order_id, o.created_at
+      FROM orders o
+      LEFT JOIN receipts r ON o.order_id = r.order_id
+      WHERE r.receipt_id IS NULL
+    `);
+    for (const ord of ordersWithoutReceipts) {
+      const d = ord.created_at ? new Date(ord.created_at) : new Date();
+      const ymd = isNaN(d.getTime()) ? '20261012' : d.toISOString().slice(0, 10).replace(/-/g, '');
+      const recNum = `REC-${ymd}-${String(ord.order_id).padStart(5, '0')}`;
+      try {
+        await db.execute(`
+          INSERT IGNORE INTO receipts (order_id, receipt_number, issued_at)
+          VALUES (?, ?, COALESCE(?, NOW()))
+        `, [ord.order_id, recNum, ord.created_at]);
+      } catch(re) {}
+    }
+
+    // 2. Sync transactions from wallet_transactions (mirror for legacy/Navicat visibility)
+    try {
+      const [txCount] = await db.execute('SELECT COUNT(*) as count FROM transactions');
+      if (txCount[0].count === 0) {
+        const [walletCredits] = await db.execute(`
+          SELECT wt.target_id as shop_id, wt.amount, wt.created_at 
+          FROM wallet_transactions wt 
+          WHERE wt.user_type = 'shop' AND wt.type = 'credit'
+        `);
+        for (const wc of walletCredits) {
+          if (wc.shop_id && parseFloat(wc.amount) > 0) {
+            try {
+              await db.execute(`
+                INSERT INTO transactions (shop_id, amount, type, status, created_at)
+                VALUES (?, ?, 'order_revenue', 'completed', ?)
+              `, [wc.shop_id, wc.amount, wc.created_at || new Date()]);
+            } catch(te) {
+              try {
+                await db.execute(`
+                  INSERT INTO transactions (shop_id, amount, created_at)
+                  VALUES (?, ?, ?)
+                `, [wc.shop_id, wc.amount, wc.created_at || new Date()]);
+              } catch(e) {}
+            }
+          }
+        }
+      }
+    } catch(te) {}
+
+    console.log('✅ Receipts and transactions synchronized successfully');
+  } catch (err) {
+    console.error('❌ Error syncing receipts and transactions:', err.message);
+  }
+};
+syncReceiptsAndTransactions();
+
+
+
 const initBannersTable = async () => {
   try {
     await db.execute(`
@@ -1895,6 +2070,21 @@ app.get('/api/orders/:orderId', async (req, res) => {
       if (parsedShopStatuses[requestedShopId]) {
         effectiveStatus = parsedShopStatuses[requestedShopId];
       }
+
+      const isPickedUp = !!(parsedPickupProofs[requestedShopId] && parsedPickupProofs[requestedShopId].proof_image);
+      if (isPickedUp && ['ready', 'preparing'].includes(effectiveStatus)) {
+        effectiveStatus = 'delivering';
+      }
+
+      if (['delivering', 'delivered', 'shipped', 'completed', 'cancelled'].includes(order.order_status)) {
+        effectiveStatus = order.order_status;
+      }
+    }
+
+    if (order.delivery_status === 'completed' || order.order_status === 'completed') {
+      effectiveStatus = 'completed';
+    } else if ((order.delivery_status === 'delivered' || order.order_status === 'delivered') && effectiveStatus !== 'completed') {
+      effectiveStatus = 'delivered';
     }
 
     const [reviews] = await db.execute('SELECT rating, comment, created_at FROM reviews WHERE order_id = ? LIMIT 1', [orderId]);
@@ -2303,36 +2493,59 @@ app.put('/api/orders/:orderId/complete', async (req, res) => {
     await connection.query('UPDATE orders SET order_status = "completed", delivered_at = NOW() WHERE order_id = ?', [orderId]);
     await connection.query('UPDATE deliveries SET status = "completed", completed_at = NOW() WHERE order_id = ?', [orderId]);
 
-    // 2. คำนวณและโอนเงินเข้ากระเป๋าร้านค้า (Merchant Escrow Release)
-    const shopId = order.shop_id;
-    const totalAmount = parseFloat(order.total_amount) || 0;
-    const deliveryFee = parseFloat(order.delivery_fee) || 0;
-    const shopAmount = totalAmount - deliveryFee;
+    // 2. คำนวณและโอนเงินเข้ากระเป๋าร้านค้าแยกตามแต่ละร้าน (Multi-vendor Escrow Release & หัก GP)
+    const [feeRows] = await connection.query("SELECT setting_value FROM system_settings WHERE setting_key='platform_fee_percent'");
+    const platform_fee = feeRows.length > 0 ? parseFloat(feeRows[0].setting_value) : 15;
+    const fee_multiplier = 1 - (platform_fee / 100);
 
-    if (shopId && shopAmount > 0) {
-      await connection.query(`
-        INSERT INTO shop_wallets (shop_id, balance) VALUES (?, ?)
-        ON DUPLICATE KEY UPDATE balance = balance + VALUES(balance)
-      `, [shopId, shopAmount]);
+    // ดึงรายการสินค้าทั้งหมดในออเดอร์ เพื่อแยกยอดตามร้านค้าจริง
+    const [orderItems] = await connection.query(`
+      SELECT oi.*, COALESCE(oi.shop_id, p.shop_id, ?) AS effective_shop_id
+      FROM order_items oi
+      LEFT JOIN products p ON oi.product_id = p.product_id
+      WHERE oi.order_id = ?
+    `, [order.shop_id || 1, orderId]);
 
-      await connection.query(`
-        INSERT INTO wallet_transactions (user_type, target_id, order_id, amount, type, description)
-        VALUES ('shop', ?, ?, ?, 'credit', ?)
-      `, [shopId, orderId, shopAmount, `รายรับจากออเดอร์ #${orderId}`]);
+    // รวมยอดตามแต่ละร้านค้า
+    const shopTotals = {};
+    if (orderItems.length > 0) {
+      orderItems.forEach(item => {
+        const sId = String(item.effective_shop_id || order.shop_id || 1);
+        const itemTotal = (parseFloat(item.price) || 0) * (item.quantity || 1);
+        shopTotals[sId] = (shopTotals[sId] || 0) + itemTotal;
+      });
+    } else if (order.shop_id) {
+      const gross = Math.max(0, parseFloat(order.total_amount || 0) - parseFloat(order.delivery_fee || 0));
+      shopTotals[String(order.shop_id)] = gross;
     }
 
-    // Notify Shop Owner
-    try {
-      if (shopId) {
-        const [sRows] = await connection.query('SELECT owner_id FROM shops WHERE shop_id = ?', [shopId]);
-        if (sRows.length > 0 && sRows[0].owner_id) {
-          await connection.query(
-            'INSERT INTO notifications (user_id, title, message, type, reference_id, is_read, created_at) VALUES (?, ?, ?, "order", ?, 0, NOW())',
-            [sRows[0].owner_id, `💰 ลูกค้ายืนยันรับสินค้าแล้ว (#${orderId})`, `คำสั่งซื้อ #${orderId} เสร็จสมบูรณ์ ยอดเงิน ฿${shopAmount} ได้เข้ากระเป๋าเงินร้านค้าของคุณเรียบร้อยแล้ว`, String(orderId)]
-          );
-        }
+    // โอนเงินเข้ากระเป๋าแต่ละร้านค้าตามยอดขายจริงหลังหัก GP
+    for (const [sId, grossAmount] of Object.entries(shopTotals)) {
+      if (grossAmount > 0) {
+        const netAmount = parseFloat((grossAmount * fee_multiplier).toFixed(2));
+        
+        await connection.query(`
+          INSERT INTO shop_wallets (shop_id, balance) VALUES (?, ?)
+          ON DUPLICATE KEY UPDATE balance = balance + VALUES(balance)
+        `, [sId, netAmount]);
+
+        await connection.query(`
+          INSERT INTO wallet_transactions (user_type, target_id, order_id, amount, type, description)
+          VALUES ('shop', ?, ?, ?, 'credit', ?)
+        `, [sId, orderId, netAmount, `รายรับจากออเดอร์ #${orderId} (หัก GP ${platform_fee}%)`]);
+
+        // แจ้งเตือนเจ้าของร้าน
+        try {
+          const [sRows] = await connection.query('SELECT owner_id, name FROM shops WHERE shop_id = ?', [sId]);
+          if (sRows.length > 0 && sRows[0].owner_id) {
+            await connection.query(
+              'INSERT INTO notifications (user_id, title, message, type, reference_id, is_read, created_at) VALUES (?, ?, ?, "order", ?, 0, NOW())',
+              [sRows[0].owner_id, `💰 ลูกค้ายืนยันรับสินค้าแล้ว (#${orderId})`, `คำสั่งซื้อ #${orderId} เสร็จสมบูรณ์ ยอดเงินสุทธิ ฿${netAmount} (หัก GP ${platform_fee}%) ได้เข้ากระเป๋าเงินร้านค้าของคุณเรียบร้อยแล้ว`, String(orderId)]
+            );
+          }
+        } catch(ne) {}
       }
-    } catch(ne) {}
+    }
 
     // 3. ปล่อยเงินค่ารอบเข้ากระเป๋าไรเดอร์เมื่อลูกค้ายืนยันรับสินค้าแล้วเท่านั้น (Rider Escrow Release)
     const [delRows] = await connection.query('SELECT rider_id FROM deliveries WHERE order_id = ?', [orderId]);
@@ -4407,24 +4620,55 @@ app.get('/api/seller/dashboard/:owner_id', async (req, res) => {
 app.get('/api/seller/wallet/:shop_id', async (req, res) => {
   try {
     const shop_id = req.params.shop_id;
+    await syncShopWalletBalances(shop_id);
+
     await db.execute('INSERT IGNORE INTO shop_wallets (shop_id, balance) VALUES (?, 0)', [shop_id]);
     const [walletData] = await db.execute('SELECT balance FROM shop_wallets WHERE shop_id = ?', [shop_id]);
-    const balance = walletData[0]?.balance || 0;
+    const balance = parseFloat(walletData[0]?.balance || 0);
     
     // ดึงยอดถอนที่รอดำเนินการ
     const [pendingWithdrawData] = await db.execute('SELECT SUM(amount) as pending_amount FROM withdrawals WHERE shop_id = ? AND status = "pending"', [shop_id]);
-    const pending_withdrawal = pendingWithdrawData[0]?.pending_amount || 0;
-    
-    // ดึงยอดเงิน Escrow (ออเดอร์ที่จ่ายแล้ว/กำลังส่ง แต่ยังไม่กดยืนยันรับ)
-    const [pendingEscrowData] = await db.execute('SELECT SUM(total_amount - delivery_fee) as pending_escrow FROM orders WHERE shop_id = ? AND order_status IN ("paid", "shipped", "pending")', [shop_id]);
-    const pending_escrow = pendingEscrowData[0]?.pending_escrow || 0;
+    const pending_withdrawal = parseFloat(pendingWithdrawData[0]?.pending_amount || 0);
 
-    const [orders] = await db.execute('SELECT order_id as id, amount, created_at, "sale" as type FROM wallet_transactions WHERE target_id = ? AND user_type="shop" AND type="credit" ORDER BY created_at DESC LIMIT 20', [shop_id]);
-    const [withdrawals] = await db.execute('SELECT id, amount, created_at, status, "withdrawal" as type FROM withdrawals WHERE shop_id = ? ORDER BY created_at DESC LIMIT 20', [shop_id]);
-    const history = [...orders, ...withdrawals].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 30);
+    // ดึงยอดถอนที่เสร็จสิ้นในเดือนนี้
+    const [withdrawnMonthData] = await db.execute(`
+      SELECT SUM(amount) as withdrawn_month 
+      FROM withdrawals 
+      WHERE shop_id = ? AND status = "completed" 
+        AND MONTH(created_at) = MONTH(CURRENT_DATE()) 
+        AND YEAR(created_at) = YEAR(CURRENT_DATE())
+    `, [shop_id]);
+    const withdrawn_this_month = parseFloat(withdrawnMonthData[0]?.withdrawn_month || 0);
+
+    const [feeRows] = await db.execute("SELECT setting_value FROM system_settings WHERE setting_key='platform_fee_percent'");
+    const platform_fee = feeRows.length > 0 ? parseFloat(feeRows[0].setting_value) : 15;
+    const fee_multiplier = 1 - (platform_fee / 100);
+
+    // ดึงยอดเงิน Escrow (ออเดอร์ของร้านนี้ที่จ่ายแล้ว/กำลังจัดส่ง แต่ยังไม่กดยืนยันรับเสร็จสิ้น - คำนวณเฉพาะสินค้าของร้านและหัก GP)
+    const [pendingEscrowData] = await db.execute(`
+      SELECT SUM(oi.price * oi.quantity) as gross_escrow
+      FROM orders o
+      JOIN order_items oi ON o.order_id = oi.order_id
+      LEFT JOIN products p ON oi.product_id = p.product_id
+      WHERE (oi.shop_id = ? OR p.shop_id = ?)
+        AND o.order_status IN ('paid', 'preparing', 'ready', 'delivering', 'delivered', 'shipped')
+    `, [shop_id, shop_id]);
+    const gross_escrow = parseFloat(pendingEscrowData[0]?.gross_escrow || 0);
+    const pending_escrow = parseFloat((gross_escrow * fee_multiplier).toFixed(2));
+
+    const [orders] = await db.execute('SELECT order_id as id, amount, created_at, "sale" as type, description FROM wallet_transactions WHERE target_id = ? AND user_type="shop" AND type="credit" ORDER BY created_at DESC LIMIT 30', [shop_id]);
+    const [withdrawals] = await db.execute('SELECT id, amount, created_at, status, "withdrawal" as type FROM withdrawals WHERE shop_id = ? ORDER BY created_at DESC LIMIT 30', [shop_id]);
+    const history = [...orders, ...withdrawals].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 50);
     
-    // ส่งกลับไปให้แสดงผล (ใช้ pending_amount รับค่า escrow ไปเพื่อให้ frontend เดิมทำงานได้)
-    res.json({ success: true, balance, pending_amount: pending_escrow, pending_withdrawal, history });
+    res.json({ 
+      success: true, 
+      balance, 
+      pending_amount: pending_escrow, 
+      pending_withdrawal, 
+      withdrawn_this_month,
+      platform_fee_percent: platform_fee,
+      history 
+    });
   } catch (error) {
     console.error('Wallet API Error:', error);
     res.status(500).json({ success: false, error: error.message });

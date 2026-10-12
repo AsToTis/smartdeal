@@ -54,6 +54,19 @@ export default function OrdersScreen() {
   const [issueTopic, setIssueTopic] = useState('');
   const [issueDetail, setIssueDetail] = useState('');
   const [isSubmittingIssue, setIsSubmittingIssue] = useState(false);
+  const [reviewedOrders, setReviewedOrders] = useState<number[]>([]);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      const loadReviewedOrders = async () => {
+        try {
+          const stored = await AsyncStorage.getItem('reviewedOrders');
+          if (stored) setReviewedOrders(JSON.parse(stored));
+        } catch (e) {}
+      };
+      loadReviewedOrders();
+    }, [])
+  );
 
   const fetchOrders = async () => {
     try {
@@ -172,12 +185,16 @@ export default function OrdersScreen() {
         const sid = String(it.product_shop_id || it.shop_id || order.shop_id || '1');
         const simg = it.product_image || order.shop_image || '';
         const shopKey = sname || `shop_${sid}`;
+        let sStatus = (order.shop_statuses && order.shop_statuses[sid]) || order.order_status || 'preparing';
+        if (['delivering', 'delivered', 'shipped', 'completed', 'cancelled'].includes(order.order_status)) {
+          sStatus = order.order_status;
+        }
         if (!map[shopKey]) {
           map[shopKey] = {
             shop_id: sid,
             shop_name: sname,
             shop_image: simg,
-            shop_status: (order.shop_statuses && order.shop_statuses[sid]) || order.order_status || 'preparing'
+            shop_status: sStatus
           };
         }
       });
@@ -425,6 +442,9 @@ export default function OrdersScreen() {
 
   const canReview = (order: any) => {
     if (!order) return false;
+    // Check if already reviewed locally
+    if (reviewedOrders.includes(order.order_id)) return false;
+
     const statusInfo = getStatusInfo(order.order_status);
     if (statusInfo.isActive || statusInfo.isCancelled) return false;
     

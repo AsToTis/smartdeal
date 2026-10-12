@@ -151,15 +151,31 @@ export default function OrderDetailsScreen() {
     }
   };
 
-  const statusInfo = getStatusBadge(order.order_status);
+  // สถานะแท้จริงของออเดอร์ (Sync กับขั้นตอนการส่งของไรเดอร์และคำสั่งซื้อสมบูรณ์)
+  const effectiveStatus = (() => {
+    if (!order) return 'preparing';
+    if (order.order_status === 'completed' || order.delivery_status === 'completed') {
+      return 'completed';
+    }
+    if (order.order_status === 'delivered' || order.delivery_status === 'delivered' || order.delivery_proof_image || order.proof_image) {
+      if (order.order_status === 'completed') return 'completed';
+      return 'delivered';
+    }
+    if (order.order_status === 'delivering' || order.pickup_proof_image || order.delivery_status === 'delivering') {
+      return 'delivering';
+    }
+    return order.order_status || 'preparing';
+  })();
+
+  const statusInfo = getStatusBadge(effectiveStatus);
 
   // Status timeline steps (เริ่มต้นที่กำลังเตรียม อัตโนมัติเมื่อสั่งซื้อ)
   const steps = [
     { key: 'preparing', label: 'กำลังเตรียม', active: true },
-    { key: 'ready', label: 'พร้อมส่ง', active: ['ready', 'delivering', 'delivered', 'completed', 'shipped'].includes(order.order_status) },
-    { key: 'delivering', label: 'ไรเดอร์รับของ', active: ['delivering', 'delivered', 'completed', 'shipped'].includes(order.order_status) },
-    { key: 'delivered', label: 'ส่งถึงลูกค้า', active: ['delivered', 'completed'].includes(order.order_status) },
-    { key: 'completed', label: 'สำเร็จ', active: order.order_status === 'completed' }
+    { key: 'ready', label: 'พร้อมส่ง', active: ['ready', 'delivering', 'delivered', 'completed', 'shipped'].includes(effectiveStatus) },
+    { key: 'delivering', label: 'ไรเดอร์รับของ', active: ['delivering', 'delivered', 'completed', 'shipped'].includes(effectiveStatus) },
+    { key: 'delivered', label: 'ส่งถึงลูกค้า', active: ['delivered', 'completed'].includes(effectiveStatus) },
+    { key: 'completed', label: 'สำเร็จ', active: effectiveStatus === 'completed' }
   ];
 
   // คัดกรองสินค้าเฉพาะของร้านนี้เท่านั้น
@@ -250,7 +266,7 @@ export default function OrderDetailsScreen() {
               <View style={styles.noRiderNotice}>
                 <Ionicons name="time-outline" size={20} color="#d97706" />
                 <Text style={styles.noRiderText}>
-                  {order.order_status === 'ready' ? 'ระบบกำลังจับคู่ไรเดอร์ที่ใกล้ที่สุด...' : 'จะทำการค้นหาไรเดอร์เมื่อคุณกดพร้อมส่ง'}
+                  {effectiveStatus === 'ready' ? 'ระบบกำลังจับคู่ไรเดอร์ที่ใกล้ที่สุด...' : 'จะทำการค้นหาไรเดอร์เมื่อคุณกดพร้อมส่ง'}
                 </Text>
               </View>
             )}
@@ -381,7 +397,7 @@ export default function OrderDetailsScreen() {
         </View>
 
         {/* รีวิวจากลูกค้า */}
-        {order.order_status === 'completed' && (
+        {effectiveStatus === 'completed' && (
           <View style={styles.card}>
             <Text style={styles.sectionTitle}>รีวิวจากลูกค้า</Text>
             {order.review ? (
@@ -439,7 +455,7 @@ export default function OrderDetailsScreen() {
           </TouchableOpacity>
         )}
 
-        {['pending', 'paid'].includes(order.order_status) ? (
+        {['pending', 'paid'].includes(effectiveStatus) ? (
           <TouchableOpacity 
             style={[styles.actionBtn, { backgroundColor: '#f59e0b' }]}
             onPress={() => handleUpdateStatus('preparing')}
@@ -447,7 +463,7 @@ export default function OrderDetailsScreen() {
             <Ionicons name="restaurant" size={18} color="#fff" style={{ marginRight: 6 }} />
             <Text style={styles.actionBtnText}>รับออเดอร์</Text>
           </TouchableOpacity>
-        ) : order.order_status === 'preparing' ? (
+        ) : effectiveStatus === 'preparing' ? (
           <TouchableOpacity 
             style={[styles.actionBtn, { backgroundColor: '#7c3aed' }]}
             onPress={() => handleUpdateStatus('ready')}
@@ -457,7 +473,7 @@ export default function OrderDetailsScreen() {
           </TouchableOpacity>
         ) : null}
 
-        {order.order_status === 'ready' && (
+        {effectiveStatus === 'ready' && (
           <View style={styles.statusNoticeBox}>
             <Ionicons name="hourglass-outline" size={18} color="#7c3aed" />
             <Text style={styles.statusNoticeText}>
@@ -466,7 +482,7 @@ export default function OrderDetailsScreen() {
           </View>
         )}
 
-        {['delivering', 'shipped'].includes(order.order_status) && (
+        {['delivering', 'shipped'].includes(effectiveStatus) && (
           <View style={[styles.statusNoticeBox, { backgroundColor: '#dcfce7', borderColor: '#bbf7d0' }]}>
             <Ionicons name="bicycle" size={20} color="#15803d" />
             <Text style={[styles.statusNoticeText, { color: '#15803d' }]}>
@@ -475,11 +491,20 @@ export default function OrderDetailsScreen() {
           </View>
         )}
 
-        {order.order_status === 'delivered' && (
+        {effectiveStatus === 'delivered' && (
           <View style={[styles.statusNoticeBox, { backgroundColor: '#dbeafe', borderColor: '#bfdbfe' }]}>
             <Ionicons name="checkmark-circle" size={20} color="#1d4ed8" />
             <Text style={[styles.statusNoticeText, { color: '#1d4ed8' }]}>
               จัดส่งถึงลูกค้าแล้ว (รอลูกค้ายืนยัน)
+            </Text>
+          </View>
+        )}
+
+        {effectiveStatus === 'completed' && (
+          <View style={[styles.statusNoticeBox, { backgroundColor: '#f0fdf4', borderColor: '#bbf7d0' }]}>
+            <Ionicons name="checkmark-done-circle" size={20} color="#16a34a" />
+            <Text style={[styles.statusNoticeText, { color: '#16a34a' }]}>
+              คำสั่งซื้อสำเร็จสมบูรณ์แล้ว
             </Text>
           </View>
         )}
