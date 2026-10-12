@@ -2513,7 +2513,7 @@ app.post(['/api/payments', '/api/payments/confirm'], async (req, res) => {
       await connection.query(`
         INSERT INTO wallet_transactions (user_type, target_id, order_id, amount, type, description)
         VALUES ('shop', ?, ?, ?, 'credit', ?)
-      `, [targetShopId, effectiveOrderId, shopAmount, const stats = { today_sales: (statsData[0].today_sales || 0) - (statsData[0].total_gp || 0), today_orders: statsData[0].today_orders || 0 };`รายรับจากออเดอร์ #${effectiveOrderId}const stats = {const stats = {\n      today_sales: (statsData[0].today_sales || 0) - (statsData[0].total_gp || 0),\n      today_orders: statsData[0].today_orders || 0\n    };n      today_sales: (statsData[0].today_sales || 0) - (statsData[0].total_gp || 0),\n      today_orders: statsData[0].today_orders || 0\n        // INJECTED LINE TO FIND\n    };`]);
+      `, [targetShopId, effectiveOrderId, shopAmount, `รายรับจากออเดอร์ #${effectiveOrderId}`]);
     }
     */
 
@@ -2564,6 +2564,8 @@ app.put('/api/orders/:orderId/complete', async (req, res) => {
       return res.status(400).json({ success: false, message: 'คำสั่งซื้อนี้เสร็จสมบูรณ์ไปแล้ว' });
     }
 
+    const deliveryFee = parseFloat(order.delivery_fee || 0);
+
     // 1. อัปเดตสถานะคำสั่งซื้อและการจัดส่งเป็น completed (เสร็จสมบูรณ์ 100%)
     await connection.query('UPDATE orders SET order_status = "completed", delivered_at = NOW() WHERE order_id = ?', [orderId]);
     await connection.query('UPDATE deliveries SET status = "completed", completed_at = NOW() WHERE order_id = ?', [orderId]);
@@ -2590,7 +2592,7 @@ app.put('/api/orders/:orderId/complete', async (req, res) => {
         shopTotals[sId] = (shopTotals[sId] || 0) + itemTotal;
       });
     } else if (order.shop_id) {
-      const gross = Math.max(0, parseFloat(order.total_amount || 0) - parseFloat(order.delivery_fee || 0));
+      const gross = Math.max(0, parseFloat(order.total_amount || 0) - deliveryFee);
       shopTotals[String(order.shop_id)] = gross;
     }
 
@@ -2608,6 +2610,14 @@ app.put('/api/orders/:orderId/complete', async (req, res) => {
           INSERT INTO wallet_transactions (user_type, target_id, order_id, amount, type, description)
           VALUES ('shop', ?, ?, ?, 'credit', ?)
         `, [sId, orderId, netAmount, `รายรับจากออเดอร์ #${orderId} (หัก GP ${platform_fee}%)`]);
+
+        // ซิงค์ลง transactions ด้วย (เพื่อความเข้ากันได้กับ Navicat/Dashboard)
+        try {
+          await connection.query(`
+            INSERT INTO transactions (shop_id, amount, type, status, created_at)
+            VALUES (?, ?, 'order_revenue', 'completed', NOW())
+          `, [sId, netAmount]);
+        } catch(te) {}
 
         // แจ้งเตือนเจ้าของร้าน
         try {
@@ -2635,14 +2645,47 @@ app.put('/api/orders/:orderId/complete', async (req, res) => {
         INSERT INTO wallet_transactions (user_type, target_id, order_id, amount, type, description)
         VALUES ('rider', ?, ?, ?, 'credit', ?)
       `, [riderId, orderId, deliveryFee, `ค่ารอบจัดส่งออเดอร์ #${orderId} (ลูกค้ายืนยันรับสินค้าแล้ว)`]);
+
+      // แจ้งเตือนไรเดอร์
+      try {
+        const [rUser] = await connection.query('SELECT user_id FROM riders WHERE rider_id = ?', [riderId]);
+        const riderUserId = rUser.length > 0 ? rUser[0].user_id : null;
+        if (riderUserId) {
+          await connection.query(
+            'INSERT INTO notifications (user_id, title, message, type, reference_id, is_read, created_at) VALUES (?, ?, ?, "order", ?, 0, NOW())',
+            [riderUserId, `🛵 จัดส่งออเดอร์ #${orderId} สำเร็จ`, `ลูกค้ายืนยันรับสินค้าแล้ว ค่ารอบ ฿${deliveryFee} ได้เข้ากระเป๋าเงินของคุณเรียบร้อยแล้ว`, String(orderId)]
+          );
+        }
+      } catch(rne) {}
     }
+
+    // 4. บันทึก / สร้างใบเสร็จใน receipts (ถ้ายังไม่มี)
+    try {
+      const d = order.created_at ? new Date(order.created_at) : new Date();
+      const ymd = isNaN(d.getTime()) ? '20261012' : d.toISOString().slice(0, 10).replace(/-/g, '');
+      const recNum = `REC-${ymd}-${String(orderId).padStart(5, '0')}`;
+      await connection.query(`
+        INSERT IGNORE INTO receipts (order_id, receipt_number, issued_at)
+        VALUES (?, ?, NOW())
+      `, [orderId, recNum]);
+    } catch(re) {}
+
+    // 5. แจ้งเตือนผู้ซื้อ (Buyer)
+    try {
+      if (order.user_id) {
+        await connection.query(
+          'INSERT INTO notifications (user_id, title, message, type, reference_id, is_read, created_at) VALUES (?, ?, ?, "order", ?, 0, NOW())',
+          [order.user_id, `🎉 คำสั่งซื้อ #${orderId} เสร็จสมบูรณ์แล้ว`, `คุณได้ยืนยันการรับสินค้าเรียบร้อยแล้ว ขอบคุณที่ใช้บริการ Smart Deal`, String(orderId)]
+        );
+      }
+    } catch(be) {}
 
     await connection.commit();
     res.json({ success: true, message: 'ยืนยันรับสินค้าและโอนเงินให้ร้านค้าสำเร็จ' });
   } catch (error) {
     await connection.rollback();
     console.error('Order Complete Error:', error);
-    res.status(500).json({ success: false, message: 'เกิดข้อผิดพลาดในการยืนยันรับสินค้า' });
+    res.status(500).json({ success: false, message: error.message || 'เกิดข้อผิดพลาดในการยืนยันรับสินค้า' });
   } finally {
     connection.release();
   }
