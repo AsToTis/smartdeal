@@ -86,6 +86,81 @@ app.get('/api/admin/migrate-rating-system', async (req, res) => {
   }
 });
 
+
+app.get('/api/admin/sync-receipts-transactions', async (req, res) => {
+  try {
+    const results = {};
+
+    // 1. Sync receipts
+    const [orders] = await db.query('SELECT order_id, created_at FROM orders');
+    let receiptsInserted = 0;
+    for (const ord of orders) {
+      const d = ord.created_at ? new Date(ord.created_at) : new Date();
+      const ymd = isNaN(d.getTime()) ? '20261012' : d.toISOString().slice(0, 10).replace(/-/g, '');
+      const recNum = `REC-${ymd}-${String(ord.order_id).padStart(5, '0')}`;
+      try {
+        const [r] = await db.query(
+          'INSERT IGNORE INTO receipts (order_id, receipt_number, issued_at) VALUES (?, ?, ?)',
+          [ord.order_id, recNum, ord.created_at || new Date()]
+        );
+        if (r.affectedRows > 0) receiptsInserted++;
+      } catch (err) {
+        results.receipt_err = err.message;
+      }
+    }
+    const [receiptRows] = await db.query('SELECT COUNT(*) as count FROM receipts');
+    results.receipts_count = receiptRows[0].count;
+    results.receipts_inserted = receiptsInserted;
+
+    // 2. Check columns of transactions
+    const [txCols] = await db.query("SHOW COLUMNS FROM transactions");
+    results.transactions_columns = txCols.map(c => ({ field: c.Field, type: c.Type }));
+
+    const typeCol = txCols.find(c => c.Field === 'type')?.Type || '';
+    const statusCol = txCols.find(c => c.Field === 'status')?.Type || '';
+    results.type_enum = typeCol;
+    results.status_enum = statusCol;
+
+    let allowedType = 'order_revenue';
+    if (typeCol.includes('credit') && !typeCol.includes('order_revenue')) allowedType = 'credit';
+    else if (typeCol.includes('income')) allowedType = 'income';
+    else if (typeCol.includes('sale')) allowedType = 'sale';
+    
+    let allowedStatus = 'completed';
+    if (!statusCol.includes('completed') && statusCol.includes('success')) allowedStatus = 'success';
+
+    // 3. Populate transactions from wallet_transactions
+    const [walletCredits] = await db.query(`
+      SELECT target_id as shop_id, amount, created_at 
+      FROM wallet_transactions 
+      WHERE user_type = 'shop' AND type = 'credit'
+    `);
+
+    let txInserted = 0;
+    for (const wc of walletCredits) {
+      if (wc.shop_id && parseFloat(wc.amount) > 0) {
+        try {
+          const [r] = await db.query(`
+            INSERT INTO transactions (shop_id, amount, type, status, created_at)
+            VALUES (?, ?, ?, ?, ?)
+          `, [wc.shop_id, wc.amount, allowedType, allowedStatus, wc.created_at || new Date()]);
+          if (r.affectedRows > 0) txInserted++;
+        } catch(err) {
+          results.tx_err = err.message;
+        }
+      }
+    }
+
+    const [finalTx] = await db.query('SELECT COUNT(*) as count FROM transactions');
+    results.transactions_count = finalTx[0].count;
+    results.transactions_inserted = txInserted;
+
+    res.json({ success: true, results });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
