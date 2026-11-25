@@ -658,7 +658,6 @@ const syncReceiptsAndTransactions = async () => {
 syncReceiptsAndTransactions();
 
 
-
 const initBannersTable = async () => {
   try {
     await db.execute(`
@@ -776,6 +775,31 @@ app.post('/api/login', async (req, res) => {
   } catch (error) {
     console.error('Login Error:', error);
     res.status(500).json({ message: 'เกิดข้อผิดพลาดในการเข้าสู่ระบบ', error: error.message });
+  }
+});
+
+// ยืนยัน OTP ตอนเข้าสู่ระบบ (คู่กับหน้า login_2fa ในแอป ใช้เมื่อ /api/login ตอบ require_2fa)
+app.post('/api/login/verify-2fa', async (req, res) => {
+  const { email, otp } = req.body;
+  const appName = 'แอป Smart Deal (ยืนยัน OTP)';
+  try {
+    const record = otpStore[email];
+    if (!record || Date.now() > record.expiresAt || record.otp !== otp) {
+      await logLogin(db, { req, appName, identifier: email, success: false, reason: 'รหัส OTP ไม่ถูกต้องหรือหมดอายุ' });
+      return res.status(400).json({ message: 'รหัส OTP ไม่ถูกต้องหรือหมดอายุ' });
+    }
+    const [users] = await db.execute('SELECT * FROM users WHERE email = ?', [email]);
+    if (!users.length) return res.status(404).json({ message: 'ไม่พบบัญชีผู้ใช้' });
+    const user = users[0];
+    delete otpStore[email];
+    const [shops] = await db.execute('SELECT shop_id, name, status, image_url FROM shops WHERE owner_id = ? AND status = "approved" LIMIT 1', [user.user_id]);
+    await logLogin(db, { req, user, appName, identifier: email, success: true });
+    res.json({
+      message: 'เข้าสู่ระบบสำเร็จ!',
+      user: { user_id: user.user_id, full_name: user.full_name, email: user.email, phone: user.phone, avatar_url: user.avatar_url || null, role: user.role, is_seller: shops.length > 0, shop_data: shops[0] || null }
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'เกิดข้อผิดพลาดในการยืนยัน OTP', error: error.message });
   }
 });
 
@@ -1188,202 +1212,6 @@ app.get('/api/points/:userId', async (req, res) => {
 // 1.1 USER PROFILE & ACCOUNT APIs
 // ==========================================
 
-// ดึงข้อมูลโปรไฟล์ผู้ใช้ (GET /api/users/:id หรือ GET /api/users/:id/profile)
-app.get('/api/users/:id/profile', async (req, res) => {
-  const { id } = req.params;
-  try {
-    const [users] = await db.execute(
-      'SELECT user_id, full_name, email, phone, avatar_url, role, status, created_at, is_2fa_enabled FROM users WHERE user_id = ?',
-      [id]
-    );
-
-    if (users.length === 0) {
-      return res.status(404).json({ success: false, message: 'ไม่พบข้อมูลผู้ใช้งาน' });
-    }
-
-    res.json({
-      success: true,
-      user: users[0]
-    });
-  } catch (error) {
-    console.error(`❌ GET /api/users/${id}/profile error:`, error.message);
-    res.status(500).json({ success: false, message: 'เกิดข้อผิดพลาดในการดึงข้อมูลโปรไฟล์', error: error.message });
-  }
-});
-
-// ดึงข้อมูลผู้ใช้ทั่วไป (GET /api/users/:id)
-app.get('/api/users/:id', async (req, res) => {
-  const { id } = req.params;
-  try {
-    const [users] = await db.execute(
-      'SELECT user_id, full_name, email, phone, avatar_url, role, status, created_at, is_2fa_enabled FROM users WHERE user_id = ?',
-      [id]
-    );
-
-    if (users.length === 0) {
-      return res.status(404).json({ success: false, message: 'ไม่พบข้อมูลผู้ใช้งาน' });
-    }
-
-    res.json({
-      success: true,
-      user: users[0]
-    });
-  } catch (error) {
-    console.error(`❌ GET /api/users/${id} error:`, error.message);
-    res.status(500).json({ success: false, message: 'เกิดข้อผิดพลาดในการดึงข้อมูลผู้ใช้งาน', error: error.message });
-  }
-});
-
-// อัปเดตข้อมูลโปรไฟล์ (PUT /api/users/:id/profile หรือ PUT /api/users/:id)
-app.put('/api/users/:id/profile', async (req, res) => {
-  const { id } = req.params;
-  const { full_name, phone, email, avatar_url, profile_image } = req.body;
-  const finalAvatar = avatar_url !== undefined ? avatar_url : profile_image;
-
-  try {
-    // 1. ตรวจสอบว่าผู้ใช้มีอยู่จริงหรือไม่
-    const [existingUser] = await db.execute('SELECT * FROM users WHERE user_id = ?', [id]);
-    if (existingUser.length === 0) {
-      return res.status(404).json({ success: false, message: 'ไม่พบข้อมูลผู้ใช้งานในระบบ' });
-    }
-
-    const current = existingUser[0];
-    const newFullName = full_name !== undefined ? full_name : current.full_name;
-    const newPhone = phone !== undefined ? phone : current.phone;
-    const newEmail = email !== undefined ? email : current.email;
-    const newAvatar = finalAvatar !== undefined ? finalAvatar : current.avatar_url;
-
-    // 2. ตรวจสอบว่า email หรือ phone ซ้ำกับ user อื่นหรือไม่
-    if (newEmail || newPhone) {
-      const [duplicate] = await db.execute(
-        'SELECT user_id FROM users WHERE (email = ? OR phone = ?) AND user_id != ?',
-        [newEmail, newPhone, id]
-      );
-      if (duplicate.length > 0) {
-        return res.status(400).json({ 
-          success: false, 
-          message: 'อีเมลหรือเบอร์โทรศัพท์นี้ถูกใช้งานโดยบัญชีอื่นแล้ว กรุณาใช้อีเมล/เบอร์โทรศัพท์อื่น' 
-        });
-      }
-    }
-
-    // 3. ทำการอัปเดตลงตาราง users ในฐานข้อมูล MySQL
-    await db.execute(
-      'UPDATE users SET full_name = ?, phone = ?, email = ?, avatar_url = ? WHERE user_id = ?',
-      [newFullName, newPhone, newEmail, newAvatar, id]
-    );
-
-    // 4. ดึงข้อมูลล่าสุดที่อัปเดตแล้วส่งกลับไปให้ Frontend
-    const [updatedRows] = await db.execute(
-      'SELECT user_id, full_name, email, phone, avatar_url, role, status FROM users WHERE user_id = ?',
-      [id]
-    );
-
-    const updatedUser = updatedRows[0];
-    console.log(`✅ อัปเดตข้อมูลผู้ใช้ ID: ${id} สำเร็จ:`, updatedUser);
-
-    res.json({
-      success: true,
-      message: 'บันทึกข้อมูลส่วนตัวสำเร็จ',
-      user: updatedUser
-    });
-  } catch (error) {
-    console.error(`❌ PUT /api/users/${id}/profile error:`, error.message);
-    res.status(500).json({ success: false, message: 'เกิดข้อผิดพลาดในการบันทึกข้อมูล', error: error.message });
-  }
-});
-
-// อัปโหลดรูปโปรไฟล์ (POST /api/users/:id/avatar)
-app.post('/api/users/:id/avatar', upload.single('avatar'), async (req, res) => {
-  const { id } = req.params;
-  try {
-    if (!req.file) {
-      return res.status(400).json({ success: false, message: 'ไม่มีไฟล์' });
-    }
-    const avatarUrl = '/uploads/' + req.file.filename;
-    await db.execute('UPDATE users SET avatar_url = ? WHERE user_id = ?', [avatarUrl, id]);
-    res.json({ success: true, avatar_url: avatarUrl });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// เปลี่ยนรหัสผ่าน (PUT /api/users/:id/change-password)
-app.put('/api/users/:id/change-password', async (req, res) => {
-  const { id } = req.params;
-  const { old_password, new_password, oldPassword, newPassword } = req.body;
-  const currentPassword = old_password || oldPassword;
-  const targetPassword = new_password || newPassword;
-
-  if (!currentPassword || !targetPassword) {
-    return res.status(400).json({ success: false, message: 'กรุณากรอกรหัสผ่านเดิมและรหัสผ่านใหม่' });
-  }
-
-  if (targetPassword.length < 4) {
-    return res.status(400).json({ success: false, message: 'รหัสผ่านใหม่ต้องมีความยาวอย่างน้อย 4 ตัวอักษร' });
-  }
-
-  try {
-    const [users] = await db.execute('SELECT * FROM users WHERE user_id = ?', [id]);
-    if (users.length === 0) {
-      return res.status(404).json({ success: false, message: 'ไม่พบข้อมูลผู้ใช้งานในระบบ' });
-    }
-
-    const user = users[0];
-    const isMatch = await bcrypt.compare(currentPassword, user.password_hash);
-    if (!isMatch) {
-      return res.status(400).json({ success: false, message: 'รหัสผ่านเดิมไม่ถูกต้อง' });
-    }
-
-    const salt = await bcrypt.genSalt(10);
-    const new_password_hash = await bcrypt.hash(targetPassword, salt);
-
-    await db.execute('UPDATE users SET password_hash = ? WHERE user_id = ?', [new_password_hash, id]);
-    console.log(`✅ เปลี่ยนรหัสผ่านของผู้ใช้ ID: ${id} สำเร็จ`);
-
-    res.json({
-      success: true,
-      message: 'เปลี่ยนรหัสผ่านสำเร็จเรียบร้อยแล้ว'
-    });
-  } catch (error) {
-    console.error(`❌ PUT /api/users/${id}/change-password error:`, error.message);
-    res.status(500).json({ success: false, message: 'เกิดข้อผิดพลาดในการเปลี่ยนรหัสผ่าน', error: error.message });
-  }
-});
-
-// ดึงคะแนนพอยท์และประวัติ (GET /api/points/:userId)
-app.get('/api/points/:userId', async (req, res) => {
-  const { userId } = req.params;
-  try {
-    const [rows] = await db.execute('SELECT * FROM user_points WHERE user_id = ?', [userId]);
-    let points = 1000;
-    
-    if (rows.length === 0) {
-      await db.execute('INSERT IGNORE INTO user_points (user_id, points) VALUES (?, 1000)', [userId]);
-      await db.execute('INSERT IGNORE INTO user_point_history (user_id, title, points_change) VALUES (?, ?, ?)', [userId, 'โบนัสต้อนรับสมาชิกใหม่', '+1000']);
-    } else {
-      points = rows[0].points;
-    }
-
-    const [historyRows] = await db.execute('SELECT * FROM user_point_history WHERE user_id = ? ORDER BY created_at DESC', [userId]);
-    
-    const formattedHistory = historyRows.map(h => ({
-      id: h.id.toString(),
-      title: h.title,
-      points: h.points_change,
-      date: new Date(h.created_at).toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' })
-    }));
-
-    res.json({
-      success: true,
-      points: points,
-      history: formattedHistory
-    });
-  } catch (error) {
-    console.error(`❌ GET /api/points/${userId} error:`, error.message);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
 
 // ==========================================
 // 2. OTP & PASSWORD RESET APIs
@@ -3738,136 +3566,6 @@ app.get('/api/reviews/product/:productId', async (req, res) => {
   }
 });
 
-// 3. ดึงคะแนนสะสมของผู้ใช้
-app.get('/api/points/:userId', async (req, res) => {
-  const { userId } = req.params;
-  try {
-    const [rows] = await db.execute('SELECT points FROM user_points WHERE user_id = ?', [userId]);
-    const points = rows.length > 0 ? rows[0].points : 1250;
-    res.json({
-      success: true,
-      points,
-      history: [
-        { id: 1, title: 'ได้รับคะแนนจากการสั่งซื้ออาหาร #24', points: '+25', date: '20 ส.ค. 2569' },
-        { id: 2, title: 'ได้รับคะแนนโบนัสต้อนรับสมาชิกใหม่', points: '+1,000', date: '15 ส.ค. 2569' },
-        { id: 3, title: 'รีวิวอาหารได้รับพอยท์', points: '+50', date: '18 ส.ค. 2569' },
-        { id: 4, title: 'ลดขยะอาหารพรีเมียม ช่วยสิ่งแวดล้อม', points: '+175', date: '19 ส.ค. 2569' }
-      ]
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// 4. ติดตามสถานะออเดอร์ (Live Order Tracking)
-app.get('/api/orders/:orderId/tracking', async (req, res) => {
-  const { orderId } = req.params;
-  try {
-    const [orders] = await db.execute(
-      `SELECT 
-        o.*, 
-        s.name AS shop_name,
-        s.image_url AS shop_image,
-        del.status,
-        del.assigned_at,
-        del.delivered_at,
-        del.proof_image,
-        del.pickup_proof_image,
-        u_rider.full_name AS rider_name,
-        u_rider.phone AS rider_phone,
-        r.vehicle_type,
-        r.license_plate
-      FROM orders o
-      LEFT JOIN shops s ON o.shop_id = s.shop_id
-      LEFT JOIN deliveries del ON o.order_id = del.order_id
-      LEFT JOIN riders r ON del.rider_id = r.rider_id
-      LEFT JOIN users u_rider ON r.user_id = u_rider.user_id
-      WHERE o.order_id = ?`,
-      [orderId]
-    );
-
-    if (orders.length === 0) {
-      return res.status(404).json({ success: false, message: 'ไม่พบคำสั่งซื้อ' });
-    }
-
-    const order = orders[0];
-    const [items] = await db.execute(
-      `SELECT oi.*, p.name AS db_product_name, COALESCE(p.image_url, (SELECT image_url FROM auctions WHERE title COLLATE utf8mb4_unicode_ci = oi.product_name COLLATE utf8mb4_unicode_ci LIMIT 1)) AS product_image
-         FROM order_items oi
-       LEFT JOIN products p ON oi.product_id = p.product_id
-       WHERE oi.order_id = ?`,
-      [orderId]
-    );
-
-    const trackingData = {
-      order_id: order.order_id,
-      ref_code: `#SD-99${order.order_id}`,
-      order_status: order.order_status,
-      delivery_status: order.delivery_status || 'picked_up',
-      status_title: order.order_status === 'completed' ? 'สินค้ามาถึงแล้ว' : 'คนขับกำลังไปรับสินค้า',
-      eta_text: '12:45 น.',
-      eta_minutes: '5 นาที',
-      shop_name: order.shop_name || 'ร้านอาหารไทยรสเด็ด',
-      shop_image: order.shop_image,
-      shipping_address: order.shipping_address,
-      proof_image: order.proof_image || null,
-      pickup_proof_image: order.pickup_proof_image || null,
-      receiver_name: order.receiver_name,
-      receiver_phone: order.receiver_phone,
-      rider: {
-        name: order.rider_name || 'สมชาย ใจดี',
-        phone: order.rider_phone || '081-234-5678',
-        rating: '4.9',
-        vehicle: order.license_plate ? `ทะเบียน ${order.license_plate} (${order.vehicle_type || 'รถจักรยานยนต์'})` : 'ทะเบียน กข-1234 (รถจักรยานยนต์)',
-        tag: 'ฉีดวัคซีนแล้ว 3 เข็ม',
-        avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200'
-      },
-      steps: [
-        {
-          id: 1,
-          title: 'กำลังจัดเตรียมสินค้า',
-          subtitle: 'เสร็จสิ้นเมื่อ 12:10 น.',
-          completed: true,
-          current: false,
-          icon: 'check'
-        },
-        {
-          id: 2,
-          title: 'คนขับกำลังไปรับสินค้า',
-          subtitle: 'กำลังดำเนินการ',
-          completed: false,
-          current: true,
-          icon: 'two-wheeler'
-        },
-        {
-          id: 3,
-          title: 'กำลังนำส่งสินค้า',
-          subtitle: 'รอการดำเนินการ',
-          completed: false,
-          current: false,
-          icon: 'near-me'
-        },
-        {
-          id: 4,
-          title: 'สินค้ามาถึงแล้ว',
-          subtitle: 'จัดส่งสำเร็จเมื่อ 12:45 น.',
-          completed: false,
-          current: false,
-          icon: 'check-circle'
-        }
-      ],
-      items: items.map(item => ({
-        ...item,
-        product_name: item.product_name || item.db_product_name || 'สินค้า'
-      }))
-    };
-
-    res.json({ success: true, tracking: trackingData });
-  } catch (error) {
-    console.error('❌ Tracking error:', error.message);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
 
 // ==========================================
 // 7. MERCHANT / SHOP MANAGEMENT APIs
@@ -4992,16 +4690,6 @@ app.put('/api/admin/shops/:id/approve', async (req, res) => {
         oldValue: { status: 'pending' }, newValue: { status: 'approved' } });
       await db.query('INSERT INTO notifications (user_id, title, message, type, reference_id, is_read, created_at) VALUES (?, ?, ?, ?, ?, 0, NOW())', [shop[0].owner_id, `🎉 ร้าน ${shop[0].name} ได้รับการอนุมัติแล้ว`, 'ผู้ดูแลระบบอนุมัติร้านค้าของคุณแล้ว เริ่มลงเมนูและรับออเดอร์ได้ทันที', 'shop_approved', shopId]);
     }
-    res.json({ success: true, message: 'อนุมัติร้านค้าเรียบร้อยแล้ว' });
-  } catch (error) {
-    console.error('API /api/admin/shops/:id/approve Error:', error);
-    res.status(500).json({ error: 'Database error' });
-  }
-});
-app.put('/api/admin/shops/:id/approve', async (req, res) => {
-  try {
-    const [result] = await db.execute(`UPDATE shops SET status = "approved" WHERE shop_id = ?`, [req.params.id]);
-    if (result.affectedRows === 0) return res.status(404).json({ error: 'ไม่พบร้านค้า' });
     res.json({ success: true, message: 'อนุมัติร้านค้าเรียบร้อยแล้ว' });
   } catch (error) {
     console.error('API /api/admin/shops/:id/approve Error:', error);
@@ -6819,7 +6507,6 @@ app.get('/api/rider/:id/history', async (req, res) => {
 // ==========================================
 
 
-
 // ====== ADMIN KYC ROUTES ======
 // Get all approved riders
 app.get('/api/admin/riders', async (req, res) => {
@@ -7507,7 +7194,6 @@ app.put('/api/admin/refund-status/:id', async (req, res) => {
 // ---------------------------------------------------------
 
 
-
 app.get('/api/admin/orders', async (req, res) => {
   try {
     const connection = await db.getConnection();
@@ -7577,10 +7263,6 @@ app.post('/api/rider/wallet/withdraw', async (req, res) => {
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });
-
-
-
-
 
 
 // Notifications API

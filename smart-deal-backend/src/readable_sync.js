@@ -7,6 +7,8 @@
 // ==========================================================
 const DF = (x) => `DATE_FORMAT(${x}, '%d/%m/%Y %H:%i')`;
 const M = (x) => `CONCAT('฿', FORMAT(COALESCE(${x}, 0), 2))`;
+// ระยะทาง (กม.) จากจุดอ้างอิงของระบบ = พิกัดเริ่มต้นในฐานข้อมูล (ม.มหาสารคาม 16.246826, 103.251992)
+const HAV = (lat, lng) => `6371 * 2 * ASIN(SQRT(POW(SIN(RADIANS(${lat} - 16.246826) / 2), 2) + COS(RADIANS(16.246826)) * COS(RADIANS(${lat})) * POW(SIN(RADIANS(${lng} - 103.251992) / 2), 2)))`;
 const CASE = (expr, map, fallback) => `CASE ${expr} ${Object.entries(map).map(([k, v]) => `WHEN '${k}' THEN '${v}'`).join(' ')} ELSE ${fallback || expr} END`;
 
 const ROLE = { buyer: 'ลูกค้า', seller: 'ร้านค้า', driver: 'ไรเดอร์', rider: 'ไรเดอร์', admin: 'ผู้ดูแลระบบ', system: 'ระบบอัตโนมัติ' };
@@ -69,7 +71,7 @@ const STATEMENTS = [
   `UPDATE shops s
    LEFT JOIN users u ON u.user_id = s.owner_id
    LEFT JOIN categories c ON c.category_id = s.category_id
-   LEFT JOIN (SELECT shop_id, COUNT(*) n, SUM(stock_quantity) stock FROM products GROUP BY shop_id) p ON p.shop_id = s.shop_id
+   LEFT JOIN (SELECT shop_id, COUNT(*) n, SUM(stock_quantity) stock, MAX(discount_percent) maxd FROM products GROUP BY shop_id) p ON p.shop_id = s.shop_id
    LEFT JOIN (SELECT oi.shop_id, COUNT(DISTINCT oi.order_id) n, COUNT(DISTINCT IF(o.order_status = 'completed', o.order_id, NULL)) done,
                      COUNT(DISTINCT IF(o.order_status = 'cancelled', o.order_id, NULL)) cancel,
                      SUM(IF(o.order_status <> 'cancelled', oi.price * oi.quantity, 0)) gross
@@ -77,6 +79,9 @@ const STATEMENTS = [
    LEFT JOIN (SELECT shop_id, ROUND(AVG(rating), 1) avg_r, COUNT(*) n FROM reviews GROUP BY shop_id) rv ON rv.shop_id = s.shop_id
    LEFT JOIN shop_wallets w ON w.shop_id = s.shop_id
    SET s.owner_name = u.full_name, s.owner_phone = u.phone, s.owner_email = u.email, s.category_name = c.name,
+       s.tag1 = COALESCE(c.name, s.tag1),
+       s.tag2 = IF(COALESCE(p.maxd, 0) > 0, CONCAT('ลดสูงสุด ', p.maxd, '%'), 'ยังไม่มีดีลลดราคา'),
+       s.distance = IF(s.latitude IS NULL, s.distance, CONCAT(ROUND(${HAV('s.latitude', 's.longitude')}, 1), ' กม.')),
        s.status_th = ${CASE('s.status', { pending: 'รอแอดมินตรวจสอบ', approved: 'อนุมัติแล้ว เปิดขายได้', rejected: 'ถูกปฏิเสธ', suspended: 'ถูกระงับโดยแอดมิน' })},
        s.open_th = IF(s.is_open = 1, 'เปิดรับออเดอร์', 'ปิดร้านชั่วคราว'),
        s.summary_th = CONCAT_WS(' | ', CONCAT('ร้าน ', s.name, ' (หมวด ', COALESCE(c.name, '-'), ')'),
@@ -97,6 +102,7 @@ const STATEMENTS = [
    LEFT JOIN (SELECT rider_id, ROUND(AVG(rider_rating), 1) avg_r, COUNT(rider_rating) n FROM reviews WHERE rider_rating IS NOT NULL GROUP BY rider_id) rv ON rv.rider_id = r.rider_id
    LEFT JOIN (SELECT rider_id, SUM(IF(status = 'completed', amount, 0)) paid, SUM(IF(status = 'pending', amount, 0)) pend FROM withdrawals WHERE rider_id IS NOT NULL GROUP BY rider_id) w ON w.rider_id = r.rider_id
    SET r.user_email = u.email,
+       r.vehicle_detail = CONCAT(COALESCE(r.vehicle_type, '-'), ' ทะเบียน ', COALESCE(NULLIF(r.vehicle_plate, ''), '-')),
        r.status_th = ${CASE('r.status', { pending: 'รอแอดมินอนุมัติ', approved: 'อนุมัติแล้ว รับงานได้', rejected: 'ถูกปฏิเสธ' })},
        r.online_th = ${CASE('r.rider_status', { available: 'เปิดรับงาน (Online)', busy: 'กำลังวิ่งงาน', offline: 'ปิดรับงาน (Offline)' })},
        r.summary_th = CONCAT_WS(' | ', CONCAT('ไรเดอร์ ', COALESCE(r.real_name, r.name), ' โทร ', r.phone, ' อีเมล ', COALESCE(u.email, '-')),

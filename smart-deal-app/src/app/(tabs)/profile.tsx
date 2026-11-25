@@ -554,7 +554,7 @@ export default function ProfileScreen() {
         visible={showEditProfileModal}
         transparent={true}
         animationType="slide"
-        onRequestClose={() => !isSavingProfile && setShowEditProfileModal(false)}
+        onRequestClose={() => { if (!isSavingProfile) setShowEditProfileModal(false); }}
       >
         <KeyboardAvoidingView 
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -679,7 +679,7 @@ export default function ProfileScreen() {
         visible={showChangePasswordModal}
         transparent={true}
         animationType="slide"
-        onRequestClose={() => !isChangingPassword && setShowChangePasswordModal(false)}
+        onRequestClose={() => { if (!isChangingPassword) setShowChangePasswordModal(false); }}
       >
         <KeyboardAvoidingView 
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
