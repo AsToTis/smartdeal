@@ -96,6 +96,24 @@ const logLogin = (db, { req, user, appName, identifier, success, reason }) => sa
   if (success && user?.user_id) await db.query('UPDATE users SET last_login = NOW() WHERE user_id = ?', [user.user_id]);
 });
 
+// ---------- logout (แถว event_type = logout ใน login_logs พร้อมระยะเวลาใช้งาน) ----------
+const logLogout = (db, { req, userId, appName }) => safe('logout', async () => {
+  const { ip, userAgent, device } = clientInfo(req);
+  const [[u]] = await db.query('SELECT user_id, full_name, role FROM users WHERE user_id = ?', [userId]);
+  if (!u) return null;
+  const [[last]] = await db.query(
+    "SELECT created_at, app_name FROM login_logs WHERE user_id = ? AND event_type = 'login' AND is_success = 1 ORDER BY id DESC LIMIT 1", [userId]);
+  const [[mins]] = last ? await db.query('SELECT TIMESTAMPDIFF(MINUTE, ?, NOW()) AS m', [last.created_at]) : [[{ m: null }]];
+  const app = appName || last?.app_name || 'แอป Smart Deal';
+  const desc = `${u.full_name} (${roleTh(u.role)}) ออกจากระบบ ${app}` + (mins?.m != null ? ` หลังใช้งานไป ${mins.m} นาที (เข้าสู่ระบบเมื่อ ${last.created_at})` : '');
+  await db.query(
+    `INSERT INTO login_logs (user_id, full_name, role, role_th, app_name, login_identifier, is_success, fail_reason, description_th, ip_address, user_agent, device_info, event_type, event_th, session_minutes)
+     VALUES (?, ?, ?, ?, ?, ?, 1, 'ออกจากระบบตามปกติ', ?, ?, ?, ?, 'logout', 'ออกจากระบบ', ?)`,
+    [u.user_id, u.full_name, u.role, roleTh(u.role), app, '-', desc, ip || 'ไม่ทราบ', userAgent || 'ไม่ทราบ', device || 'ไม่ทราบ', mins?.m ?? null]
+  );
+  return desc;
+});
+
 // ---------- admin_audit_logs ----------
 const toJson = (v) => (v === undefined || v === null ? null : typeof v === 'string' ? v : JSON.stringify(v));
 const logAudit = (db, { req, actor, action, actionTh, entityType, entityId, entityName, description, oldValue, newValue }) => safe('audit', async () => {
@@ -147,6 +165,6 @@ const recordOrderEvent = (db, orderId, { event, fromStatus, toStatus, actor, des
 module.exports = {
   safe, money, clientInfo,
   actorUser, actorShop, actorRider, actorAdmin, adminActor, slim, SYSTEM,
-  logLogin, logAudit, diffText, recordOrderEvent,
+  logLogin, logLogout, logAudit, diffText, recordOrderEvent,
   statusTh, roleTh,
 };

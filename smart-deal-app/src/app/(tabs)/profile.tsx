@@ -342,6 +342,10 @@ export default function ProfileScreen() {
         text: 'ตกลง',
         style: 'destructive',
         onPress: async () => {
+          // บันทึกการออกจากระบบลงฐานข้อมูล (login_logs) ก่อนล้างข้อมูลในเครื่อง
+          if (user?.user_id) {
+            axios.post(`${BASE_URL}/logout`, { user_id: user.user_id, app_name: 'แอป Smart Deal (ลูกค้า/ร้านค้า)' }).catch(() => {});
+          }
           try {
             await AsyncStorage.clear();
           } catch (e) {

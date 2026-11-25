@@ -205,6 +205,17 @@ const form = (fields, files = {}) => {
     await step(`${people[k].name} ใช้ 200 แต้มแลกคูปองส่วนลด 20 บาท`, () => call('POST', '/points/redeem', { user_id: people[k].id, cost: 200, code: 'SAVE20', title: 'ส่วนลด 20 บาท', type: 'discount', value: 20 }, people[k].dev));
   }
 
+  // ==================== ค้นหา + ตะกร้า ====================
+  const search = (k, kw) => step(`${people[k].name} ค้นหา "${kw}"`, () => call('GET', `/search?keyword=${encodeURIComponent(kw)}&user_id=${people[k].id}`, null, people[k].dev));
+  await search('somying', 'ข้าวมันไก่'); await search('thanakorn', 'ชานม'); await search('manee', 'ครัวซองต์');
+  await search('piti', 'มะม่วง'); await search('chujai', 'บัวลอย'); await search('thanakorn', 'พิซซ่า');
+  const cartPut = (k, items, label) => step(`${people[k].name} ${label}`, () => call('PUT', `/cart/${people[k].id}`, { items: items.map(([sk, menu, qty]) => ({ product_id: shops[sk].products[menu].id, quantity: qty })) }, people[k].dev));
+  await cartPut('somying', [['padaeng', 'ข้าวมันไก่ต้ม', 1]], 'หยิบข้าวมันไก่ต้มใส่ตะกร้า');
+  await cartPut('somying', [['padaeng', 'ข้าวมันไก่ต้ม', 2], ['padaeng', 'ซุปฟัก', 1], ['heati', 'โกโก้เย็น', 1]], 'เพิ่มเป็น 2 จาน + ซุปฟัก + โกโก้เย็น');
+  await cartPut('somying', [['padaeng', 'ข้าวมันไก่ต้ม', 2], ['padaeng', 'ซุปฟัก', 1]], 'เอาโกโก้เย็นออกจากตะกร้า');
+  await cartPut('thanakorn', [['ann', 'บราวนี่ช็อกโกแลต', 2], ['fon', 'บัวลอยไข่หวาน', 1]], 'หยิบบราวนี่และบัวลอยใส่ตะกร้า (ยังไม่สั่ง)');
+  await cartPut('chujai', [['heati', 'ชาเขียวมัทฉะ', 1]], 'หยิบชาเขียวใส่ตะกร้า (ยังไม่สั่ง)');
+
   // ==================== ออเดอร์ ====================
   const made = [];
   const order = async (buyerKey, lines, opts = {}) => {
@@ -227,7 +238,7 @@ const form = (fields, files = {}) => {
     await step(`ระบบรับเงินออเดอร์ #${o.id} สำเร็จ`, () => call('POST', '/payment/webhook', { charge_id: qr.data?.charge_id, status: 'successful' }));
   };
   const shopDo = async (o, status, extra = {}) => { for (const k of o.shopKeys) await step(`${shops[k].name} ${status === 'preparing' ? 'กดรับออเดอร์' : status === 'ready' ? 'เตรียมเสร็จ' : 'ยกเลิก'} #${o.id}`, () => call('PUT', `/orders/${o.id}/status`, { order_status: status, shop_id: shops[k].id, ...extra }, shops[k].owner.dev)); };
-  const gps = (rk, lat, lng) => call('PUT', `/riders/${riders[rk].id}/location`, { lat, lng }, riders[rk].dev);
+  const gps = (rk, lat, lng) => call('PUT', `/riders/${riders[rk].id}/location`, { lat, lng, speed: 6 + Math.random() * 6, accuracy: 5 + Math.random() * 10 }, riders[rk].dev);
   const riderAccept = async (o, rk) => { await gps(rk, 16.2455, 103.2500); return step(`${riders[rk].name} รับงาน #${o.id}`, () => call('PUT', `/rider/deliveries/${o.id}/status`, { rider_id: riders[rk].id, status: 'accepted' }, riders[rk].dev)); };
   const riderPickup = async (o, rk) => { for (const [i, k] of o.shopKeys.entries()) { await gps(rk, shops[k].lat, shops[k].lng); await step(`${riders[rk].name} รับของจาก ${shops[k].name} #${o.id}`, () => call('POST', `/rider/deliveries/${o.id}/pickup`, { rider_id: riders[rk].id, shop_id: shops[k].id, pickup_proof_image: pngDataUri('#22c55e'), is_all_picked_up: i === o.shopKeys.length - 1 }, riders[rk].dev)); } };
   const riderDeliver = async (o, rk) => { const [, la, ln] = ADDR[o.b.key]; await gps(rk, la + 0.0001, ln + 0.0001); return step(`${riders[rk].name} ส่งถึงลูกค้า #${o.id}`, () => call('POST', `/rider/deliveries/${o.id}/complete`, { rider_id: riders[rk].id, proof_image_base64: pngDataUri('#3b82f6') }, riders[rk].dev)); };
@@ -312,6 +323,8 @@ const form = (fields, files = {}) => {
     await call('GET', '/rider/notifications/unread', null, { ...riders[k].dev, Authorization: `Bearer ${tok}` });
   }
   console.log('✅ ผู้ใช้เปิดอ่าน/ลบแจ้งเตือนบางส่วน และแอปไรเดอร์แสดงแจ้งเตือนบนเครื่องแล้ว');
+  for (const k of ['piti', 'manee']) await step(`${people[k].name} ออกจากระบบ`, () => call('POST', '/logout', { user_id: people[k].id, app_name: 'แอป Smart Deal (ลูกค้า/ร้านค้า)' }, people[k].dev));
+  await step('ประยุทธออกจากระบบแอปไรเดอร์', () => call('POST', '/logout', { user_id: riders.prayut.userId, app_name: 'แอป Smart Deal Rider (ไรเดอร์)' }, riders.prayut.dev));
   await step('แอดมินออกจากระบบ', () => call('POST', '/admin/logout', null, A));
 
   const [[sum]] = await db.query('SELECT (SELECT COUNT(*) FROM orders) orders, (SELECT COUNT(*) FROM order_status_logs) timeline, (SELECT COUNT(*) FROM login_logs) logins, (SELECT COUNT(*) FROM admin_audit_logs) audits, (SELECT COUNT(*) FROM notifications) notifs, (SELECT COUNT(*) FROM transactions) ledger');

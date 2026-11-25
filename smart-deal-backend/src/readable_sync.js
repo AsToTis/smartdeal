@@ -23,6 +23,8 @@ const STATEMENTS = [
    LEFT JOIN riders r ON r.user_id = u.user_id
    LEFT JOIN user_points p ON p.user_id = u.user_id
    LEFT JOIN (SELECT user_id, COUNT(*) n FROM user_addresses GROUP BY user_id) a ON a.user_id = u.user_id
+   LEFT JOIN (SELECT user_id, SUM(quantity) q, SUM(line_total) amt FROM cart_items GROUP BY user_id) ct ON ct.user_id = u.user_id
+   LEFT JOIN (SELECT user_id, COUNT(*) n, SUBSTRING_INDEX(GROUP_CONCAT(keyword ORDER BY id DESC SEPARATOR ', '), ', ', 3) kw FROM search_logs WHERE user_id IS NOT NULL GROUP BY user_id) sl ON sl.user_id = u.user_id
    SET u.role_th = ${CASE('u.role', ROLE)},
        u.status_th = ${CASE('u.status', { active: 'ใช้งานได้ปกติ', suspended: 'ถูกระงับการใช้งาน', deleted: 'ลบบัญชีแล้ว' })},
        u.summary_th = CONCAT_WS(' | ',
@@ -35,6 +37,8 @@ const STATEMENTS = [
             CONCAT('สั่งซื้อ ', o.n, ' ออเดอร์ (สำเร็จ ', o.done, ', ยกเลิก ', o.cancel, ') ยอดซื้อรวม ', ${M('o.spent')}, ' สั่งล่าสุด ', ${DF('o.last_order')})),
          IF(p.points IS NULL, NULL, CONCAT('แต้มสะสม ', p.points, ' แต้ม')),
          IF(a.n IS NULL, NULL, CONCAT('ที่อยู่จัดส่ง ', a.n, ' แห่ง')),
+         IF(ct.q IS NULL, NULL, CONCAT('ตะกร้ามี ', ct.q, ' ชิ้น รวม ', ${M('ct.amt')})),
+         IF(sl.n IS NULL, NULL, CONCAT('ค้นหา ', sl.n, ' ครั้ง ล่าสุด: ', sl.kw)),
          IF(s.shops IS NULL, NULL, CONCAT('เจ้าของร้าน: ', s.shops)),
          IF(r.rider_id IS NULL, NULL, CONCAT('ไรเดอร์ ', ${CASE('r.status', { pending: 'รออนุมัติ', approved: 'อนุมัติแล้ว', rejected: 'ถูกปฏิเสธ' })}, ' รถ ', COALESCE(r.vehicle_type, '-'), ' ทะเบียน ', COALESCE(r.vehicle_plate, '-'))))`,
 
@@ -102,7 +106,7 @@ const STATEMENTS = [
          CONCAT('รับงาน ', COALESCE(d.n, 0), ' งาน ส่งสำเร็จ ', COALESCE(d.done, 0), ' งาน'),
          CONCAT('รายได้ค่ารอบที่ลูกค้ายืนยันแล้ว ', ${M('d.earned')}, ' ถอนแล้ว ', ${M('w.paid')}, ' รอถอน ', ${M('w.pend')}),
          IF(rv.n IS NULL, 'ยังไม่มีคะแนนรีวิว', CONCAT('คะแนน ', rv.avg_r, '/5 จาก ', rv.n, ' รีวิว')),
-         IF(r.current_lat IS NULL, 'ยังไม่มีพิกัด GPS', CONCAT('ตำแหน่งล่าสุด ', r.current_lat, ', ', r.current_lng, COALESCE(CONCAT(' เมื่อ ', ${DF('r.location_updated_at')}), ''))))`,
+         IF(r.current_lat IS NULL, 'ยังไม่มีพิกัด GPS', CONCAT('ตำแหน่งล่าสุด ', r.current_lat, ', ', r.current_lng, COALESCE(CONCAT(' เมื่อ ', ${DF('r.location_updated_at')}), ''), COALESCE(CONCAT(' ความเร็ว ', ROUND(r.last_speed_kmh), ' กม./ชม.'), ''))))`,
 
   // ---------------- orders ----------------
   `UPDATE orders o

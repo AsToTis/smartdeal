@@ -1,4 +1,18 @@
-import React, { createContext, useState, useContext } from 'react';
+import React, { createContext, useState, useContext, useEffect, useRef } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import axios from 'axios';
+import { BASE_URL } from '../constants/api';
+
+// อ่าน user_id ของผู้ที่ล็อกอินอยู่ (เก็บไว้ตอน login)
+const getUserId = async (): Promise<number | null> => {
+  try {
+    const raw = await AsyncStorage.getItem('user');
+    const u = raw ? JSON.parse(raw) : null;
+    return u?.user_id ? Number(u.user_id) : null;
+  } catch (e) {
+    return null;
+  }
+};
 
 export interface CartItem {
   product_id: number;
@@ -71,6 +85,64 @@ const CartContext = createContext<CartContextType | undefined>(undefined);
 
 export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [cart, setCart] = useState<CartItem[]>([]);
+
+  // ---------- ซิงก์ตะกร้ากับฐานข้อมูล (ตาราง cart_items) ----------
+  const syncedUserRef = useRef<number | null>(null); // ผู้ใช้ที่โหลดตะกร้าจากเซิร์ฟเวอร์แล้ว
+  const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const loadServerCart = async (userId: number) => {
+    try {
+      const res = await axios.get(`${BASE_URL}/cart/${userId}`);
+      if (res.data?.success && Array.isArray(res.data.items)) {
+        const serverItems: CartItem[] = res.data.items.map((it: any) => ({
+          product_id: Number(it.product_id),
+          name: it.name,
+          price: parseItemPrice(it),
+          original_price: it.original_price != null ? parseFloat(it.original_price) : undefined,
+          discount_price: it.discount_price != null ? parseFloat(it.discount_price) : undefined,
+          quantity: Number(it.quantity) || 1,
+          stock_quantity: parseItemStock(it),
+          image_url: it.image_url || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500',
+          description: it.description || '',
+          shop_id: it.shop_id != null ? Number(it.shop_id) : undefined,
+          shop_name: it.shop_name || '',
+        }));
+        // ถ้ายังไม่มีของในตะกร้าบนเครื่อง ใช้ตะกร้าจากเซิร์ฟเวอร์
+        setCart(prev => (prev.length === 0 ? serverItems : prev));
+      }
+    } catch (e) {
+      // ออฟไลน์/เซิร์ฟเวอร์ไม่ตอบ: ใช้ตะกร้าบนเครื่องต่อไป
+    }
+    syncedUserRef.current = userId;
+  };
+
+  // โหลดตะกร้าเดิมเมื่อเปิดแอป
+  useEffect(() => {
+    (async () => {
+      const uid = await getUserId();
+      if (uid) await loadServerCart(uid);
+    })();
+  }, []);
+
+  // ทุกครั้งที่ตะกร้าเปลี่ยน -> ส่งขึ้นเซิร์ฟเวอร์ (รวบหลายการกดติดกันเป็นครั้งเดียว)
+  useEffect(() => {
+    if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
+    syncTimerRef.current = setTimeout(async () => {
+      const uid = await getUserId();
+      if (!uid) return;
+      if (syncedUserRef.current !== uid) {
+        // เปลี่ยนบัญชีบนเครื่องเดียวกัน: ไม่เอาตะกร้าของคนก่อนไปปนกับคนใหม่
+        if (syncedUserRef.current !== null) { setCart([]); await loadServerCart(uid); return; }
+        // เพิ่งล็อกอินเข้ามา: ดึงตะกร้าเดิมก่อน ถ้าบนเครื่องว่างอยู่ (ถ้ามีของที่หยิบไว้ก่อนล็อกอิน จะบันทึกเป็นของบัญชีนี้)
+        if (cart.length === 0) { await loadServerCart(uid); return; }
+        syncedUserRef.current = uid;
+      }
+      axios.put(`${BASE_URL}/cart/${uid}`, {
+        items: cart.map(i => ({ product_id: i.product_id, quantity: i.quantity })),
+      }).catch(() => {});
+    }, 800);
+    return () => { if (syncTimerRef.current) clearTimeout(syncTimerRef.current); };
+  }, [cart]);
 
   // เพิ่มสินค้าเข้าตะกร้า
   const addToCart = (product: any, requestedQty = 1) => {

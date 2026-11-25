@@ -19,6 +19,7 @@ if (!/e2e|test/i.test(cfg.database) && process.env.E2E_ALLOW_ANY_DB !== '1') {
 }
 
 const results = [];
+const sleepMs = (ms) => new Promise(r => setTimeout(r, ms));
 const check = (name, cond, detail = '') => { results.push({ step: name, ok: cond ? '✅' : '❌', detail: String(detail).slice(0, 120) }); };
 const call = async (method, path, body, headers = {}) => {
   const res = await fetch(BASE + path, {
@@ -60,6 +61,16 @@ const call = async (method, path, body, headers = {}) => {
   check('แอดมินล็อกอิน', r.status === 200, r.data?.message);
   if (r.data?.admin?.admin_id) adminHeaders['X-Admin-Id'] = String(r.data.admin.admin_id);
 
+  // ---------- 1.5 ค้นหา + ตะกร้า ----------
+  r = await call('GET', `/search?keyword=${encodeURIComponent('ข้าวมันไก่')}&user_id=${buyerId}`);
+  const [sl] = await q('SELECT keyword, product_results, description_th FROM search_logs WHERE user_id = ? ORDER BY id DESC LIMIT 1', [buyerId]);
+  check('ค้นหาบันทึกลง search_logs', sl && sl.product_results >= 1, sl?.description_th);
+  await call('PUT', `/cart/${buyerId}`, { items: [{ product_id: productId, quantity: 1 }, { product_id: product2Id, quantity: 1 }] });
+  await call('PUT', `/cart/${buyerId}`, { items: [{ product_id: productId, quantity: 2 }, { product_id: product2Id, quantity: 1 }] });
+  r = await call('GET', `/cart/${buyerId}`);
+  const cartAudit = await q("SELECT action FROM admin_audit_logs WHERE actor_id = ? AND action LIKE 'cart.%'", [buyerId]);
+  check('ตะกร้าบันทึกลง cart_items + ประวัติ', (r.data?.items || []).length === 2 && cartAudit.length >= 3, cartAudit.map(a => a.action).join(','));
+
   // ---------- 2. ลูกค้าสั่งซื้อ + จ่ายเงิน ----------
   r = await call('POST', '/orders', {
     user_id: buyerId, shop_id: shopId, subtotal: 115, delivery_fee: 20, discount: 0, total_amount: 135,
@@ -69,6 +80,8 @@ const call = async (method, path, body, headers = {}) => {
   });
   const orderId = r.data?.order_id;
   check('ลูกค้าสร้างออเดอร์', !!orderId, r.data?.message);
+  const [cartLeft] = await q('SELECT COUNT(*) n FROM cart_items WHERE user_id = ?', [buyerId]);
+  check('สั่งซื้อแล้วตะกร้าถูกเคลียร์', Number(cartLeft.n) === 0);
   r = await call('POST', '/payment/generate-qr', { order_id: orderId, total_amount: 135 });
   check('สร้าง QR ชำระเงิน', !!r.data?.charge_id);
   r = await call('POST', '/payment/webhook', { charge_id: r.data?.charge_id, status: 'successful' });
@@ -88,6 +101,9 @@ const call = async (method, path, body, headers = {}) => {
   r = await call('POST', `/rider/deliveries/${orderId}/complete`, { rider_id: riderId, proof_image_base64: 'data:image/png;base64,iVBORw0KGgo=' });
   check('ไรเดอร์ส่งสินค้าถึงลูกค้า', r.data?.success, r.data?.message);
 
+  r = await call('PUT', `/riders/${riderId}/location`, { lat: 16.2471, lng: 103.2522, speed: 8.5, accuracy: 6 });
+  const [gpsRow] = await q('SELECT current_lat, last_speed_kmh, location_updated_at FROM riders WHERE rider_id = ?', [riderId]);
+  check('GPS ไรเดอร์บันทึกลง DB', r.data?.success && gpsRow.current_lat && gpsRow.location_updated_at, `${gpsRow.current_lat} ${gpsRow.last_speed_kmh} กม./ชม.`);
   r = await call('PUT', `/rider/${riderId}/online-status`, { is_online: false });
   const [rs] = await q('SELECT rider_status FROM riders WHERE rider_id = ?', [riderId]);
   check('ไรเดอร์ปิดรับงาน (บันทึก DB)', r.data?.success && rs.rider_status === 'offline', rs.rider_status);
@@ -160,6 +176,12 @@ const call = async (method, path, body, headers = {}) => {
   }
   r = await call('PUT', `/users/${buyerId}/app-settings`, { pushEnabled: false });
   check('ตั้งค่าแอปบันทึกลง DB', r.data?.success);
+  r = await call('POST', '/logout', { user_id: buyerId, app_name: 'แอป Smart Deal (ลูกค้า/ร้านค้า)' });
+  const [lo] = await q("SELECT description_th, session_minutes FROM login_logs WHERE user_id = ? AND event_type = 'logout' ORDER BY id DESC LIMIT 1", [buyerId]);
+  check('ออกจากระบบบันทึกลง login_logs', r.data?.success && lo && lo.session_minutes !== null, lo?.description_th);
+  await sleepMs(2500);
+  const [rd] = await q('SELECT summary_th, timeline_th FROM orders WHERE order_id = ?', [orderId]);
+  check('readable sync: summary_th/timeline_th ของออเดอร์', rd.summary_th && rd.timeline_th && rd.timeline_th.includes('ไรเดอร์'), (rd.summary_th || '').slice(0, 80));
 
   // ---------- ตรวจผลในฐานข้อมูล ----------
   const timeline = await q('SELECT created_at AS เวลา, actor_name AS ผู้ดำเนินการ, description_th AS เหตุการณ์ FROM order_status_logs WHERE order_id = ? ORDER BY id', [orderId]);

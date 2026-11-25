@@ -5,7 +5,6 @@
 //   - summary_th : สรุปทั้งแถวเป็นประโยคเดียว / orders.timeline_th : ไทม์ไลน์ทั้งออเดอร์
 // ค่าถูกคำนวณโดย src/readable_sync.js (รันหลังทุกการเปลี่ยนแปลงข้อมูล และทุก 1 นาที)
 // ==========================================================
-const { syncReadable } = require('../../src/readable_sync');
 
 const V = (n = 255) => `VARCHAR(${n}) NULL`;
 const COLS = {
@@ -64,6 +63,6 @@ module.exports = {
     for (const [t, c] of Object.entries(TABLE_COMMENTS)) {
       try { await conn.query(`ALTER TABLE \`${t}\` COMMENT = ${conn.escape(c)}`); } catch (e) { /* table may not exist */ }
     }
-    await syncReadable(conn);
+    // คำนวณครั้งแรกจะทำหลัง migration ทั้งหมดเสร็จ (server เรียก readable sync ตอนเริ่มทำงาน)
   },
 };

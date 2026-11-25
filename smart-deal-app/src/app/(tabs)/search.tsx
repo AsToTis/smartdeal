@@ -93,7 +93,14 @@ export default function SearchScreen() {
     setHasSearched(true);
     setLoading(true);
     try {
-      const res = await axios.get(`${BASE_URL}/search?keyword=${encodeURIComponent(keyword.trim())}`);
+      // แนบ user_id เพื่อบันทึกประวัติการค้นหาลงฐานข้อมูล (ตาราง search_logs)
+      let uidParam = '';
+      try {
+        const rawUser = await AsyncStorage.getItem('user');
+        const uid = rawUser ? JSON.parse(rawUser)?.user_id : null;
+        if (uid) uidParam = `&user_id=${uid}`;
+      } catch (e) {}
+      const res = await axios.get(`${BASE_URL}/search?keyword=${encodeURIComponent(keyword.trim())}${uidParam}`);
       if (res.data?.success) {
         setSearchResults({
           shops: res.data.shops || [],

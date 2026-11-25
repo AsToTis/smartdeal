@@ -2029,7 +2029,9 @@ app.put('/api/riders/:id/location', async (req, res) => {
   const { lat, lng } = req.body;
   try {
     // เดิมอัปเดตคอลัมน์ updated_at ที่ไม่มีอยู่จริง -> error ทุกครั้ง ตำแหน่งไรเดอร์จึงไม่เคยถูกบันทึก
-    await db.execute('UPDATE riders SET current_lat = ?, current_lng = ?, location_updated_at = NOW() WHERE rider_id = ?', [lat, lng, riderId]);
+    const speed = Number.isFinite(parseFloat(req.body?.speed)) ? Math.max(0, parseFloat(req.body.speed) * 3.6) : null; // m/s -> km/h
+    const acc = Number.isFinite(parseFloat(req.body?.accuracy)) ? parseFloat(req.body.accuracy) : null;
+    await db.execute('UPDATE riders SET current_lat = ?, current_lng = ?, location_updated_at = NOW(), last_speed_kmh = ?, location_accuracy_m = ? WHERE rider_id = ?', [lat, lng, speed, acc, riderId]);
     res.json({ success: true, message: 'Rider location updated' });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -2648,6 +2650,10 @@ app.post('/api/orders', async (req, res) => {
       const shopNamesText = Object.values(shopNameCache).join(', ');
       const buyerName = buyerRow?.full_name || `ลูกค้า #${user_id || 2}`;
       const itemsText = itemSummaries.join(', ');
+      if (user_id && items && items.length) {
+        const pids = items.map(i => Number(i.product_id || i.id)).filter(Boolean);
+        if (pids.length) await connection.query('DELETE FROM cart_items WHERE user_id = ? AND product_id IN (?)', [user_id, pids]);
+      }
       await connection.query(
         'UPDATE orders SET shop_name = ?, buyer_name = ?, items_summary = ?, coupon_code = ? WHERE order_id = ?',
         [shopNamesText || null, buyerName, itemsText || null, req.body.coupon_code || 'ไม่ได้ใช้คูปอง', orderId]
@@ -3971,6 +3977,84 @@ app.get('/api/shops/check-pending/:userId', async (req, res) => {
   }
 });
 
+// ออกจากระบบ (ลูกค้า/ร้านค้า/ไรเดอร์) -> login_logs แถว event_type = logout พร้อมระยะเวลาใช้งาน
+app.post('/api/logout', async (req, res) => {
+  const userId = parseInt(req.body?.user_id, 10);
+  if (!userId) return res.status(400).json({ success: false, message: 'กรุณาระบุ user_id' });
+  const desc = await audit.logLogout(db, { req, userId, appName: req.body?.app_name });
+  res.json({ success: true, message: desc || 'บันทึกการออกจากระบบแล้ว' });
+});
+
+// ---------- ตะกร้าสินค้า (เก็บใน MySQL ไม่หายเมื่อปิดแอป) ----------
+const loadCart = async (userId) => {
+  const [rows] = await db.query(
+    `SELECT c.product_id, c.quantity, c.added_at, c.updated_at,
+            COALESCE(p.name, c.product_name) AS name, COALESCE(p.discount_price, c.unit_price) AS price, p.original_price, p.discount_price,
+            COALESCE(p.stock_quantity, 0) AS stock_quantity, p.image_url, p.description, COALESCE(p.shop_id, c.shop_id) AS shop_id, COALESCE(s.name, c.shop_name) AS shop_name
+     FROM cart_items c LEFT JOIN products p ON p.product_id = c.product_id LEFT JOIN shops s ON s.shop_id = p.shop_id
+     WHERE c.user_id = ? ORDER BY c.added_at, c.id`, [userId]);
+  return rows;
+};
+
+app.get('/api/cart/:userId', async (req, res) => {
+  try {
+    res.json({ success: true, items: await loadCart(req.params.userId) });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// แอปส่งตะกร้าทั้งหมดมา -> เทียบกับของเดิมแล้วบันทึกเฉพาะที่เปลี่ยน (เพิ่ม/ลบ/แก้จำนวน) ลงประวัติ
+app.put('/api/cart/:userId', async (req, res) => {
+  const userId = parseInt(req.params.userId, 10);
+  const incoming = Array.isArray(req.body?.items) ? req.body.items : [];
+  const connection = await db.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [[u]] = await connection.query('SELECT full_name FROM users WHERE user_id = ?', [userId]);
+    if (!u) { await connection.rollback(); return res.status(404).json({ success: false, message: 'ไม่พบผู้ใช้' }); }
+    const [current] = await connection.query('SELECT product_id, product_name, quantity FROM cart_items WHERE user_id = ?', [userId]);
+    const before = new Map(current.map(r => [Number(r.product_id), r]));
+    const after = new Map();
+    for (const it of incoming) {
+      const pid = Number(it.product_id); const qty = Math.max(1, parseInt(it.quantity, 10) || 1);
+      if (pid) after.set(pid, qty);
+    }
+    const changes = [];
+    for (const [pid, qty] of after) {
+      const [[p]] = await connection.query('SELECT p.name, p.discount_price, p.shop_id, s.name AS shop_name FROM products p LEFT JOIN shops s ON s.shop_id = p.shop_id WHERE p.product_id = ?', [pid]);
+      if (!p) continue;
+      const price = parseFloat(p.discount_price) || 0;
+      const line = parseFloat((price * qty).toFixed(2));
+      const summary = `${p.name} x${qty} (${money(price)}/ชิ้น = ${money(line)}) ร้าน ${p.shop_name || '-'} ในตะกร้าของ ${u.full_name}`;
+      await connection.query(
+        `INSERT INTO cart_items (user_id, user_name, product_id, product_name, shop_id, shop_name, quantity, unit_price, line_total, summary_th)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE quantity = VALUES(quantity), unit_price = VALUES(unit_price), line_total = VALUES(line_total), summary_th = VALUES(summary_th), product_name = VALUES(product_name), shop_name = VALUES(shop_name), user_name = VALUES(user_name)`,
+        [userId, u.full_name, pid, p.name, p.shop_id, p.shop_name, qty, price, line, summary]);
+      const old = before.get(pid);
+      if (!old) changes.push({ action: 'cart.add', th: 'เพิ่มสินค้าลงตะกร้า', text: `เพิ่ม "${p.name}" x${qty} (ร้าน ${p.shop_name || '-'}) ลงตะกร้า`, pid, name: p.name, oldV: null, newV: { quantity: qty } });
+      else if (Number(old.quantity) !== qty) changes.push({ action: 'cart.update', th: 'แก้จำนวนสินค้าในตะกร้า', text: `เปลี่ยนจำนวน "${p.name}" ในตะกร้าจาก ${old.quantity} เป็น ${qty}`, pid, name: p.name, oldV: { quantity: old.quantity }, newV: { quantity: qty } });
+    }
+    for (const [pid, old] of before) {
+      if (after.has(pid)) continue;
+      await connection.query('DELETE FROM cart_items WHERE user_id = ? AND product_id = ?', [userId, pid]);
+      changes.push({ action: 'cart.remove', th: 'นำสินค้าออกจากตะกร้า', text: `นำ "${old.product_name}" x${old.quantity} ออกจากตะกร้า`, pid, name: old.product_name, oldV: { quantity: old.quantity }, newV: { quantity: 0 } });
+    }
+    for (const c of changes) {
+      await logAudit(connection, { req, actor: { type: 'buyer', id: userId, name: u.full_name }, action: c.action, actionTh: c.th, entityType: 'product', entityId: c.pid, entityName: c.name,
+        description: `ลูกค้า ${u.full_name} ${c.text}`, oldValue: c.oldV, newValue: c.newV });
+    }
+    await connection.commit();
+    res.json({ success: true, changes: changes.length, items: await loadCart(userId) });
+  } catch (error) {
+    await connection.rollback();
+    res.status(500).json({ success: false, error: error.message });
+  } finally {
+    connection.release();
+  }
+});
+
 // รายชื่อร้านค้าที่อนุมัติแล้วทั้งหมด (ใช้ในหน้าเลือกร้านของแดชบอร์ดร้านค้า)
 app.get('/api/shops', async (req, res) => {
   try {
@@ -4729,6 +4813,18 @@ app.get('/api/search', async (req, res) => {
       [searchParam]
     );
 
+    await audit.safe('search_log', async () => {
+      const uid = parseInt(req.query.user_id, 10) || null;
+      const [[u]] = uid ? await db.query('SELECT full_name FROM users WHERE user_id = ?', [uid]) : [[null]];
+      const { ip, device } = audit.clientInfo(req);
+      const top = [...shops.slice(0, 3).map(s => `ร้าน ${s.name}`), ...products.slice(0, 5).map(p => `${p.name} (${p.shop_name || '-'}) ${money(p.discount_price)}`)].join(', ');
+      const who = u?.full_name || 'ผู้ใช้ที่ไม่ได้ล็อกอิน';
+      await db.query(
+        'INSERT INTO search_logs (user_id, user_name, keyword, shop_results, product_results, top_results, description_th, ip_address, device_info) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [uid, who, String(keyword).slice(0, 255), shops.length, products.length, top || 'ไม่พบผลลัพธ์',
+         `${who} ค้นหาคำว่า "${keyword}" พบร้าน ${shops.length} ร้าน และเมนู ${products.length} รายการ`, ip || 'ไม่ทราบ', device || 'ไม่ทราบ']);
+    });
+
     res.json({
       success: true,
       shops,
@@ -4783,6 +4879,7 @@ app.post('/api/admin/login', async (req, res) => {
 app.post('/api/admin/logout', async (req, res) => {
   const admin = await adminActor(db, req);
   await logAudit(db, { req, actor: admin, action: 'admin.logout', actionTh: 'ออกจากระบบเว็บแอดมิน', entityType: 'user', entityId: admin.id, entityName: admin.name, description: `${admin.name} ออกจากระบบเว็บแอดมิน` });
+  if (admin.id) await audit.logLogout(db, { req, userId: admin.id, appName: 'เว็บแอดมิน Smart Deal' });
   res.json({ success: true });
 });
 

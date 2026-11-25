@@ -99,6 +99,11 @@ const runMigrations = async ({ log = console.log } = {}) => {
       log(`✅ [Migration] ${file} สำเร็จ`);
     }
     if (applied.length === 0) log(`✅ [Migration] ฐานข้อมูล ${cfg.database} (${cfg.profile}) เป็นเวอร์ชันล่าสุดแล้ว`);
+    if (applied.length > 0) {
+      // คำนวณคอลัมน์ภาษาไทย (summary_th ฯลฯ) ให้ข้อมูลที่มีอยู่ทันทีหลังอัปเกรด
+      const r = await require('../src/readable_sync').syncReadable(conn);
+      log(`📝 [Readable] อัปเดตคอลัมน์ภาษาไทย ${r.statements - r.failed}/${r.statements} ตาราง`);
+    }
     return { database: cfg.database, profile: cfg.profile, applied };
   } finally {
     await conn.end();
