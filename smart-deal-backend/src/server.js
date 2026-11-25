@@ -1961,6 +1961,56 @@ app.get('/api/orders/:id/tracking', async (req, res) => {
 });
 
 // อัปเดตพิกัดคนขับ
+// ดึง user_id ของไรเดอร์จาก token (token = base64("<user_id>-<timestamp>")) หรือ query
+const riderUserIdFromReq = (req) => {
+  const auth = req.headers?.authorization || '';
+  const tok = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+  if (tok) {
+    try { const uid = parseInt(Buffer.from(tok, 'base64').toString('utf8').split('-')[0], 10); if (uid) return uid; } catch (e) { /* ignore */ }
+  }
+  const q = parseInt(req.query?.user_id, 10);
+  return Number.isFinite(q) ? q : null;
+};
+
+// แจ้งเตือนใหม่ของไรเดอร์ที่ยังไม่เคยแสดงบนเครื่อง (แอปเรียกทุก 5 วินาที)
+app.get('/api/rider/notifications/unread', async (req, res) => {
+  try {
+    const userId = riderUserIdFromReq(req);
+    if (!userId) return res.status(401).json({ success: false, message: 'ไม่พบข้อมูลผู้ใช้' });
+    const [rows] = await db.query(
+      `SELECT notification_id, title, message, type, reference_id, created_at FROM notifications
+       WHERE user_id = ? AND is_read = 0 AND COALESCE(is_deleted, 0) = 0 AND delivered_to_device_at IS NULL
+       ORDER BY notification_id ASC LIMIT 20`, [userId]);
+    if (rows.length) {
+      await db.query(`UPDATE notifications SET delivered_to_device_at = NOW() WHERE notification_id IN (?)`, [rows.map(r => r.notification_id)]);
+    }
+    res.json({ success: true, notifications: rows });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ไรเดอร์กดเปิด/ปิดรับงาน
+app.put('/api/rider/:id/online-status', async (req, res) => {
+  const riderId = req.params.id;
+  const isOnline = req.body?.is_online === true || req.body?.is_online === 'true' || req.body?.is_online === 1;
+  try {
+    const [[before]] = await db.query('SELECT rider_status FROM riders WHERE rider_id = ?', [riderId]);
+    if (!before) return res.status(404).json({ success: false, message: 'ไม่พบไรเดอร์' });
+    const newStatus = isOnline ? 'available' : 'offline';
+    await db.query('UPDATE riders SET rider_status = ?, online_status_updated_at = NOW() WHERE rider_id = ?', [newStatus, riderId]);
+    if (before.rider_status !== newStatus) {
+      const actor = await actorRider(db, riderId);
+      await logAudit(db, { req, actor, action: isOnline ? 'rider.go_online' : 'rider.go_offline', actionTh: isOnline ? 'ไรเดอร์เปิดรับงาน (Online)' : 'ไรเดอร์ปิดรับงาน (Offline)',
+        entityType: 'rider', entityId: riderId, entityName: actor.name,
+        description: `ไรเดอร์ ${actor.name} ${isOnline ? 'เปิดสถานะพร้อมรับงาน' : 'ปิดสถานะพักรับงาน'}`, oldValue: { rider_status: before.rider_status }, newValue: { rider_status: newStatus } });
+    }
+    res.json({ success: true, rider_status: newStatus });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 app.put('/api/riders/:id/location', async (req, res) => {
   const riderId = req.params.id;
   const { lat, lng } = req.body;
@@ -5628,6 +5678,9 @@ app.post('/api/rider/register', upload.fields([
              user.user_id]
           );
           
+          await logAudit(connection, { req, actor: { type: 'rider', id: user.user_id, name: real_name || name }, action: 'rider.reapply', actionTh: 'ส่งใบสมัครไรเดอร์ใหม่อีกครั้ง',
+            entityType: 'rider', entityId: user.user_id, entityName: real_name || name,
+            description: `${real_name || name} ส่งใบสมัครไรเดอร์ใหม่ (รถ ${vehicle_type || '-'} ทะเบียน ${vehicle_plate || '-'}) รอแอดมินตรวจสอบ` });
           await connection.commit();
           return res.json({ success: true, message: 'ส่งข้อมูลสมัครใหม่สำเร็จ รอการตรวจสอบ' });
         }
@@ -5650,6 +5703,10 @@ app.post('/api/rider/register', upload.fields([
       'INSERT INTO riders (user_id, name, phone, real_name, vehicle_type, vehicle_plate, license_number, id_card_image, license_image, vehicle_doc_image, status, rider_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "pending", "offline")',
       [userId, name, phone, real_name, vehicle_type, vehicle_plate, license_number, id_card_image, license_image, vehicle_doc_image]
     );
+    await logAudit(connection, { req, actor: { type: 'rider', id: userId, name: real_name || name }, action: 'rider.register', actionTh: 'สมัครเป็นไรเดอร์',
+      entityType: 'rider', entityId: userId, entityName: real_name || name,
+      description: `${real_name || name} สมัครเป็นไรเดอร์ (อีเมล ${email}, โทร ${phone}, รถ ${vehicle_type || '-'} ทะเบียน ${vehicle_plate || '-'}, ใบขับขี่ ${license_number || '-'}) รอแอดมินอนุมัติ`,
+      newValue: { email, phone, name, real_name, vehicle_type, vehicle_plate, license_number } });
 
     await connection.commit();
     res.json({ success: true, message: 'สมัครสมาชิกสำเร็จ รอการอนุมัติจากแอดมิน' });
@@ -5672,18 +5729,25 @@ app.post('/api/rider/login', async (req, res) => {
   try {
     const [users] = await db.query('SELECT * FROM users WHERE email = ?', [email]);
     if (users.length === 0) {
+      await logLogin(db, { req, appName: 'แอป Smart Deal Rider (ไรเดอร์)', identifier: email, success: false, reason: 'ไม่พบอีเมลในระบบ' });
       return res.status(401).json({ success: false, message: 'อีเมลหรือรหัสผ่านไม่ถูกต้อง' });
     }
 
     const user = users[0];
     const isMatch = await bcrypt.compare(password, user.password_hash) || password === user.password_hash;
-    
+
     if (!isMatch) {
+      await logLogin(db, { req, user, appName: 'แอป Smart Deal Rider (ไรเดอร์)', identifier: email, success: false, reason: 'รหัสผ่านไม่ถูกต้อง' });
       return res.status(401).json({ success: false, message: 'อีเมลหรือรหัสผ่านไม่ถูกต้อง' });
     }
 
     if (user.role !== 'driver' && user.role !== 'rider') {
+      await logLogin(db, { req, user, appName: 'แอป Smart Deal Rider (ไรเดอร์)', identifier: email, success: false, reason: 'บัญชีนี้ไม่ใช่บัญชีไรเดอร์' });
       return res.status(403).json({ success: false, message: 'บัญชีนี้เป็นบัญชีลูกค้าปกติ ไม่สามารถใช้เข้าสู่ระบบแอปไรเดอร์ได้' });
+    }
+    if (user.status && user.status !== 'active') {
+      await logLogin(db, { req, user, appName: 'แอป Smart Deal Rider (ไรเดอร์)', identifier: email, success: false, reason: 'บัญชีถูกระงับการใช้งานโดยผู้ดูแลระบบ' });
+      return res.status(403).json({ success: false, message: 'บัญชีของคุณถูกระงับการใช้งาน กรุณาติดต่อผู้ดูแลระบบ' });
     }
 
     const [riders] = await db.query('SELECT * FROM riders WHERE user_id = ?', [user.user_id]);
@@ -5694,9 +5758,11 @@ app.post('/api/rider/login', async (req, res) => {
 
     const rider = riders[0];
     if (rider.status === 'pending') {
+      await logLogin(db, { req, user, appName: 'แอป Smart Deal Rider (ไรเดอร์)', identifier: email, success: false, reason: 'บัญชีไรเดอร์ยังรอการอนุมัติ' });
       return res.status(401).json({ success: false, message: 'บัญชีของคุณกำลังรอการอนุมัติจากผู้ดูแลระบบ' });
     }
     if (rider.status === 'rejected') {
+      await logLogin(db, { req, user, appName: 'แอป Smart Deal Rider (ไรเดอร์)', identifier: email, success: false, reason: `บัญชีไรเดอร์ถูกปฏิเสธ: ${rider.reject_reason || '-'}` });
       return res.status(403).json({ 
         success: false, 
         message: 'บัญชีของคุณถูกปฏิเสธ', 
@@ -5709,6 +5775,7 @@ app.post('/api/rider/login', async (req, res) => {
 
     // Mock generating a simple token
     const token = Buffer.from(`${user.user_id}-${Date.now()}`).toString('base64');
+    await logLogin(db, { req, user: { ...user, full_name: rider.real_name || rider.name || user.full_name, role: 'driver' }, appName: 'แอป Smart Deal Rider (ไรเดอร์)', identifier: email, success: true });
       const [ratingResult] = await db.query("SELECT COALESCE((SELECT AVG(rider_rating) FROM reviews WHERE rider_id = ? AND rider_rating > 0), rating, 0) as avg_rating FROM riders WHERE rider_id = ?", [rider.rider_id, rider.rider_id]);
       const avg_rating = ratingResult[0]?.avg_rating ? Number(ratingResult[0].avg_rating).toFixed(1) : 0;
       
@@ -5962,6 +6029,16 @@ app.put('/api/rider/deliveries/:order_id/status', async (req, res) => {
         [orderId, rider_id, 'accepted']
       );
       await connection.query('UPDATE orders SET rider_id = ? WHERE order_id = ?', [rider_id, orderId]);
+      {
+        const riderActor = await actorRider(connection, rider_id);
+        const [[oInfo]] = await connection.query('SELECT shop_name, buyer_name, shipping_address, delivery_fee FROM orders WHERE order_id = ?', [orderId]);
+        await connection.query('UPDATE orders SET rider_name = ? WHERE order_id = ?', [riderActor.name, orderId]);
+        await recordOrderEvent(connection, orderId, {
+          event: 'rider_accepted', fromStatus: orders[0].order_status, toStatus: 'rider_accepted', actor: riderActor,
+          timestamps: { rider_assigned_at: true },
+          description: `ไรเดอร์ ${riderActor.name} กดรับงานจัดส่งออเดอร์ #${orderId} กำลังเดินทางไปรับสินค้าที่ร้าน ${oInfo?.shop_name || '-'} เพื่อส่งให้ ${oInfo?.buyer_name || '-'} (${oInfo?.shipping_address || '-'}) ค่ารอบ ${money(oInfo?.delivery_fee)}`,
+        });
+      }
 
       // Notify Buyer & Shop
       try {
@@ -6002,6 +6079,20 @@ app.put('/api/rider/deliveries/:order_id/status', async (req, res) => {
       await connection.query('UPDATE orders SET order_status = "delivering" WHERE order_id = ?', [orderId]);
     } else if (status === 'delivered') {
       await connection.query('UPDATE orders SET order_status = "delivered" WHERE order_id = ?', [orderId]);
+    }
+    {
+      const riderActor = await actorRider(connection, rider_id);
+      const [[oInfo]] = await connection.query('SELECT shop_name, buyer_name FROM orders WHERE order_id = ?', [orderId]);
+      const TXT = {
+        arriving_shop: `ไรเดอร์ ${riderActor.name} มาถึงร้าน ${oInfo?.shop_name || '-'} แล้ว กำลังรอรับสินค้า`,
+        picked_up: `ไรเดอร์ ${riderActor.name} รับสินค้าจากร้าน ${oInfo?.shop_name || '-'} แล้ว`,
+        delivering: `ไรเดอร์ ${riderActor.name} กำลังเดินทางนำส่งสินค้าให้ ${oInfo?.buyer_name || '-'}`,
+      };
+      await recordOrderEvent(connection, orderId, {
+        event: `rider_${status}`, toStatus: status, actor: riderActor,
+        timestamps: (status === 'picked_up' || status === 'delivering') ? { picked_up_at: true } : {},
+        description: TXT[status] || `ไรเดอร์ ${riderActor.name} อัปเดตสถานะงานเป็น ${status}`,
+      });
     }
     
     await connection.commit();
@@ -6079,6 +6170,18 @@ app.post('/api/rider/deliveries/:order_id/pickup', upload.single('pickup_image')
         [orderId]
       );
     }
+    {
+      const riderActor = await actorRider(connection, rider_id);
+      const [[pShop]] = await connection.query('SELECT name FROM shops WHERE shop_id = ?', [targetShopId]);
+      const [[oInfo]] = await connection.query('SELECT buyer_name, shipping_address FROM orders WHERE order_id = ?', [orderId]);
+      await recordOrderEvent(connection, orderId, {
+        event: reallyAllPickedUp ? 'rider_picked_up' : 'rider_picked_up_shop',
+        toStatus: newOrderStatus, actor: riderActor, shopId: targetShopId, shopName: pShop?.name,
+        timestamps: reallyAllPickedUp ? { picked_up_at: true } : {},
+        description: `ไรเดอร์ ${riderActor.name} ถ่ายรูปยืนยันรับสินค้าจากร้าน ${pShop?.name || '-'} แล้ว (${pickedUpCount}/${allShopIds.length} ร้าน)` +
+          (reallyAllPickedUp ? ` ครบทุกร้าน กำลังนำส่งให้ ${oInfo?.buyer_name || '-'} ที่ ${oInfo?.shipping_address || '-'}` : ''),
+      });
+    }
 
     // 1. Notify ONLY the specific Shop Owner that was just picked up
     try {
@@ -6117,7 +6220,7 @@ app.post('/api/rider/deliveries/:order_id/pickup', upload.single('pickup_image')
 
       try {
         await connection.query(
-          'INSERT INTO order_messages (order_id, sender_id, sender_type, receiver_type, message, image_url) VALUES (?, NULL, ?, "rider", "buyer", ?, ?)',
+          'INSERT INTO order_messages (order_id, sender_id, sender_type, receiver_type, message, image_url) VALUES (?, ?, "rider", "buyer", ?, ?)',
           [orderId, rider_id, '🛵 [รับสินค้าครบแล้ว] ไรเดอร์ได้รับสินค้าครบทุกร้านค้าเรียบร้อยแล้ว กำลังเดินทางไปส่งให้คุณลูกค้าครับ', uploadedImage || null]
         );
       } catch(e) {}
@@ -6153,7 +6256,16 @@ app.post('/api/rider/deliveries/:order_id/complete', upload.single('proof_image'
       [proof_image, orderId, rider_id]
     );
 
+    const [[prevOrd]] = await db.query('SELECT order_status, buyer_name, shipping_address FROM orders WHERE order_id = ?', [orderId]);
     await db.query('UPDATE orders SET order_status = "delivered", delivered_at = CURRENT_TIMESTAMP WHERE order_id = ?', [orderId]);
+    {
+      const riderActor = await actorRider(db, rider_id);
+      await recordOrderEvent(db, orderId, {
+        event: 'rider_delivered', fromStatus: prevOrd?.order_status, toStatus: 'delivered', actor: riderActor,
+        timestamps: { picked_up_at: true },
+        description: `ไรเดอร์ ${riderActor.name} ส่งสินค้าถึงมือลูกค้า ${prevOrd?.buyer_name || '-'} ที่ ${prevOrd?.shipping_address || '-'} พร้อมถ่ายรูปยืนยันการส่ง${proof_image ? '' : ' (ไม่มีรูป)'} รอลูกค้ากดยืนยันรับสินค้า`,
+      });
+    }
 
     // Notify Buyer & Shop
     try {
@@ -7097,7 +7209,7 @@ app.post('/api/rider/wallet/withdraw', async (req, res) => {
   if (!rider_id || !amount) return res.status(400).json({ success: false, message: 'Missing fields' });
   
   try {
-    const [delivs] = await db.query("SELECT SUM(o.delivery_fee) as earned FROM deliveries d JOIN orders o ON d.order_id = o.order_id WHERE d.rider_id = ? AND d.status = 'delivered'", [rider_id]);
+    const [delivs] = await db.query("SELECT SUM(o.delivery_fee) as earned FROM deliveries d JOIN orders o ON d.order_id = o.order_id WHERE d.rider_id = ? AND (d.status = 'completed' OR o.order_status = 'completed')", [rider_id]);
     const [withdraws] = await db.query("SELECT SUM(amount) as withdrawn FROM wallet_transactions WHERE user_type = 'rider' AND target_id = ? AND type = 'debit'", [rider_id]);
     const [pendingW] = await db.query("SELECT SUM(amount) as p_amount FROM withdrawals WHERE user_type = 'rider' AND rider_id = ? AND status = 'pending'", [rider_id]);
     const pendingWithdrawn = pendingW[0]?.p_amount || 0;
@@ -7110,7 +7222,12 @@ app.post('/api/rider/wallet/withdraw', async (req, res) => {
       return res.status(400).json({ success: false, message: 'ยอดเงินไม่เพียงพอ' });
     }
 
-    await db.query("INSERT INTO withdrawals (user_type, rider_id, amount, status) VALUES ('rider', ?, ?, 'pending')", [rider_id, amount]);
+    const riderActor = await actorRider(db, rider_id);
+    const [[rPhone]] = await db.query('SELECT phone FROM riders WHERE rider_id = ?', [rider_id]);
+    const [wIns] = await db.query("INSERT INTO withdrawals (user_type, rider_id, amount, status, requester_name, bank_info) VALUES ('rider', ?, ?, 'pending', ?, ?)",
+      [rider_id, amount, riderActor.name, `พร้อมเพย์ ${rPhone?.phone || '-'}`]);
+    await logAudit(db, { req, actor: riderActor, action: 'wallet.withdraw_request', actionTh: 'ไรเดอร์ขอถอนเงิน', entityType: 'withdrawal', entityId: wIns.insertId, entityName: riderActor.name,
+      description: `ไรเดอร์ ${riderActor.name} ขอถอนเงิน ${money(amount)} เข้าพร้อมเพย์ ${rPhone?.phone || '-'} (ยอดคงเหลือก่อนถอน ${money(balance)})`, newValue: { amount, balance_before: balance } });
     
     res.json({ success: true, message: 'ถอนเงินสำเร็จ' });
   } catch (error) {

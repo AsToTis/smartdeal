@@ -88,11 +88,23 @@ const call = async (method, path, body, headers = {}) => {
   r = await call('POST', `/rider/deliveries/${orderId}/complete`, { rider_id: riderId, proof_image_base64: 'data:image/png;base64,iVBORw0KGgo=' });
   check('ไรเดอร์ส่งสินค้าถึงลูกค้า', r.data?.success, r.data?.message);
 
+  r = await call('PUT', `/rider/${riderId}/online-status`, { is_online: false });
+  const [rs] = await q('SELECT rider_status FROM riders WHERE rider_id = ?', [riderId]);
+  check('ไรเดอร์ปิดรับงาน (บันทึก DB)', r.data?.success && rs.rider_status === 'offline', rs.rider_status);
+  const riderToken = Buffer.from(`${riderUserId}-${Date.now()}`).toString('base64');
+  r = await call('GET', '/rider/notifications/unread', null, { Authorization: `Bearer ${riderToken}` });
+  const firstBatch = (r.data?.notifications || []).length;
+  r = await call('GET', '/rider/notifications/unread', null, { Authorization: `Bearer ${riderToken}` });
+  check('แจ้งเตือนไรเดอร์ส่งถึงเครื่องครั้งเดียว', firstBatch >= 0 && (r.data?.notifications || []).length === 0, `ครั้งแรก ${firstBatch} รายการ`);
+
   // ---------- 5. ลูกค้ายืนยันรับ + รีวิว ----------
   r = await call('PUT', `/orders/${orderId}/complete`);
   check('ลูกค้ายืนยันรับสินค้า', r.data?.success, r.data?.message);
   r = await call('POST', '/reviews', { order_id: orderId, user_id: buyerId, shop_id: shopId, rating: 5, comment: 'อร่อยมาก ส่งไว', rider_id: riderId, rider_rating: 5, rider_comment: 'สุภาพ' });
   check('ลูกค้ารีวิว', r.data?.success);
+  r = await call('POST', '/rider/wallet/withdraw', { rider_id: riderId, amount: 5 });
+  const [rw] = await q('SELECT requester_name, bank_info FROM withdrawals WHERE rider_id = ? ORDER BY id DESC LIMIT 1', [riderId]);
+  check('ไรเดอร์ขอถอนเงิน (มีชื่อ/บัญชี)', r.data?.success && rw?.requester_name, rw ? `${rw.requester_name} / ${rw.bank_info}` : r.data?.message);
   r = await call('GET', `/orders/user/${buyerId}`);
   check('สถานะรีวิวมาจาก DB (is_reviewed)', (r.data?.data || []).some(o => o.order_id === orderId && Number(o.is_reviewed) === 1));
 
