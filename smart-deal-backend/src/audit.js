@@ -137,7 +137,8 @@ const recordOrderEvent = (db, orderId, { event, fromStatus, toStatus, actor, des
   await db.query(
     `INSERT INTO order_status_logs (order_id, shop_id, shop_name, event_code, from_status, to_status, status_th, description_th, actor_type, actor_id, actor_name)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [orderId, shopId || order?.shop_id || null, shopName || order?.shop_name || null, event, fromStatus || null, current, statusTh(current), description, a.type, a.id || null, a.name]
+    [orderId, shopId || order?.shop_id || null, shopName || order?.shop_name || null, event,
+      fromStatus || (event === 'created' ? 'new' : (order?.order_status || current)), current, statusTh(current), description, a.type, a.id || null, a.name]
   );
 });
 

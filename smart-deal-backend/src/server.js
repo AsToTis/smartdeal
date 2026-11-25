@@ -2015,7 +2015,8 @@ app.put('/api/riders/:id/location', async (req, res) => {
   const riderId = req.params.id;
   const { lat, lng } = req.body;
   try {
-    await db.execute('UPDATE riders SET current_lat = ?, current_lng = ?, updated_at = NOW() WHERE rider_id = ?', [lat, lng, riderId]);
+    // เดิมอัปเดตคอลัมน์ updated_at ที่ไม่มีอยู่จริง -> error ทุกครั้ง ตำแหน่งไรเดอร์จึงไม่เคยถูกบันทึก
+    await db.execute('UPDATE riders SET current_lat = ?, current_lng = ?, location_updated_at = NOW() WHERE rider_id = ?', [lat, lng, riderId]);
     res.json({ success: true, message: 'Rider location updated' });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -6433,6 +6434,16 @@ app.post('/api/rider/deliveries/:order_id/complete', upload.single('proof_image'
 
     const [[prevOrd]] = await db.query('SELECT order_status, buyer_name, shipping_address FROM orders WHERE order_id = ?', [orderId]);
     await db.query('UPDATE orders SET order_status = "delivered", delivered_at = CURRENT_TIMESTAMP WHERE order_id = ?', [orderId]);
+    {
+      // พิกัดจุดที่กดส่งสำเร็จ: จากแอป (ถ้าส่งมา) หรือพิกัด GPS ล่าสุดของไรเดอร์
+      const bodyLat = parseFloat(req.body?.lat ?? req.body?.latitude);
+      const bodyLng = parseFloat(req.body?.lng ?? req.body?.longitude);
+      if (Number.isFinite(bodyLat) && Number.isFinite(bodyLng)) {
+        await db.query('UPDATE orders SET delivery_lat = ?, delivery_lng = ? WHERE order_id = ?', [bodyLat, bodyLng, orderId]);
+      } else {
+        await db.query('UPDATE orders o JOIN riders r ON r.rider_id = ? SET o.delivery_lat = r.current_lat, o.delivery_lng = r.current_lng WHERE o.order_id = ? AND r.current_lat IS NOT NULL', [rider_id, orderId]);
+      }
+    }
     {
       const riderActor = await actorRider(db, rider_id);
       await recordOrderEvent(db, orderId, {
