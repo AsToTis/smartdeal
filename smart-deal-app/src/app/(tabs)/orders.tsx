@@ -442,7 +442,8 @@ export default function OrdersScreen() {
 
   const canReview = (order: any) => {
     if (!order) return false;
-    // Check if already reviewed locally
+    // Check if already reviewed (from MySQL via is_reviewed, with local cache as fallback)
+    if (Number(order.is_reviewed) === 1 || order.is_reviewed === true) return false;
     if (reviewedOrders.includes(order.order_id)) return false;
 
     const statusInfo = getStatusInfo(order.order_status);

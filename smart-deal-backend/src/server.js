@@ -8,6 +8,8 @@ const nodemailer = require('nodemailer');
 const generatePayload = require('promptpay-qr');
 const QRCode = require('qrcode');
 const db = require('./db');
+const audit = require('./audit');
+const { logLogin, logAudit, recordOrderEvent, actorUser, actorShop, actorRider, actorAdmin, diffText, money, SYSTEM } = audit;
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -24,11 +26,12 @@ const transporter = nodemailer.createTransport({
   tls: { rejectUnauthorized: false },
   auth: {
     user: process.env.EMAIL_USER || 'astotisuss@gmail.com',
-    pass: process.env.EMAIL_PASS || 'jrmxvmhzvwekagmo'
+    pass: process.env.EMAIL_PASS
   }
 });
 
 const app = express();
+app.set('trust proxy', true);
 app.use(cors());
 
 // ==========================================
@@ -543,10 +546,11 @@ const syncShopWalletBalances = async (specificShopId = null) => {
         const gross = parseFloat(iRows[0]?.gross || 0);
         if (gross > 0) {
           const net = parseFloat((gross * fee_multiplier).toFixed(2));
+          const [[snRow]] = await db.execute('SELECT name FROM shops WHERE shop_id = ?', [targetSId]);
           await db.execute(`
-            INSERT INTO wallet_transactions (user_type, target_id, order_id, amount, type, description)
-            VALUES ('shop', ?, ?, ?, 'credit', ?)
-          `, [targetSId, co.order_id, net, `รายรับจากออเดอร์ #${co.order_id} (หัก GP ${platform_fee}%)`]);
+            INSERT INTO wallet_transactions (user_type, target_id, target_name, order_id, amount, type, description)
+            VALUES ('shop', ?, ?, ?, ?, 'credit', ?)
+          `, [targetSId, snRow?.name || null, co.order_id, net, `รายรับจากออเดอร์ #${co.order_id} (หัก GP ${platform_fee}%) [ซิงค์ย้อนหลัง]`]);
         }
       }
     }
@@ -565,7 +569,7 @@ const syncShopWalletBalances = async (specificShopId = null) => {
       const [creditRows] = await db.execute('SELECT SUM(amount) as total_credits FROM wallet_transactions WHERE target_id = ? AND user_type = "shop" AND type = "credit"', [sId]);
       const totalCredits = parseFloat(creditRows[0]?.total_credits || 0);
 
-      const [withdrawnRows] = await db.execute('SELECT SUM(amount) as total_withdrawals FROM withdrawals WHERE shop_id = ?', [sId]);
+      const [withdrawnRows] = await db.execute('SELECT SUM(amount) as total_withdrawals FROM withdrawals WHERE shop_id = ? AND status <> "rejected"', [sId]);
       const totalWithdrawals = parseFloat(withdrawnRows[0]?.total_withdrawals || 0);
 
       const correctBalance = Math.max(0, parseFloat((totalCredits - totalWithdrawals).toFixed(2)));
@@ -704,14 +708,21 @@ app.post('/api/login', async (req, res) => {
     );
 
     if (users.length === 0) {
+      await logLogin(db, { req, appName: 'แอป Smart Deal (ลูกค้า/ร้านค้า)', identifier, success: false, reason: 'ไม่พบอีเมลหรือเบอร์โทรศัพท์ในระบบ' });
       return res.status(400).json({ message: 'ไม่พบอีเมลหรือเบอร์โทรศัพท์นี้ในระบบ' });
     }
 
     const user = users[0];
     const isMatch = await bcrypt.compare(password, user.password_hash) || password === user.password_hash;
-    
+
     if (!isMatch) {
+      await logLogin(db, { req, user, appName: 'แอป Smart Deal (ลูกค้า/ร้านค้า)', identifier, success: false, reason: 'รหัสผ่านไม่ถูกต้อง' });
       return res.status(400).json({ message: 'รหัสผ่านไม่ถูกต้อง' });
+    }
+
+    if (user.status && user.status !== 'active') {
+      await logLogin(db, { req, user, appName: 'แอป Smart Deal (ลูกค้า/ร้านค้า)', identifier, success: false, reason: 'บัญชีถูกระงับการใช้งานโดยผู้ดูแลระบบ' });
+      return res.status(403).json({ message: 'บัญชีของคุณถูกระงับการใช้งาน กรุณาติดต่อผู้ดูแลระบบ' });
     }
 
     // Check if this user is a seller (has an approved shop)
@@ -727,6 +738,14 @@ app.post('/api/login', async (req, res) => {
       isSeller = true;
       shopData = shops[0];
     }
+
+    await logLogin(db, {
+      req,
+      user: { ...user, role: isSeller && user.role === 'buyer' ? 'seller' : user.role },
+      appName: isSeller ? `แอป Smart Deal (ลูกค้า/ร้าน ${shopData.name})` : 'แอป Smart Deal (ลูกค้า/ร้านค้า)',
+      identifier,
+      success: true,
+    });
 
     res.json({
       message: 'เข้าสู่ระบบสำเร็จ!',
@@ -817,6 +836,16 @@ app.post('/api/register', async (req, res) => {
     );
 
     delete otpStore[email];
+
+    await logAudit(db, {
+      req,
+      actor: { type: role === 'driver' ? 'rider' : 'buyer', id: result.insertId, name: full_name },
+      action: 'user.register',
+      actionTh: 'สมัครสมาชิกใหม่',
+      entityType: 'user', entityId: result.insertId, entityName: full_name,
+      description: `${full_name} สมัครสมาชิกใหม่ (อีเมล ${email || '-'}, โทร ${phone || '-'}) ในบทบาท ${audit.roleTh(role)}`,
+      newValue: { email, phone, full_name, role },
+    });
 
     res.status(201).json({ message: 'สมัครสมาชิกสำเร็จ!', user_id: result.insertId });
   } catch (error) {
@@ -1014,7 +1043,21 @@ app.put('/api/users/:id/profile', async (req, res) => {
     );
 
     const updatedUser = updatedRows[0];
-    console.log(`✅ อัปเดตข้อมูลผู้ใช้ ID: ${id} สำเร็จ:`, updatedUser);
+    console.log(`✅ อัปเดตข้อมูลผู้ใช้ ID: ${id} สำเร็จ`);
+    {
+      const changes = diffText(current, { full_name: newFullName, phone: newPhone, email: newEmail }, { full_name: 'ชื่อ', phone: 'เบอร์โทร', email: 'อีเมล' });
+      const avatarChanged = (current.avatar_url || '') !== (newAvatar || '');
+      if (changes || avatarChanged) {
+        await logAudit(db, {
+          req, actor: { type: current.role === 'driver' ? 'rider' : (current.role || 'buyer'), id: Number(id), name: newFullName },
+          action: 'user.update_profile', actionTh: 'แก้ไขข้อมูลส่วนตัว',
+          entityType: 'user', entityId: id, entityName: newFullName,
+          description: `${newFullName} แก้ไขข้อมูลส่วนตัว: ${[changes, avatarChanged ? 'เปลี่ยนรูปโปรไฟล์' : ''].filter(Boolean).join(', ')}`,
+          oldValue: { full_name: current.full_name, phone: current.phone, email: current.email },
+          newValue: { full_name: newFullName, phone: newPhone, email: newEmail },
+        });
+      }
+    }
 
     res.json({
       success: true,
@@ -1036,6 +1079,11 @@ app.post('/api/users/:id/avatar', upload.single('avatar'), async (req, res) => {
     }
     const avatarUrl = '/uploads/' + req.file.filename;
     await db.execute('UPDATE users SET avatar_url = ? WHERE user_id = ?', [avatarUrl, id]);
+    {
+      const actor = await actorUser(db, id);
+      await logAudit(db, { req, actor, action: 'user.update_avatar', actionTh: 'เปลี่ยนรูปโปรไฟล์', entityType: 'user', entityId: id, entityName: actor.name,
+        description: `${actor.name} อัปโหลดรูปโปรไฟล์ใหม่ (${avatarUrl})`, newValue: { avatar_url: avatarUrl } });
+    }
     res.json({ success: true, avatar_url: avatarUrl });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -1066,6 +1114,8 @@ app.put('/api/users/:id/change-password', async (req, res) => {
     const user = users[0];
     const isMatch = await bcrypt.compare(currentPassword, user.password_hash);
     if (!isMatch) {
+      await logAudit(db, { req, actor: { type: user.role || 'buyer', id: user.user_id, name: user.full_name }, action: 'user.change_password_failed', actionTh: 'เปลี่ยนรหัสผ่านไม่สำเร็จ',
+        entityType: 'user', entityId: id, entityName: user.full_name, description: `${user.full_name} พยายามเปลี่ยนรหัสผ่านแต่กรอกรหัสผ่านเดิมไม่ถูกต้อง` });
       return res.status(400).json({ success: false, message: 'รหัสผ่านเดิมไม่ถูกต้อง' });
     }
 
@@ -1074,6 +1124,8 @@ app.put('/api/users/:id/change-password', async (req, res) => {
 
     await db.execute('UPDATE users SET password_hash = ? WHERE user_id = ?', [new_password_hash, id]);
     console.log(`✅ เปลี่ยนรหัสผ่านของผู้ใช้ ID: ${id} สำเร็จ`);
+    await logAudit(db, { req, actor: { type: user.role || 'buyer', id: user.user_id, name: user.full_name }, action: 'user.change_password', actionTh: 'เปลี่ยนรหัสผ่าน',
+      entityType: 'user', entityId: id, entityName: user.full_name, description: `${user.full_name} เปลี่ยนรหัสผ่านสำเร็จ (ไม่เก็บรหัสผ่านใน log)` });
 
     res.json({
       success: true,
@@ -1383,6 +1435,12 @@ app.post('/api/forgot-password/reset-password', async (req, res) => {
     const hashedPassword = await bcrypt.hash(newPassword, 10);
     await db.execute('UPDATE users SET password_hash = ? WHERE email = ?', [hashedPassword, email]);
     delete otpStore[email];
+    {
+      const [[u]] = await db.query('SELECT user_id, full_name, role FROM users WHERE email = ?', [email]);
+      await logAudit(db, { req, actor: { type: u?.role || 'buyer', id: u?.user_id || null, name: u?.full_name || email },
+        action: 'user.reset_password', actionTh: 'ตั้งรหัสผ่านใหม่ผ่าน OTP (ลืมรหัสผ่าน)', entityType: 'user', entityId: u?.user_id, entityName: u?.full_name || email,
+        description: `${u?.full_name || email} ตั้งรหัสผ่านใหม่ผ่านการยืนยัน OTP ทางอีเมล ${email}` });
+    }
 
     res.json({ message: 'ตั้งรหัสผ่านใหม่สำเร็จแล้ว' });
   } catch (error) {
@@ -1699,6 +1757,13 @@ app.post('/api/users/:id/address', async (req, res) => {
 
     const [updated] = await db.execute('SELECT * FROM user_addresses WHERE user_id = ? LIMIT 1', [userId]);
     const a = updated[0];
+    {
+      const actor = await actorUser(db, userId, 'buyer');
+      await logAudit(db, { req, actor, action: existing.length ? 'address.update' : 'address.create', actionTh: existing.length ? 'แก้ไขที่อยู่จัดส่ง' : 'เพิ่มที่อยู่จัดส่ง',
+        entityType: 'user_address', entityId: a.id, entityName: finalTitle,
+        description: `${actor.name} ${existing.length ? 'แก้ไข' : 'เพิ่ม'}ที่อยู่จัดส่ง "${finalTitle}" : ${finalDetail} (ผู้รับ ${finalName || '-'} โทร ${finalPhone || '-'})`,
+        newValue: { title: finalTitle, address_detail: finalDetail, latitude: finalLat, longitude: finalLng, receiver_name: finalName, receiver_phone: finalPhone, note_for_rider: finalNote } });
+    }
 
     console.log(`📍 บันทึกที่อยู่และพิกัดสำหรับ User ${userId}: ${finalTitle} (${finalLat}, ${finalLng})`);
 
@@ -1933,7 +1998,8 @@ app.get('/api/orders/user/:userId', async (req, res) => {
         u_rider.phone AS rider_phone,
         r.vehicle_plate AS rider_vehicle_plate,
         u_customer.full_name AS customer_name,
-        u_customer.phone AS customer_phone
+        u_customer.phone AS customer_phone,
+        (SELECT COUNT(*) FROM reviews rv WHERE rv.order_id = orders.order_id) > 0 AS is_reviewed
       FROM orders
       LEFT JOIN shops ON orders.shop_id = shops.shop_id
       LEFT JOIN deliveries del ON orders.order_id = del.order_id
@@ -2259,6 +2325,11 @@ app.post('/api/orders/:orderId/issues', async (req, res) => {
       'INSERT INTO order_issues (order_id, user_id, issue_topic, issue_detail, status) VALUES (?, ?, ?, ?, ?)',
       [orderId, user_id, issue_topic, issue_detail || '', 'pending']
     );
+    {
+      const actor = await actorUser(db, user_id, 'buyer');
+      await recordOrderEvent(db, orderId, { event: 'issue_reported', actor,
+        description: `ลูกค้า ${actor.name} แจ้งปัญหาออเดอร์ #${orderId} หัวข้อ "${issue_topic}"${issue_detail ? ` : ${issue_detail}` : ''}` });
+    }
 
     res.json({ success: true, message: 'ส่งเรื่องร้องเรียนสำเร็จ แอดมินจะติดต่อกลับโดยเร็วที่สุด' });
   } catch (error) {
@@ -2402,6 +2473,8 @@ app.post('/api/orders', async (req, res) => {
 
     // 3. บันทึก order_items และตัดสต็อกสินค้าใน MySQL ทันที
     const actualShopIdsInOrder = new Set([shop_id]);
+    const shopNameCache = {};
+    const itemSummaries = [];
 
     if (items && items.length > 0) {
       for (const item of items) {
@@ -2409,24 +2482,35 @@ app.post('/api/orders', async (req, res) => {
         const reqQty = parseInt(item.quantity || 1, 10);
         const itemPrice = parseFloat(item.price ?? item.discount_price ?? 0);
 
-        // ดึง shop_id ที่ถูกต้องตามความเป็นจริงจากตาราง products
+        // ดึง shop_id ที่ถูกต้องตามความเป็นจริงจากตาราง products (+ snapshot ราคา ณ ตอนสั่ง)
         let actualItemShopId = Number(item.shop_id || shop_id || 1);
+        let productSnap = null;
         if (pId) {
-          const [pRows] = await connection.query('SELECT shop_id FROM products WHERE product_id = ?', [pId]);
+          const [pRows] = await connection.query('SELECT shop_id, name, original_price, discount_percent FROM products WHERE product_id = ?', [pId]);
           if (pRows.length > 0 && pRows[0].shop_id) {
             actualItemShopId = Number(pRows[0].shop_id);
           }
+          productSnap = pRows[0] || null;
         }
+        const itemName = item.product_name || item.name || productSnap?.name || '';
 
         if (actualItemShopId) {
           actualShopIdsInOrder.add(actualItemShopId);
         }
 
+        if (!shopNameCache[actualItemShopId]) {
+          const [snRows] = await connection.query('SELECT name FROM shops WHERE shop_id = ?', [actualItemShopId]);
+          shopNameCache[actualItemShopId] = snRows[0]?.name || `ร้าน #${actualItemShopId}`;
+        }
+        const itemShopName = shopNameCache[actualItemShopId];
+        const lineTotal = parseFloat((itemPrice * reqQty).toFixed(2));
         await connection.query(
-          `INSERT INTO order_items (order_id, product_id, product_name, quantity, price, shop_id)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-          [orderId, pId || null, item.product_name || item.name || '', reqQty, itemPrice, actualItemShopId]
+          `INSERT INTO order_items (order_id, product_id, product_name, quantity, price, shop_id, shop_name, original_price, discount_percent, line_total)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [orderId, pId || null, itemName, reqQty, itemPrice, actualItemShopId, itemShopName,
+           productSnap?.original_price ?? item.original_price ?? null, productSnap?.discount_percent ?? item.discount_percent ?? null, lineTotal]
         );
+        itemSummaries.push(`${itemName} x${reqQty} (${money(lineTotal)})`);
 
         // ตัดสต็อกสินค้าในตาราง products
         if (pId) {
@@ -2441,15 +2525,19 @@ app.post('/api/orders', async (req, res) => {
 
     // บันทึกการใช้งานคูปอง (ถ้ามี)
     if (req.body.coupon_id) {
-      await connection.query('UPDATE user_coupons SET is_used = 1 WHERE id = ?', [req.body.coupon_id]);
+      await connection.query('UPDATE user_coupons SET is_used = 1, order_id = ?, used_at = NOW() WHERE id = ?', [orderId, req.body.coupon_id]);
     } else if (req.body.coupon_code && user_id) {
-      await connection.query('UPDATE user_coupons SET is_used = 1 WHERE code = ? AND user_id = ? LIMIT 1', [req.body.coupon_code, user_id]);
+      await connection.query('UPDATE user_coupons SET is_used = 1, order_id = ?, used_at = NOW() WHERE code = ? AND user_id = ? AND is_used = 0 LIMIT 1', [orderId, req.body.coupon_code, user_id]);
     }
 
     // มอบคะแนนสะสมจากการสั่งซื้อ
     const earnedPoints = Math.max(5, Math.floor((total_amount || 0) / 10));
     try {
-      await connection.query('UPDATE user_points SET points = points + ? WHERE user_id = ?', [earnedPoints, user_id || 2]);
+      const [ptRes] = await connection.query('UPDATE user_points SET points = points + ? WHERE user_id = ?', [earnedPoints, user_id || 2]);
+      if (!ptRes.affectedRows) {
+        await connection.query('INSERT INTO user_points (user_id, points) VALUES (?, ?)', [user_id || 2, 1000 + earnedPoints]);
+        await connection.query('INSERT INTO user_point_history (user_id, title, points_change) VALUES (?, ?, ?)', [user_id || 2, 'โบนัสต้อนรับสมาชิกใหม่', '+1000']);
+      }
       await connection.query('INSERT INTO user_point_history (user_id, title, points_change) VALUES (?, ?, ?)', [
         user_id || 2,
         `คะแนนจากการสั่งซื้อ #${orderId}`,
@@ -2480,6 +2568,27 @@ app.post('/api/orders', async (req, res) => {
       }
     } catch(ne) {
       console.error('Error sending order creation notifications:', ne.message);
+    }
+
+    {
+      const [[buyerRow]] = await connection.query('SELECT full_name FROM users WHERE user_id = ?', [user_id || 2]);
+      if (!Object.keys(shopNameCache).length && shop_id) {
+        const [snRows] = await connection.query('SELECT name FROM shops WHERE shop_id = ?', [shop_id]);
+        if (snRows[0]) shopNameCache[shop_id] = snRows[0].name;
+      }
+      const shopNamesText = Object.values(shopNameCache).join(', ');
+      const buyerName = buyerRow?.full_name || `ลูกค้า #${user_id || 2}`;
+      const itemsText = itemSummaries.join(', ');
+      await connection.query(
+        'UPDATE orders SET shop_name = ?, buyer_name = ?, items_summary = ?, coupon_code = ? WHERE order_id = ?',
+        [shopNamesText || null, buyerName, itemsText || null, req.body.coupon_code || null, orderId]
+      );
+      const payText = { promptpay: 'พร้อมเพย์ (QR)', cash: 'เงินสด', mobilebanking: 'โมบายแบงก์กิ้ง' }[payment_method] || payment_method || 'พร้อมเพย์ (QR)';
+      await recordOrderEvent(connection, orderId, {
+        event: 'created', toStatus: 'pending',
+        actor: { type: 'buyer', id: Number(user_id) || null, name: buyerName },
+        description: `ลูกค้า ${buyerName} สั่งซื้อจากร้าน ${shopNamesText || '-'} : ${itemsText || '-'} | ค่าสินค้า ${money(subtotal)} ค่าส่ง ${money(calculatedDeliveryFee)} ส่วนลด ${money(discount)} ยอดรวม ${money(finalTotalAmount)} | ${(delivery_type || 'delivery') === 'pickup' ? 'รับเองที่ร้าน' : 'จัดส่งถึง ' + (shipping_address || '-')} | ชำระด้วย ${payText}${req.body.coupon_code ? ' | ใช้คูปอง ' + req.body.coupon_code : ''}`,
+      });
     }
 
     await connection.commit();
@@ -2544,9 +2653,15 @@ app.post(['/api/payments', '/api/payments/confirm'], async (req, res) => {
 
     // 1. บันทึกลงตาราง payments (ประวัติการชำระเงิน)
     await connection.query(`
-      INSERT INTO payments (order_id, payment_method, payment_status, amount, paid_at)
-      VALUES (?, ?, 'success', ?, NOW())
-    `, [effectiveOrderId, payment_method || 'promptpay', effectiveAmount]);
+      INSERT INTO payments (order_id, payment_method, payment_status, amount, paid_at, payer_name, description)
+      VALUES (?, ?, 'success', ?, NOW(), ?, ?)
+    `, [effectiveOrderId, payment_method || 'promptpay', effectiveAmount, orderData.buyer_name || null,
+         `ลูกค้า ${orderData.buyer_name || '-'} ชำระเงินออเดอร์ #${effectiveOrderId} ยอด ${money(effectiveAmount)}`]);
+    await connection.query("UPDATE orders SET payment_status = 'paid', paid_at = COALESCE(paid_at, NOW()) WHERE order_id = ?", [effectiveOrderId]);
+    await recordOrderEvent(connection, effectiveOrderId, {
+      event: 'paid', actor: { type: 'buyer', id: orderData.user_id || null, name: orderData.buyer_name || 'ลูกค้า' },
+      description: `ลูกค้า ${orderData.buyer_name || '-'} ยืนยันการชำระเงิน ยอด ${money(effectiveAmount)} (${payment_method || 'promptpay'})`,
+    });
 
     // 2. อัปเดตสถานะออเดอร์เป็น 'pending' (รอร้านค้ายืนยัน)
     await connection.query(`
@@ -2578,10 +2693,11 @@ app.post(['/api/payments', '/api/payments/confirm'], async (req, res) => {
         ON DUPLICATE KEY UPDATE balance = balance + VALUES(balance)
       `, [rider_id, riderAmount]);
 
+      const riderActor = await actorRider(connection, rider_id);
       await connection.query(`
-        INSERT INTO wallet_transactions (user_type, target_id, order_id, amount, type, description)
-        VALUES ('rider', ?, ?, ?, 'credit', ?)
-      `, [rider_id, effectiveOrderId, riderAmount, `ค่าจัดส่งออเดอร์ #${effectiveOrderId}`]);
+        INSERT INTO wallet_transactions (user_type, target_id, target_name, order_id, amount, type, description)
+        VALUES ('rider', ?, ?, ?, ?, 'credit', ?)
+      `, [rider_id, riderActor.name, effectiveOrderId, riderAmount, `ค่าจัดส่งออเดอร์ #${effectiveOrderId} เข้ากระเป๋าไรเดอร์ ${riderActor.name}`]);
     }
 
     await connection.commit();
@@ -2621,8 +2737,9 @@ app.put('/api/orders/:orderId/complete', async (req, res) => {
     const deliveryFee = parseFloat(order.delivery_fee || 0);
 
     // 1. อัปเดตสถานะคำสั่งซื้อและการจัดส่งเป็น completed (เสร็จสมบูรณ์ 100%)
-    await connection.query('UPDATE orders SET order_status = "completed", delivered_at = NOW() WHERE order_id = ?', [orderId]);
-    await connection.query('UPDATE deliveries SET status = "completed", completed_at = NOW() WHERE order_id = ?', [orderId]);
+    await connection.query('UPDATE orders SET order_status = "completed", delivered_at = COALESCE(delivered_at, NOW()), completed_at = NOW() WHERE order_id = ?', [orderId]);
+    await connection.query('UPDATE deliveries SET status = "completed", completed_at = COALESCE(completed_at, NOW()) WHERE order_id = ?', [orderId]);
+    const moneyTrail = [];
 
     // 2. คำนวณและโอนเงินเข้ากระเป๋าร้านค้าแยกตามแต่ละร้าน (Multi-vendor Escrow Release & หัก GP)
     const [feeRows] = await connection.query("SELECT setting_value FROM system_settings WHERE setting_key='platform_fee_percent'");
@@ -2660,18 +2777,28 @@ app.put('/api/orders/:orderId/complete', async (req, res) => {
           ON DUPLICATE KEY UPDATE balance = balance + VALUES(balance)
         `, [sId, netAmount]);
 
+        const [[shopNameRow]] = await connection.query('SELECT name FROM shops WHERE shop_id = ?', [sId]);
+        const shopLabel = shopNameRow?.name || `ร้าน #${sId}`;
+        const gpAmount = parseFloat((grossAmount - netAmount).toFixed(2));
         await connection.query(`
-          INSERT INTO wallet_transactions (user_type, target_id, order_id, amount, type, description)
-          VALUES ('shop', ?, ?, ?, 'credit', ?)
-        `, [sId, orderId, netAmount, `รายรับจากออเดอร์ #${orderId} (หัก GP ${platform_fee}%)`]);
+          INSERT INTO wallet_transactions (user_type, target_id, target_name, order_id, amount, type, description)
+          VALUES ('shop', ?, ?, ?, ?, 'credit', ?)
+        `, [sId, shopLabel, orderId, netAmount, `รายรับจากออเดอร์ #${orderId} (หัก GP ${platform_fee}%)`]);
 
         // ซิงค์ลง transactions ด้วย (เพื่อความเข้ากันได้กับ Navicat/Dashboard)
         try {
           await connection.query(`
-            INSERT INTO transactions (shop_id, amount, type, status, created_at)
-            VALUES (?, ?, 'order_revenue', 'completed', NOW())
-          `, [sId, netAmount]);
-        } catch(te) {}
+            INSERT INTO transactions (shop_id, order_id, amount, type, status, description, created_at)
+            VALUES (?, ?, ?, 'order_revenue', 'completed', ?, NOW())
+          `, [sId, orderId, netAmount, `ร้าน ${shopLabel} ได้รับเงินจากออเดอร์ #${orderId} ยอดขาย ${money(grossAmount)} หัก GP ${platform_fee}% (${money(gpAmount)}) คงเหลือสุทธิ ${money(netAmount)} เข้ากระเป๋าร้าน`]);
+          if (gpAmount > 0) {
+            await connection.query(`
+              INSERT INTO transactions (shop_id, order_id, amount, type, status, description, created_at)
+              VALUES (?, ?, ?, 'commission', 'completed', ?, NOW())
+            `, [sId, orderId, gpAmount, `แพลตฟอร์ม Smart Deal หักค่าธรรมเนียม GP ${platform_fee}% จากยอดขายร้าน ${shopLabel} ออเดอร์ #${orderId} = ${money(gpAmount)}`]);
+          }
+        } catch(te) { console.error('transactions insert error:', te.message); }
+        moneyTrail.push(`ร้าน ${shopLabel} ได้รับ ${money(netAmount)} (หัก GP ${money(gpAmount)})`);
 
         // แจ้งเตือนเจ้าของร้าน
         try {
@@ -2695,10 +2822,12 @@ app.put('/api/orders/:orderId/complete', async (req, res) => {
         ON DUPLICATE KEY UPDATE balance = balance + VALUES(balance)
       `, [riderId, deliveryFee]);
 
+      const riderInfo = await actorRider(connection, riderId);
       await connection.query(`
-        INSERT INTO wallet_transactions (user_type, target_id, order_id, amount, type, description)
-        VALUES ('rider', ?, ?, ?, 'credit', ?)
-      `, [riderId, orderId, deliveryFee, `ค่ารอบจัดส่งออเดอร์ #${orderId} (ลูกค้ายืนยันรับสินค้าแล้ว)`]);
+        INSERT INTO wallet_transactions (user_type, target_id, target_name, order_id, amount, type, description)
+        VALUES ('rider', ?, ?, ?, ?, 'credit', ?)
+      `, [riderId, riderInfo.name, orderId, deliveryFee, `ค่ารอบจัดส่งออเดอร์ #${orderId} (ลูกค้ายืนยันรับสินค้าแล้ว)`]);
+      moneyTrail.push(`ไรเดอร์ ${riderInfo.name} ได้รับค่ารอบ ${money(deliveryFee)}`);
 
       // แจ้งเตือนไรเดอร์
       try {
@@ -2733,6 +2862,12 @@ app.put('/api/orders/:orderId/complete', async (req, res) => {
         );
       }
     } catch(be) {}
+
+    await recordOrderEvent(connection, orderId, {
+      event: 'completed', fromStatus: order.order_status, toStatus: 'completed',
+      actor: { type: 'buyer', id: order.user_id, name: order.buyer_name || 'ลูกค้า' },
+      description: `ลูกค้า ${order.buyer_name || '-'} กดยืนยันรับสินค้าออเดอร์ #${orderId} เรียบร้อย ระบบปล่อยเงิน: ${moneyTrail.join(' | ') || '-'}`,
+    });
 
     await connection.commit();
     res.json({ success: true, message: 'ยืนยันรับสินค้าและโอนเงินให้ร้านค้าสำเร็จ' });
@@ -3157,10 +3292,18 @@ app.post('/api/auctions/:auctionId/close', async (req, res) => {
       createdOrderId = orderResult.insertId;
 
       // เพิ่ม Order Item
+      const [[aShop]] = await connection.query('SELECT name FROM shops WHERE shop_id = ?', [auction.shop_id || 1]);
+      const aShopName = aShop?.name || auction.shop_name || `ร้าน #${auction.shop_id || 1}`;
       await connection.query(`
-        INSERT INTO order_items (order_id, product_id, product_name, price, quantity)
-        VALUES (?, NULL, ?, ?, 1)
-      `, [createdOrderId, auction.title, winAmount]);
+        INSERT INTO order_items (order_id, product_id, product_name, price, quantity, shop_id, shop_name, original_price, discount_percent, line_total)
+        VALUES (?, NULL, ?, ?, 1, ?, ?, ?, ?, ?)
+      `, [createdOrderId, auction.title, winAmount, auction.shop_id || 1, aShopName, auction.original_price || null, auction.discount_percent || null, winAmount]);
+      await connection.query('UPDATE orders SET shop_name = ?, buyer_name = ?, items_summary = ? WHERE order_id = ?',
+        [aShopName, winnerName, `${auction.title} x1 (ชนะประมูล ${money(winAmount)})`, createdOrderId]);
+      await recordOrderEvent(connection, createdOrderId, {
+        event: 'created', toStatus: 'pending', actor: SYSTEM, shopName: aShopName,
+        description: `ระบบสร้างคำสั่งซื้อจากการประมูล "${auction.title}" (ประมูล #${auction.auction_id}) ให้ผู้ชนะ ${winnerName} ราคา ${money(winAmount)} ร้าน ${aShopName}`,
+      });
     }
 
     // 1. ส่งแจ้งเตือนไปยังผู้ชนะการประมูล (auction_won)
@@ -3242,7 +3385,7 @@ app.get('/api/notifications/:userId', async (req, res) => {
       LEFT JOIN orders o ON (n.type = 'auction_won' OR n.type = 'order_status') AND n.reference_id = o.order_id
       LEFT JOIN shops s ON o.shop_id = s.shop_id
       LEFT JOIN auctions a ON (n.type = 'auction_outbid' OR n.type = 'auction_lost') AND n.reference_id = a.auction_id
-      WHERE n.user_id = ?
+      WHERE n.user_id = ? AND COALESCE(n.is_deleted, 0) = 0
       ORDER BY n.created_at DESC
     `, [userId]);
 
@@ -3311,7 +3454,7 @@ app.get('/api/notifications/unread-count/:userId', async (req, res) => {
 
   try {
     const [rows] = await db.execute(
-      'SELECT COUNT(*) AS unread_count FROM notifications WHERE user_id = ? AND is_read = 0',
+      'SELECT COUNT(*) AS unread_count FROM notifications WHERE user_id = ? AND is_read = 0 AND COALESCE(is_deleted, 0) = 0',
       [userId]
     );
 
@@ -3332,7 +3475,7 @@ app.put('/api/notifications/:id/read', async (req, res) => {
   const { id } = req.params;
 
   try {
-    await db.execute('UPDATE notifications SET is_read = 1 WHERE notification_id = ?', [id]);
+    await db.execute('UPDATE notifications SET is_read = 1, read_at = COALESCE(read_at, NOW()) WHERE notification_id = ?', [id]);
     res.json({ success: true, message: 'อัปเดตสถานะเป็นอ่านแล้ว' });
   } catch (error) {
     console.error(`❌ PUT /api/notifications/${id}/read error:`, error.message);
@@ -3345,7 +3488,7 @@ app.put('/api/notifications/read-all/:userId', async (req, res) => {
   const { userId } = req.params;
 
   try {
-    await db.execute('UPDATE notifications SET is_read = 1 WHERE user_id = ?', [userId]);
+    await db.execute('UPDATE notifications SET is_read = 1, read_at = COALESCE(read_at, NOW()) WHERE user_id = ? AND is_read = 0', [userId]);
     res.json({ success: true, message: 'ทำเครื่องหมายว่าอ่านทั้งหมดแล้ว' });
   } catch (error) {
     console.error(`❌ PUT /api/notifications/read-all/${userId} error:`, error.message);
@@ -3353,7 +3496,22 @@ app.put('/api/notifications/read-all/:userId', async (req, res) => {
   }
 });
 
-// 5. ลบการแจ้งเตือน
+// 5. ลบการแจ้งเตือน (soft delete: ซ่อนจากหน้าจอแต่เก็บประวัติไว้ในฐานข้อมูล)
+app.delete('/api/notifications/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const [result] = await db.execute(
+      'UPDATE notifications SET is_deleted = 1, deleted_at = NOW(), is_read = 1, read_at = COALESCE(read_at, NOW()) WHERE notification_id = ?',
+      [id]
+    );
+    if (!result.affectedRows) return res.status(404).json({ success: false, message: 'ไม่พบการแจ้งเตือน' });
+    res.json({ success: true, message: 'ลบการแจ้งเตือนแล้ว' });
+  } catch (error) {
+    console.error(`❌ DELETE /api/notifications/${id} error:`, error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // 6.5 REVIEWS & REWARDS APIs
 // ==========================================
 
@@ -3460,6 +3618,21 @@ app.post('/api/reviews', async (req, res) => {
        ON DUPLICATE KEY UPDATE points = points + 50`,
       [user_id || 2]
     );
+    {
+      const reviewer = await actorUser(db, user_id || 2, 'buyer');
+      const [[shopRow]] = await db.query('SELECT name FROM shops WHERE shop_id = ?', [effectiveShopId || 1]);
+      const shopLabel = shopRow?.name || `ร้าน #${effectiveShopId}`;
+      await db.query('UPDATE reviews SET reviewer_name = ?, shop_name = ? WHERE review_id = ?', [reviewer.name, shopLabel, result.insertId]);
+      await db.query('INSERT INTO user_point_history (user_id, title, points_change) VALUES (?, ?, ?)',
+        [user_id || 2, `รีวิวร้าน ${shopLabel}${order_id ? ` (ออเดอร์ #${order_id})` : ''}`, '+50']);
+      if (order_id) {
+        const riderTxt = (effectiveRiderId && rider_rating != null) ? ` | ให้คะแนนไรเดอร์ ${rider_rating}/5${rider_comment ? ` "${rider_comment}"` : ''}` : '';
+        await recordOrderEvent(db, order_id, {
+          event: 'reviewed', actor: reviewer, shopId: effectiveShopId, shopName: shopLabel,
+          description: `ลูกค้า ${reviewer.name} รีวิวร้าน ${shopLabel} ${rating ?? 5}/5 ดาว${comment ? ` "${comment}"` : ''}${riderTxt}`,
+        });
+      }
+    }
 
     res.json({ 
       success: true, 
@@ -3685,6 +3858,12 @@ app.post('/api/shops/register', upload.fields([
           `UPDATE shops SET name=?, description=?, category_id=?, address=?, latitude=?, longitude=?, bank_name=?, bank_account=?, id_card_image=?, bookbank_image=?, status='pending' WHERE owner_id=?`,
           [name, description || null, category_id || null, address, latitude || null, longitude || null, bank_name || null, bank_account || null, id_card_image, bookbank_image, owner_id]
         );
+        {
+          const actor = await actorUser(db, owner_id, 'buyer');
+          await logAudit(db, { req, actor, action: 'shop.reapply', actionTh: 'ส่งคำขอเปิดร้านใหม่อีกครั้ง', entityType: 'shop', entityId: check[0].shop_id, entityName: name,
+            description: `${actor.name} ส่งคำขอเปิดร้าน "${name}" ใหม่หลังถูกปฏิเสธ (ที่อยู่ ${address}, บัญชี ${bank_name || '-'} ${bank_account || '-'}) รอแอดมินตรวจสอบ`,
+            oldValue: { name: check[0].name, status: check[0].status, reject_reason: check[0].reject_reason }, newValue: { name, address, bank_name, bank_account, status: 'pending' } });
+        }
         return res.json({ success: true, message: 'ส่งข้อมูลสมัครใหม่สำเร็จ รอการตรวจสอบ', shop_id: check[0].shop_id });
       } else {
         return res.status(400).json({ success: false, message: 'คุณมีร้านค้าอยู่แล้ว' });
@@ -3697,6 +3876,12 @@ app.post('/api/shops/register', upload.fields([
       [owner_id, name, description || null, category_id || null, address, latitude || null, longitude || null, bank_name || null, bank_account || null, id_card_image, bookbank_image]
     );
 
+    {
+      const actor = await actorUser(db, owner_id, 'buyer');
+      await logAudit(db, { req, actor, action: 'shop.register', actionTh: 'สมัครเปิดร้านค้า', entityType: 'shop', entityId: result.insertId, entityName: name,
+        description: `${actor.name} สมัครเปิดร้าน "${name}" (ที่อยู่ ${address}, บัญชี ${bank_name || '-'} ${bank_account || '-'}) รอแอดมินอนุมัติ`,
+        newValue: { name, description, category_id, address, latitude, longitude, bank_name, bank_account, status: 'pending' } });
+    }
     res.json({ success: true, message: 'สมัครร้านค้าสำเร็จ รอการตรวจสอบ', shop_id: result.insertId });
   } catch (error) {
     console.error('Register Shop Error:', error);
@@ -3712,6 +3897,58 @@ app.get('/api/shops/check-pending/:userId', async (req, res) => {
     } else {
       res.json({ success: true, isPending: false });
     }
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// รายชื่อร้านค้าที่อนุมัติแล้วทั้งหมด (ใช้ในหน้าเลือกร้านของแดชบอร์ดร้านค้า)
+app.get('/api/shops', async (req, res) => {
+  try {
+    const [shops] = await db.execute(
+      'SELECT shop_id, name, image_url, rating, address, opening_hours, owner_id, IFNULL(is_open, 1) AS is_open, status FROM shops WHERE status = "approved" ORDER BY name ASC'
+    );
+    res.json({ success: true, shops });
+  } catch (error) {
+    console.error('API /api/shops error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// การตั้งค่าแอปของผู้ใช้ (แจ้งเตือน / โปรโมชัน / ตำแหน่ง / ธีม) เก็บลงฐานข้อมูล
+app.get('/api/users/:id/app-settings', async (req, res) => {
+  try {
+    const [rows] = await db.execute('SELECT app_settings, app_settings_updated_at FROM users WHERE user_id = ?', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ success: false, message: 'ไม่พบผู้ใช้' });
+    let settings = {};
+    try { settings = rows[0].app_settings ? JSON.parse(rows[0].app_settings) : {}; } catch (e) { settings = {}; }
+    res.json({ success: true, settings, updated_at: rows[0].app_settings_updated_at });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.put('/api/users/:id/app-settings', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const [rows] = await db.execute('SELECT full_name, role, app_settings FROM users WHERE user_id = ?', [id]);
+    if (!rows.length) return res.status(404).json({ success: false, message: 'ไม่พบผู้ใช้' });
+    let before = {};
+    try { before = rows[0].app_settings ? JSON.parse(rows[0].app_settings) : {}; } catch (e) { before = {}; }
+    const incoming = (req.body && typeof req.body === 'object') ? (req.body.settings || req.body) : {};
+    const allowed = ['pushEnabled', 'promoEnabled', 'locationEnabled', 'darkMode', 'language'];
+    const after = { ...before };
+    for (const k of allowed) if (incoming[k] !== undefined) after[k] = incoming[k];
+    await db.execute('UPDATE users SET app_settings = ?, app_settings_updated_at = NOW() WHERE user_id = ?', [JSON.stringify(after), id]);
+    const LABELS = { pushEnabled: 'การแจ้งเตือน', promoEnabled: 'ข่าวสารโปรโมชัน', locationEnabled: 'การเข้าถึงตำแหน่ง', darkMode: 'โหมดมืด', language: 'ภาษา' };
+    const fmt = (v) => v === true ? 'เปิด' : v === false ? 'ปิด' : v;
+    const changes = Object.keys(LABELS).filter(k => after[k] !== undefined && after[k] !== before[k])
+      .map(k => `${LABELS[k]}: ${before[k] === undefined ? '-' : fmt(before[k])} → ${fmt(after[k])}`).join(', ');
+    if (changes) {
+      await logAudit(db, { req, actor: { type: rows[0].role || 'buyer', id: Number(id), name: rows[0].full_name }, action: 'user.app_settings', actionTh: 'เปลี่ยนการตั้งค่าแอป',
+        entityType: 'user', entityId: id, entityName: rows[0].full_name, description: `${rows[0].full_name} เปลี่ยนการตั้งค่าแอป: ${changes}`, oldValue: before, newValue: after });
+    }
+    res.json({ success: true, settings: after });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -3957,6 +4194,14 @@ app.post('/api/shops/:shopId/products', upload.single('image'), async (req, res)
       ]);
     }
 
+    {
+      const actor = await actorShop(db, shopId);
+      await logAudit(db, { req, actor, action: 'product.create', actionTh: 'เพิ่มเมนู/สินค้าใหม่',
+        entityType: 'product', entityId: result.insertId, entityName: name,
+        description: `ร้าน ${actor.shopName} เพิ่มเมนูใหม่ "${name}" ราคาเต็ม ${money(original_price)} ราคาขาย ${money(discount_price)} (ลด ${calculatedDiscountPercent || 0}%) สต็อก ${stock_quantity || 0} ชิ้น${(is_auction === '1' || is_auction === 'true' || is_auction === 1) ? ' และเปิดประมูล' : ''}`,
+        newValue: { name, original_price, discount_price, discount_percent: calculatedDiscountPercent, stock_quantity, category_id, expiry_text, is_auction } });
+    }
+
     clearCache('home-data');
     clearCache('auctions');
 
@@ -4000,6 +4245,9 @@ app.post('/api/shops/:shopId/products/:productId', upload.single('image'), async
   let formattedExpiryTime = expiry_time ? new Date(new Date(expiry_time).getTime() - new Date().getTimezoneOffset()*60000).toISOString().slice(0, 19).replace('T', ' ') : null;
 
   try {
+    const pickProductFields = (p) => p ? { name: p.name, original_price: p.original_price, discount_price: p.discount_price, discount_percent: p.discount_percent, stock_quantity: p.stock_quantity, category_id: p.category_id, expiry_text: p.expiry_text, description: p.description, deal_end_time: p.deal_end_time, expiry_time: p.expiry_time, is_auction: p.is_auction, freshness: p.freshness, shipping_type: p.shipping_type } : null;
+    const [beforeRows] = await db.execute('SELECT * FROM products WHERE product_id = ? AND shop_id = ?', [productId, shopId]);
+    const beforeProduct = pickProductFields(beforeRows[0]);
     await db.execute(
       `UPDATE products SET
         category_id = COALESCE(?, category_id),
@@ -4038,6 +4286,18 @@ app.post('/api/shops/:shopId/products/:productId', upload.single('image'), async
     );
 
     const [updatedProducts] = await db.execute('SELECT * FROM products WHERE product_id = ?', [productId]);
+    if (updatedProducts.length > 0 && beforeProduct) {
+      const afterProduct = pickProductFields(updatedProducts[0]);
+      const changes = diffText(beforeProduct, afterProduct, { name: 'ชื่อเมนู', original_price: 'ราคาเต็ม', discount_price: 'ราคาขาย', discount_percent: 'ส่วนลด(%)', stock_quantity: 'สต็อก', category_id: 'หมวดหมู่', expiry_text: 'วันหมดอายุ', description: 'รายละเอียด', deal_end_time: 'สิ้นสุดดีล', expiry_time: 'เวลาหมดอายุ', is_auction: 'เปิดประมูล', freshness: 'ความสด', shipping_type: 'การจัดส่ง' });
+      const imageChanged = !!req.file || (image_url !== undefined && image_url !== null && image_url !== beforeRows[0].image_url);
+      if (changes || imageChanged) {
+        const actor = await actorShop(db, shopId);
+        await logAudit(db, { req, actor, action: 'product.update', actionTh: 'แก้ไขเมนู/ราคา/สต็อก',
+          entityType: 'product', entityId: productId, entityName: afterProduct.name,
+          description: `ร้าน ${actor.shopName} แก้ไขเมนู "${afterProduct.name}" : ${[changes, imageChanged ? 'เปลี่ยนรูปสินค้า' : ''].filter(Boolean).join(', ')}`,
+          oldValue: beforeProduct, newValue: afterProduct });
+      }
+    }
     if (updatedProducts.length > 0) {
       const product = updatedProducts[0];
       if (product.is_auction === 1) {
@@ -4070,11 +4330,20 @@ app.delete('/api/shops/:shopId/products/:productId', async (req, res) => {
     }
     
     const productName = products[0].name;
+    const [fullBefore] = await db.execute('SELECT product_id, name, original_price, discount_price, discount_percent, stock_quantity, category_id, is_auction FROM products WHERE product_id = ?', [productId]);
 
     const [result] = await db.execute(
       'DELETE FROM products WHERE product_id = ? AND shop_id = ?',
       [productId, shopId]
     );
+    if (result.affectedRows > 0) {
+      const actor = await actorShop(db, shopId);
+      const b = fullBefore[0] || {};
+      await logAudit(db, { req, actor, action: 'product.delete', actionTh: 'ลบเมนู/สินค้า',
+        entityType: 'product', entityId: productId, entityName: productName,
+        description: `ร้าน ${actor.shopName} ลบเมนู "${productName}" (ราคาขาย ${money(b.discount_price)}, สต็อกคงเหลือ ${b.stock_quantity ?? '-'} ชิ้น) - ประวัติออเดอร์เดิมยังเก็บชื่อและราคาไว้ครบ`,
+        oldValue: b });
+    }
 
     if (result.affectedRows > 0) {
       // ยกเลิกประมูลที่เกี่ยวข้องทันทีเมื่อลบสินค้า
@@ -4229,7 +4498,7 @@ app.get('/api/shops/:shopId/orders', async (req, res) => {
 // อัปเดตสถานะคำสั่งซื้อ (Order Status Update)
 app.put('/api/orders/:orderId/status', async (req, res) => {
   const { orderId } = req.params;
-  const { order_status, shop_id } = req.body;
+  const { order_status, shop_id, reason, cancel_reason } = req.body;
 
   const validStatuses = ['pending', 'paid', 'preparing', 'ready', 'finding_rider', 'delivering', 'shipped', 'completed', 'cancelled'];
   if (!validStatuses.includes(order_status)) {
@@ -4242,6 +4511,7 @@ app.put('/api/orders/:orderId/status', async (req, res) => {
     if (existingOrders.length > 0 && existingOrders[0].shop_statuses) {
       try { currentShopStatuses = typeof existingOrders[0].shop_statuses === 'string' ? JSON.parse(existingOrders[0].shop_statuses) : existingOrders[0].shop_statuses; } catch(e) {}
     }
+    const existingShopStatusesSnapshot = { ...currentShopStatuses };
 
     if (shop_id) {
       currentShopStatuses[String(shop_id)] = order_status;
@@ -4258,10 +4528,64 @@ app.put('/api/orders/:orderId/status', async (req, res) => {
     const allShopsReady = distinctShopIds.length > 0 && distinctShopIds.every(sid => currentShopStatuses[sid] === 'ready');
     const newGlobalStatus = allShopsReady ? 'ready' : (order_status === 'preparing' ? 'preparing' : (distinctShopIds.length <= 1 ? order_status : existingOrders[0]?.order_status || 'preparing'));
 
+    const prevGlobalStatus = existingOrders[0]?.order_status || null;
+    const effectiveShopId = shop_id || existingOrders[0]?.shop_id || null;
+    const prevShopStatus = shop_id ? (existingShopStatusesSnapshot[String(shop_id)] || prevGlobalStatus) : prevGlobalStatus;
     await db.execute(
       'UPDATE orders SET order_status = ?, shop_statuses = ? WHERE order_id = ?',
       [newGlobalStatus, JSON.stringify(currentShopStatuses), orderId]
     );
+
+    // ---- บันทึกไทม์ไลน์ภาษาไทย + เวลาแต่ละสเต็ป ----
+    {
+      const shopActorObj = effectiveShopId ? await actorShop(db, effectiveShopId) : { type: 'seller', id: null, name: 'ร้านค้า', shopName: '-' };
+      const sName = shopActorObj.shopName;
+      const multi = distinctShopIds.length > 1;
+      const [[ordSnap]] = await db.query('SELECT buyer_name, items_summary FROM orders WHERE order_id = ?', [orderId]);
+      const ev = { actor: shopActorObj, fromStatus: prevShopStatus, toStatus: newGlobalStatus, shopId: effectiveShopId, shopName: sName, timestamps: {}, extra: {} };
+      if (order_status === 'preparing') {
+        ev.event = 'shop_accepted';
+        ev.timestamps.accepted_at = true;
+        ev.description = `ร้าน ${sName} กดรับออเดอร์ #${orderId} ของลูกค้า ${ordSnap?.buyer_name || '-'} และเริ่มเตรียมสินค้า : ${ordSnap?.items_summary || '-'}`;
+      } else if (order_status === 'ready') {
+        ev.event = 'shop_ready';
+        if (newGlobalStatus === 'ready') ev.timestamps.prepared_at = true;
+        ev.description = `ร้าน ${sName} เตรียมสินค้าออเดอร์ #${orderId} เสร็จแล้ว พร้อมส่งมอบ` + (multi ? (newGlobalStatus === 'ready' ? ' (ทุกร้านในออเดอร์พร้อมแล้ว)' : ' (รอร้านอื่นในออเดอร์เดียวกัน)') : '');
+      } else if (order_status === 'finding_rider') {
+        ev.event = 'finding_rider';
+        ev.description = `ร้าน ${sName} เรียกหาไรเดอร์สำหรับออเดอร์ #${orderId}`;
+      } else if (order_status === 'delivering' || order_status === 'shipped') {
+        ev.event = 'shop_handed_over';
+        ev.description = `ร้าน ${sName} ส่งมอบสินค้าออเดอร์ #${orderId} ให้ผู้จัดส่งแล้ว`;
+      } else if (order_status === 'completed') {
+        ev.event = 'shop_completed';
+        ev.timestamps.completed_at = true;
+        ev.description = `ร้าน ${sName} ยืนยันว่าลูกค้า ${ordSnap?.buyer_name || '-'} รับสินค้าออเดอร์ #${orderId} เรียบร้อย`;
+      } else if (order_status === 'cancelled') {
+        ev.event = 'shop_cancelled';
+        const why = reason || cancel_reason || 'ร้านค้ากดยกเลิกออเดอร์ (ไม่ระบุเหตุผล)';
+        ev.description = `ร้าน ${sName} ยกเลิกออเดอร์ #${orderId} เหตุผล: ${why}`;
+        if (newGlobalStatus === 'cancelled') {
+          ev.timestamps.cancelled_at = true;
+          ev.extra = { cancel_reason: why, cancelled_by: shopActorObj.name };
+        }
+        // คืนสต็อกสินค้าของร้านนี้ (ครั้งเดียว)
+        if (prevShopStatus !== 'cancelled') {
+          const [cItems] = multi && shop_id
+            ? await db.query('SELECT product_id, product_name, quantity FROM order_items WHERE order_id = ? AND shop_id = ?', [orderId, shop_id])
+            : await db.query('SELECT product_id, product_name, quantity FROM order_items WHERE order_id = ?', [orderId]);
+          for (const it of cItems) {
+            if (it.product_id) await db.query('UPDATE products SET stock_quantity = stock_quantity + ? WHERE product_id = ?', [it.quantity, it.product_id]);
+          }
+          if (cItems.length) ev.description += ` | คืนสต็อก: ${cItems.map(i => `${i.product_name} x${i.quantity}`).join(', ')}`;
+          clearCache('home-data');
+        }
+      } else {
+        ev.event = `status_${order_status}`;
+        ev.description = `ร้าน ${sName} เปลี่ยนสถานะออเดอร์ #${orderId} เป็น "${audit.statusTh(order_status)}"`;
+      }
+      await recordOrderEvent(db, orderId, ev);
+    }
 
     // ส่งการแจ้งเตือนไปยังผู้ซื้อ (Buyer Notification)
     try {
@@ -4860,7 +5184,17 @@ app.post('/api/seller/wallet/withdraw', async (req, res) => {
       return res.status(400).json({ success: false, message: 'ยอดเงินไม่เพียงพอ' });
     }
     await connection.execute('UPDATE shop_wallets SET balance = balance - ? WHERE shop_id = ?', [amount, shop_id]);
-    await connection.execute('INSERT INTO withdrawals (shop_id, amount, status) VALUES (?, ?, "pending")', [shop_id, amount]);
+    const [[shopInfoRow]] = await connection.query('SELECT name, bank_name, bank_account FROM shops WHERE shop_id = ?', [shop_id]);
+    const shopLabel = shopInfoRow?.name || `ร้าน #${shop_id}`;
+    const bankInfo = `${shopInfoRow?.bank_name || '-'} ${shopInfoRow?.bank_account || '-'}`;
+    const [wRes] = await connection.execute('INSERT INTO withdrawals (shop_id, amount, status, requester_name, bank_info) VALUES (?, ?, "pending", ?, ?)', [shop_id, amount, shopLabel, bankInfo]);
+    await connection.query(
+      "INSERT INTO transactions (shop_id, withdrawal_id, amount, type, status, description) VALUES (?, ?, ?, 'withdrawal', 'pending', ?)",
+      [shop_id, wRes.insertId, amount, `ร้าน ${shopLabel} ขอถอนเงิน ${money(amount)} เข้าบัญชี ${bankInfo} (ยอดคงเหลือก่อนถอน ${money(balance)} หลังถอน ${money(balance - amount)}) รอแอดมินอนุมัติ`]
+    );
+    await logAudit(connection, { req, actor: await actorShop(connection, shop_id), action: 'wallet.withdraw_request', actionTh: 'ขอถอนเงินจากกระเป๋าร้าน',
+      entityType: 'withdrawal', entityId: wRes.insertId, entityName: shopLabel,
+      description: `ร้าน ${shopLabel} ขอถอนเงิน ${money(amount)} เข้าบัญชี ${bankInfo}`, newValue: { amount, bank_info: bankInfo, balance_before: balance } });
     await connection.commit();
     res.json({ success: true, message: 'ส่งคำขอถอนเงินสำเร็จ' });
   } catch (error) {
@@ -4941,6 +5275,11 @@ app.post('/api/seller/settings/:shop_id/image', upload.single('image'), async (r
     if (!req.file) return res.status(400).json({ success: false, message: 'No image uploaded' });
     const imageUrl = '/uploads/' + req.file.filename;
     await db.execute('UPDATE shops SET image_url = ? WHERE shop_id = ?', [imageUrl, req.params.shop_id]);
+    {
+      const actor = await actorShop(db, req.params.shop_id);
+      await logAudit(db, { req, actor, action: 'shop.update_image', actionTh: 'เปลี่ยนรูปหน้าร้าน', entityType: 'shop', entityId: req.params.shop_id, entityName: actor.shopName,
+        description: `ร้าน ${actor.shopName} อัปโหลดรูปหน้าร้านใหม่ (${imageUrl})`, newValue: { image_url: imageUrl } });
+    }
     res.json({ success: true, image_url: imageUrl });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -4951,14 +5290,23 @@ app.put('/api/seller/settings/:shop_id', async (req, res) => {
   try {
     const shop_id = req.params.shop_id;
     const { name, address, opening_hours, bank_name, bank_account, latitude, longitude, is_open } = req.body;
-    try {
-      await db.execute('ALTER TABLE shops ADD COLUMN is_open TINYINT(1) NOT NULL DEFAULT 1');
-    } catch(e) {}
-    
+    const [beforeShopRows] = await db.execute('SELECT name, address, opening_hours, bank_name, bank_account, latitude, longitude, is_open FROM shops WHERE shop_id = ?', [shop_id]);
+
     await db.execute(
       'UPDATE shops SET name = ?, address = ?, opening_hours = ?, bank_name = ?, bank_account = ?, latitude = ?, longitude = ?, is_open = IFNULL(?, is_open) WHERE shop_id = ?', 
       [name, address, opening_hours, bank_name, bank_account, latitude || null, longitude || null, is_open !== undefined ? is_open : null, shop_id]
     );
+    {
+      const before = beforeShopRows[0] || {};
+      const [afterRows] = await db.execute('SELECT name, address, opening_hours, bank_name, bank_account, latitude, longitude, is_open FROM shops WHERE shop_id = ?', [shop_id]);
+      const after = afterRows[0] || {};
+      const changes = diffText(before, after, { name: 'ชื่อร้าน', address: 'ที่อยู่', opening_hours: 'เวลาเปิด-ปิด', bank_name: 'ธนาคาร', bank_account: 'เลขบัญชี', latitude: 'ละติจูด', longitude: 'ลองจิจูด', is_open: 'สถานะเปิดร้าน' });
+      if (changes) {
+        const actor = await actorShop(db, shop_id);
+        await logAudit(db, { req, actor, action: 'shop.update_settings', actionTh: 'แก้ไขข้อมูลร้านค้า', entityType: 'shop', entityId: shop_id, entityName: after.name,
+          description: `ร้าน ${after.name || before.name} แก้ไขข้อมูลร้าน: ${changes}`, oldValue: before, newValue: after });
+      }
+    }
     res.json({ success: true, message: 'บันทึกข้อมูลสำเร็จ' });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -4969,12 +5317,15 @@ app.put('/api/seller/toggle-status/:shop_id', async (req, res) => {
   try {
     const shop_id = req.params.shop_id;
     const { is_open } = req.body;
-    try {
-      await db.execute('ALTER TABLE shops ADD COLUMN is_open TINYINT(1) NOT NULL DEFAULT 1');
-    } catch(e) {}
-    
+
     const newStatus = is_open ? 1 : 0;
     await db.execute('UPDATE shops SET is_open = ? WHERE shop_id = ?', [newStatus, shop_id]);
+    {
+      const actor = await actorShop(db, shop_id);
+      await logAudit(db, { req, actor, action: newStatus ? 'shop.open' : 'shop.close', actionTh: newStatus ? 'เปิดร้าน' : 'ปิดร้านชั่วคราว',
+        entityType: 'shop', entityId: shop_id, entityName: actor.shopName,
+        description: `ร้าน ${actor.shopName} ${newStatus ? 'เปิดรับออเดอร์' : 'ปิดร้านชั่วคราว (ไม่รับออเดอร์)'}`, newValue: { is_open: newStatus } });
+    }
     res.json({ success: true, is_open: newStatus, message: newStatus ? 'เปิดร้านสำเร็จ' : 'ปิดร้านชั่วคราวสำเร็จ' });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -4999,6 +5350,11 @@ app.post('/api/complaints', upload.single('image'), async (req, res) => {
       `INSERT INTO complaints (user_id, order_id, subject, message, image_url, status) VALUES (?, ?, ?, ?, ?, 'pending')`,
       [user_id, order_id || null, subject, message, imageUrl]
     );
+    {
+      const actor = await actorUser(db, user_id, 'buyer');
+      await logAudit(db, { req, actor, action: 'complaint.create', actionTh: 'ส่งเรื่องร้องเรียน/ติดต่อศูนย์ช่วยเหลือ', entityType: 'complaint', entityId: result.insertId, entityName: subject,
+        description: `${actor.name} ส่งเรื่อง "${subject}"${order_id ? ` (ออเดอร์ #${order_id})` : ''} : ${message}` });
+    }
 
     res.status(201).json({ success: true, message: 'Complaint submitted successfully', complaint_id: result.insertId });
   } catch (error) {
@@ -6414,6 +6770,14 @@ app.post('/api/payment/generate-qr', async (req, res) => {
       "UPDATE orders SET charge_id = ?, payment_status = 'pending' WHERE order_id = ?",
       [charge_id, order_id]
     );
+    {
+      const [[o]] = await db.query('SELECT user_id, buyer_name FROM orders WHERE order_id = ?', [order_id]);
+      await recordOrderEvent(db, order_id, {
+        event: 'payment_qr_created',
+        actor: { type: 'buyer', id: o?.user_id || null, name: o?.buyer_name || 'ลูกค้า' },
+        description: `ลูกค้า ${o?.buyer_name || '-'} สร้าง QR พร้อมเพย์เพื่อชำระเงินออเดอร์ #${order_id} ยอด ${money(total_amount)} (รหัสอ้างอิง ${charge_id})`,
+      });
+    }
 
     res.json({ success: true, qrImage, charge_id });
   } catch (error) {
@@ -6439,10 +6803,28 @@ app.post('/api/payment/webhook', async (req, res) => {
     }
 
     // Update payment_status to 'paid'
+    const wasPaid = orders[0].payment_status === 'paid';
     await db.query(
-      "UPDATE orders SET payment_status = 'paid' WHERE charge_id = ?",
+      "UPDATE orders SET payment_status = 'paid', paid_at = COALESCE(paid_at, NOW()) WHERE charge_id = ?",
       [charge_id]
     );
+    if (!wasPaid) {
+      const o = orders[0];
+      const [existingPay] = await db.query("SELECT payment_id FROM payments WHERE order_id = ? AND payment_status = 'success'", [o.order_id]);
+      if (!existingPay.length) {
+        await db.query(
+          "INSERT INTO payments (order_id, payment_method, payment_status, amount, paid_at, charge_id, payer_name, description) VALUES (?, ?, 'success', ?, NOW(), ?, ?, ?)",
+          [o.order_id, o.payment_method || 'promptpay', o.total_amount, charge_id, o.buyer_name || null,
+           `ลูกค้า ${o.buyer_name || '-'} ชำระเงินออเดอร์ #${o.order_id} ร้าน ${o.shop_name || '-'} ยอด ${money(o.total_amount)} ผ่านพร้อมเพย์สำเร็จ`]
+        );
+      }
+      await recordOrderEvent(db, o.order_id, {
+        event: 'paid',
+        actor: { type: 'buyer', id: o.user_id, name: o.buyer_name || 'ลูกค้า' },
+        timestamps: { paid_at: true },
+        description: `ลูกค้า ${o.buyer_name || '-'} ชำระเงินสำเร็จ ยอด ${money(o.total_amount)} (พร้อมเพย์ รหัส ${charge_id}) รอร้าน ${o.shop_name || '-'} รับออเดอร์`,
+      });
+    }
 
     res.json({ success: true, message: 'Payment status updated' });
   } catch (error) {
@@ -6483,7 +6865,14 @@ app.post('/api/auth/google-mock', async (req, res) => {
       );
       const [newUsers] = await db.execute('SELECT * FROM users WHERE user_id = ?', [result.insertId]);
       user = newUsers[0];
+      await logAudit(db, {
+        req, actor: { type: 'buyer', id: user.user_id, name: user.full_name },
+        action: 'user.register_google', actionTh: 'สมัครสมาชิกผ่าน Google',
+        entityType: 'user', entityId: user.user_id, entityName: user.full_name,
+        description: `${user.full_name} สมัครสมาชิกใหม่ผ่านบัญชี Google (${email})`,
+      });
     }
+    await logLogin(db, { req, user, appName: 'แอป Smart Deal (เข้าสู่ระบบด้วย Google)', identifier: email, success: true });
     res.json({ success: true, user, message: 'Google Login Success' });
   } catch (error) {
     console.error('Google Mock Login Error:', error);
@@ -6501,6 +6890,12 @@ setInterval(async () => {
 
     if (orders.length > 0) {
       for (const order of orders) {
+        // 0. ล็อกสถานะก่อน (ป้องกันกรณีร้านกดรับออเดอร์พร้อมกับ cron)
+        const [lockRes] = await db.query(
+          "UPDATE orders SET order_status = 'cancelled', cancelled_at = NOW(), cancel_reason = ?, cancelled_by = ? WHERE order_id = ? AND order_status = 'pending'",
+          ['ร้านค้าไม่ตอบรับออเดอร์ภายในเวลาที่กำหนด (ยกเลิกอัตโนมัติ)', 'ระบบอัตโนมัติ', order.order_id]
+        );
+        if (!lockRes.affectedRows) continue;
         // 1. Return stock or Restart Auction
           const [items] = await db.query("SELECT product_id, quantity, product_name FROM order_items WHERE order_id = ?", [order.order_id]);
           
@@ -6543,8 +6938,24 @@ setInterval(async () => {
         
         // 3. Update order status instead of delete
         await db.query("UPDATE deliveries SET status = 'cancelled' WHERE order_id = ?", [order.order_id]);
-        await db.query("UPDATE orders SET order_status = 'cancelled' WHERE order_id = ?", [order.order_id]);
-        
+        const restockText = items.map(i => `${i.product_name} x${i.quantity}`).join(', ');
+        await recordOrderEvent(db, order.order_id, {
+          event: 'auto_cancelled', fromStatus: 'pending', toStatus: 'cancelled', actor: SYSTEM,
+          description: `ระบบยกเลิกออเดอร์ #${order.order_id} อัตโนมัติ เพราะร้านค้าไม่กดรับออเดอร์ภายใน 10 นาที` +
+            (order.order_type === 'auction' ? ' และเปิดประมูลสินค้าใหม่อีกครั้ง' : (restockText ? ` และคืนสต็อก: ${restockText}` : '')) +
+            ' (แจ้งลูกค้าให้ขอคืนเงินแล้ว)',
+        });
+        try {
+          const [shopOwners] = await db.query(
+            `SELECT DISTINCT s.owner_id, s.name FROM shops s WHERE s.shop_id IN (SELECT shop_id FROM order_items WHERE order_id = ? UNION SELECT shop_id FROM orders WHERE order_id = ?)`,
+            [order.order_id, order.order_id]);
+          for (const so of shopOwners) {
+            if (!so.owner_id) continue;
+            await db.query("INSERT INTO notifications (user_id, title, message, type, reference_id, is_read, created_at) VALUES (?, ?, ?, 'order', ?, 0, NOW())",
+              [so.owner_id, `⏰ ออเดอร์ #${order.order_id} ถูกยกเลิกอัตโนมัติ`, `ร้าน ${so.name} ไม่ได้กดรับออเดอร์ #${order.order_id} ภายใน 10 นาที ระบบจึงยกเลิกและคืนสต็อกให้แล้ว`, String(order.order_id)]);
+          }
+        } catch (e) { console.error('Auto-cancel shop notify error:', e.message); }
+
         console.log(`❌ ยกเลิกออเดอร์ที่หมดเวลา (10 นาที) Order ID: ${order.order_id}`);
       }
     }
@@ -6598,6 +7009,12 @@ app.post('/api/refund-request', upload.single('slip_image'), async (req, res) =>
       "INSERT INTO refund_requests (user_id, order_id, amount, bank_name, account_number, account_name, slip_image) VALUES (?, ?, ?, ?, ?, ?, ?)",
       [user_id, order_id, amountToRefund, bank_name, account_number, account_name, slip_image]
     );
+    {
+      const actor = await actorUser(db, user_id, 'buyer');
+      await db.query('UPDATE refund_requests SET requester_name = ? WHERE order_id = ? AND requester_name IS NULL', [actor.name, order_id]);
+      await recordOrderEvent(db, order_id, { event: 'refund_requested', actor,
+        description: `ลูกค้า ${actor.name} ขอคืนเงินออเดอร์ #${order_id} จำนวน ${money(amountToRefund)} เข้าบัญชี ${bank_name} ${account_number} (${account_name})` });
+    }
 
     res.json({ success: true, message: 'ส่งคำขอคืนเงินสำเร็จ' });
   } catch (error) {
@@ -6727,7 +7144,7 @@ app.get('/api/seller/notifications/:shopId', async (req, res) => {
       const [shopRows] = await db.execute('SELECT owner_id FROM shops WHERE shop_id = ?', [shopId]);
       let realNotifs = [];
       if (shopRows.length > 0 && shopRows[0].owner_id) {
-        const [nRows] = await db.execute('SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 50', [shopRows[0].owner_id]);
+        const [nRows] = await db.execute('SELECT * FROM notifications WHERE user_id = ? AND COALESCE(is_deleted, 0) = 0 ORDER BY created_at DESC LIMIT 50', [shopRows[0].owner_id]);
         realNotifs = nRows.map(n => ({
           id: 'n_' + n.notification_id,
           title: n.title,

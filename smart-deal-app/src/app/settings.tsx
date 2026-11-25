@@ -97,6 +97,10 @@ export default function SettingsScreen() {
       let parsed = storedPrefs ? JSON.parse(storedPrefs) : {};
       parsed[key] = value;
       await AsyncStorage.setItem('appSettings', JSON.stringify(parsed));
+      // บันทึกการตั้งค่าลงฐานข้อมูลด้วย (ไม่บล็อก UI)
+      if (user?.user_id) {
+        axios.put(`${BASE_URL}/users/${user.user_id}/app-settings`, { [key]: value }).catch(() => {});
+      }
     } catch (e) {
       console.error('Failed to save setting', e);
     }
