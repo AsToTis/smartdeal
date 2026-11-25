@@ -35,6 +35,19 @@ app.set('trust proxy', true);
 app.use(cors());
 
 // ==========================================
+// READABLE SYNC: อัปเดตคอลัมน์ภาษาไทย (summary_th, *_th, ชื่อแทนรหัส) ในทุกตาราง
+// - หลังทุกคำขอที่เขียนข้อมูล (POST/PUT/DELETE) ภายใน ~1.5 วินาที
+// - และทุก 1 นาที (รวมถึงการเปลี่ยนแปลงจาก cron)
+// ==========================================
+const readableSync = require('./readable_sync').makeScheduler(db, 1500);
+app.use((req, res, next) => {
+  if (req.method !== 'GET' && req.method !== 'OPTIONS') res.on('finish', () => readableSync.schedule());
+  next();
+});
+db.ready.then(() => readableSync.schedule());
+setInterval(() => readableSync.schedule(), 60 * 1000);
+
+// ==========================================
 // AUTO-MIGRATION: Reviews & Rating System
 // ==========================================
 (async () => {
