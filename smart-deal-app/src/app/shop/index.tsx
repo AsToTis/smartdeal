@@ -170,7 +170,7 @@ export default function MerchantDashboardScreen() {
               <View style={styles.shopMetaRow}>
                 <View style={styles.ratingBadge}>
                   <MaterialIcons name="star" size={14} color="#f59e0b" />
-                  <Text style={styles.ratingText}>{shop?.rating || '4.8'}</Text>
+                  <Text style={styles.ratingText}>{shop?.rating > 0 ? Number(shop?.rating).toFixed(1) : 'ใหม่'}</Text>
                 </View>
                 <Text style={styles.shopTagText}>{shop?.tag1 || 'อาหาร'} • {shop?.tag2 || 'ดีลพิเศษ'}</Text>
               </View>

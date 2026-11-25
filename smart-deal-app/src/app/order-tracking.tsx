@@ -339,7 +339,7 @@ export default function OrderTrackingScreen() {
                   <Text style={styles.riderName}>{tracking?.rider?.name || 'สมชาย ใจดี'}</Text>
                   <View style={styles.riderRatingBadge}>
                     <MaterialIcons name="star" size={14} color="#f59e0b" />
-                    <Text style={styles.riderRatingText}>{tracking?.rider?.rating || '4.9'}</Text>
+                    <Text style={styles.riderRatingText}>{tracking?.rider?.rating > 0 ? Number(tracking?.rider?.rating).toFixed(1) : 'ใหม่'}</Text>
                   </View>
                 </View>
                 <Text style={styles.riderVehicle}>{tracking?.rider?.vehicle || 'ทะเบียน กข-1234 (รถจักรยานยนต์)'}</Text>

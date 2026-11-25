@@ -1,0 +1,1413 @@
+[
+  {
+    "method": "POST",
+    "path": "/api/login",
+    "params": [
+      "body"
+    ],
+    "sqls": [
+      "SELECT * FROM users WHERE email = ? OR phone = ?",
+      "SELECT shop_id, name, status, image_url FROM shops WHERE owner_id = ? AND status = "
+    ]
+  },
+  {
+    "method": "POST",
+    "path": "/api/register/request-otp",
+    "params": [
+      "body"
+    ],
+    "sqls": [
+      "SELECT * FROM users WHERE email = ? OR phone = ?",
+      "INSERT INTO users (email, phone, password_hash, full_name, role, status) VALUES (?, ?, ?, ?, ?, "
+    ]
+  },
+  {
+    "method": "POST",
+    "path": "/api/register",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "SELECT * FROM users WHERE email = ? OR phone = ?",
+      "INSERT INTO users (email, phone, password_hash, full_name, role, status) VALUES (?, ?, ?, ?, ?, ",
+      "SELECT user_id, full_name, email, phone, avatar_url, role, status, created_at, is_2fa_enabled FROM users WHERE user_id = ?"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/users/:id/profile",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "SELECT user_id, full_name, email, phone, avatar_url, role, status, created_at, is_2fa_enabled FROM users WHERE user_id = ?",
+      "SELECT user_id, full_name, email, phone, avatar_url, role, status, created_at, is_2fa_enabled FROM users WHERE user_id = ?",
+      "SELECT * FROM users WHERE user_id = ?"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/users/:id",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "SELECT user_id, full_name, email, phone, avatar_url, role, status, created_at, is_2fa_enabled FROM users WHERE user_id = ?",
+      "SELECT * FROM users WHERE user_id = ?",
+      "SELECT user_id FROM users WHERE (email = ? OR phone = ?) AND user_id != ?"
+    ]
+  },
+  {
+    "method": "PUT",
+    "path": "/api/users/:id/profile",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "SELECT * FROM users WHERE user_id = ?",
+      "SELECT user_id FROM users WHERE (email = ? OR phone = ?) AND user_id != ?",
+      "UPDATE users SET full_name = ?, phone = ?, email = ?, avatar_url = ? WHERE user_id = ?"
+    ]
+  },
+  {
+    "method": "POST",
+    "path": "/api/users/:id/avatar",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "UPDATE users SET avatar_url = ? WHERE user_id = ?",
+      "SELECT * FROM users WHERE user_id = ?",
+      "UPDATE users SET password_hash = ? WHERE user_id = ?"
+    ]
+  },
+  {
+    "method": "PUT",
+    "path": "/api/users/:id/change-password",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "SELECT * FROM users WHERE user_id = ?",
+      "UPDATE users SET password_hash = ? WHERE user_id = ?",
+      "SELECT * FROM user_points WHERE user_id = ?"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/points/:userId",
+    "params": [
+      "params"
+    ],
+    "sqls": [
+      "SELECT * FROM user_points WHERE user_id = ?",
+      "SELECT * FROM user_point_history WHERE user_id = ? ORDER BY created_at DESC",
+      "SELECT user_id, full_name, email, phone, avatar_url, role, status, created_at, is_2fa_enabled FROM users WHERE user_id = ?"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/users/:id/profile",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "SELECT user_id, full_name, email, phone, avatar_url, role, status, created_at, is_2fa_enabled FROM users WHERE user_id = ?",
+      "SELECT user_id, full_name, email, phone, avatar_url, role, status, created_at, is_2fa_enabled FROM users WHERE user_id = ?",
+      "SELECT * FROM users WHERE user_id = ?"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/users/:id",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "SELECT user_id, full_name, email, phone, avatar_url, role, status, created_at, is_2fa_enabled FROM users WHERE user_id = ?",
+      "SELECT * FROM users WHERE user_id = ?",
+      "SELECT user_id FROM users WHERE (email = ? OR phone = ?) AND user_id != ?"
+    ]
+  },
+  {
+    "method": "PUT",
+    "path": "/api/users/:id/profile",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "SELECT * FROM users WHERE user_id = ?",
+      "SELECT user_id FROM users WHERE (email = ? OR phone = ?) AND user_id != ?",
+      "UPDATE users SET full_name = ?, phone = ?, email = ?, avatar_url = ? WHERE user_id = ?"
+    ]
+  },
+  {
+    "method": "POST",
+    "path": "/api/users/:id/avatar",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "UPDATE users SET avatar_url = ? WHERE user_id = ?",
+      "SELECT * FROM users WHERE user_id = ?",
+      "UPDATE users SET password_hash = ? WHERE user_id = ?"
+    ]
+  },
+  {
+    "method": "PUT",
+    "path": "/api/users/:id/change-password",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "SELECT * FROM users WHERE user_id = ?",
+      "UPDATE users SET password_hash = ? WHERE user_id = ?",
+      "SELECT * FROM user_points WHERE user_id = ?"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/points/:userId",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "SELECT * FROM user_points WHERE user_id = ?",
+      "SELECT * FROM user_point_history WHERE user_id = ? ORDER BY created_at DESC",
+      "SELECT * FROM users WHERE email = ?"
+    ]
+  },
+  {
+    "method": "POST",
+    "path": "/api/forgot-password/request-otp",
+    "params": [
+      "body"
+    ],
+    "sqls": [
+      "SELECT * FROM users WHERE email = ?",
+      "UPDATE users SET password_hash = ? WHERE email = ?",
+      "SELECT * FROM categories"
+    ]
+  },
+  {
+    "method": "POST",
+    "path": "/api/forgot-password/verify-otp",
+    "params": [
+      "body"
+    ],
+    "sqls": [
+      "UPDATE users SET password_hash = ? WHERE email = ?",
+      "SELECT * FROM categories",
+      "SELECT p.*, s.name AS shop_name, s.image_url AS shop_image FROM products p "
+    ]
+  },
+  {
+    "method": "POST",
+    "path": "/api/forgot-password/reset-password",
+    "params": [
+      "body"
+    ],
+    "sqls": [
+      "UPDATE users SET password_hash = ? WHERE email = ?",
+      "SELECT * FROM categories",
+      "SELECT p.*, s.name AS shop_name, s.image_url AS shop_image FROM products p "
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/home-data",
+    "params": [],
+    "sqls": [
+      "SELECT * FROM categories",
+      "SELECT p.*, s.name AS shop_name, s.image_url AS shop_image FROM products p ",
+      "SELECT * FROM shops"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/products",
+    "params": [
+      "params"
+    ],
+    "sqls": [
+      "SELECT p.*, s.name AS shop_name, s.image_url AS shop_image FROM products p ",
+      "SELECT * FROM products WHERE product_id = ? AND stock_quantity > 0 AND (deal_end_time IS NULL OR deal_end_time > NOW())",
+      "SELECT * FROM shops WHERE shop_id = ?"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/products/:id",
+    "params": [
+      "params"
+    ],
+    "sqls": [
+      "SELECT * FROM products WHERE product_id = ? AND stock_quantity > 0 AND (deal_end_time IS NULL OR deal_end_time > NOW())",
+      "SELECT * FROM shops WHERE shop_id = ?",
+      "SELECT * FROM user_addresses WHERE user_id = ? ORDER BY is_default DESC, updated_at DESC LIMIT 1"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/users/:id/address",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "SELECT * FROM user_addresses WHERE user_id = ? ORDER BY is_default DESC, updated_at DESC LIMIT 1",
+      "SELECT * FROM user_addresses WHERE user_id = ? ORDER BY is_default DESC, updated_at DESC"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/users/:id/addresses",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "SELECT * FROM user_addresses WHERE user_id = ? ORDER BY is_default DESC, updated_at DESC",
+      "SELECT id FROM user_addresses WHERE user_id = ? LIMIT 1",
+      "INSERT INTO user_addresses (user_id, title, address_detail, latitude, longitude, receiver_name, receiver_phone, note_for_rider, is_default, created_at"
+    ]
+  },
+  {
+    "method": "POST",
+    "path": "/api/users/:id/address",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "SELECT id FROM user_addresses WHERE user_id = ? LIMIT 1",
+      "INSERT INTO user_addresses (user_id, title, address_detail, latitude, longitude, receiver_name, receiver_phone, note_for_rider, is_default, created_at",
+      "SELECT * FROM user_addresses WHERE user_id = ? LIMIT 1"
+    ]
+  },
+  {
+    "method": "PUT",
+    "path": "/api/users/:userId/address/:addressId/default",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "UPDATE user_addresses SET is_default = 0 WHERE user_id = ?",
+      "UPDATE user_addresses SET is_default = 1 WHERE id = ? AND user_id = ?",
+      "SELECT o.*, s.latitude as shop_lat, s.longitude as shop_lng, s.name as shop_name, s.address as shop_address, r.name as ri"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/orders/:id/tracking",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "SELECT o.*, s.latitude as shop_lat, s.longitude as shop_lng, s.name as shop_name, s.address as shop_address, r.name as ri",
+      "UPDATE riders SET current_lat = ?, current_lng = ?, updated_at = NOW() WHERE rider_id = ?"
+    ]
+  },
+  {
+    "method": "PUT",
+    "path": "/api/riders/:id/location",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "UPDATE riders SET current_lat = ?, current_lng = ?, updated_at = NOW() WHERE rider_id = ?",
+      "SELECT orders.*, shops.name AS shop_name, shops.image_url AS shop_image, del.status, u_rider.full_name ",
+      "SELECT oi.*, p.name AS db_product_name, COALESCE(p.image_url, (SELECT image_url FROM auctions WHERE title COLLATE utf8mb4_unicode_ci = oi.product_name"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/orders/user/:userId",
+    "params": [
+      "params"
+    ],
+    "sqls": [
+      "SELECT orders.*, shops.name AS shop_name, shops.image_url AS shop_image, del.status, u_rider.full_name ",
+      "SELECT oi.*, p.name AS db_product_name, COALESCE(p.image_url, (SELECT image_url FROM auctions WHERE title COLLATE utf8mb4_unicode_ci = oi.product_name"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/orders/:orderId",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "SELECT orders.*, shops.name AS shop_name, shops.image_url AS shop_image, del.status, u_rider.full_name ",
+      "SELECT oi.*, p.name AS db_product_name, COALESCE(p.image_url, (SELECT image_url FROM auctions WHERE title COLLATE utf8mb4_unicode_ci = oi.product_name",
+      "SELECT rating, comment, created_at FROM reviews WHERE order_id = ? LIMIT 1"
+    ]
+  },
+  {
+    "method": "POST",
+    "path": "/api/orders/:orderId/issues",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "SELECT order_id FROM orders WHERE order_id = ?",
+      "INSERT INTO order_issues (order_id, user_id, issue_topic, issue_detail, status) VALUES (?, ?, ?, ?, ?)",
+      "SELECT product_id, name, stock_quantity FROM products WHERE product_id = ? FOR UPDATE"
+    ]
+  },
+  {
+    "method": "POST",
+    "path": "/api/orders",
+    "params": [
+      "body"
+    ],
+    "sqls": [
+      "SELECT product_id, name, stock_quantity FROM products WHERE product_id = ? FOR UPDATE",
+      "INSERT INTO orders ( "
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/payments/generate-qr",
+    "params": [
+      "body",
+      "query"
+    ],
+    "sqls": [
+      "SELECT * FROM orders WHERE order_id = ?",
+      "INSERT INTO payments (order_id, payment_method, payment_status, amount, paid_at) ",
+      "INSERT INTO shop_wallets (shop_id, balance) VALUES (?, ?) "
+    ]
+  },
+  {
+    "method": "PUT",
+    "path": "/api/orders/:orderId/complete",
+    "params": [
+      "params"
+    ],
+    "sqls": [
+      "SELECT * FROM orders WHERE order_id = ? FOR UPDATE",
+      "UPDATE orders SET order_status = ",
+      "INSERT INTO shop_wallets (shop_id, balance) VALUES (?, ?) "
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/auctions/:auctionId",
+    "params": [
+      "params"
+    ],
+    "sqls": [
+      "SELECT a.*, CAST(a.end_time AS CHAR) AS end_time_str, (SELECT COUNT(*) FROM auction_bids WHERE auction_id = a.auction_id) AS total_bids ",
+      "SELECT a.*, CAST(a.end_time AS CHAR) AS end_time_str, (SELECT COUNT(*) FROM auction_bids WHERE auction_id = a.auction_id) AS total_bids ",
+      "SELECT a.*, CAST(a.end_time AS CHAR) AS end_time_str, (SELECT COUNT(*) FROM auction_bids WHERE auction_id = a.auction_id) AS total_bids "
+    ]
+  },
+  {
+    "method": "POST",
+    "path": "/api/auctions/:auctionId/bid",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "SELECT * FROM auctions WHERE auction_id = ? FOR UPDATE",
+      "SELECT user_id, bid_amount FROM auction_bids WHERE auction_id = ? AND bid_status = ",
+      "UPDATE auction_bids SET bid_status = "
+    ]
+  },
+  {
+    "method": "POST",
+    "path": "/api/auctions/:auctionId/close",
+    "params": [
+      "params"
+    ],
+    "sqls": [
+      "SELECT * FROM auctions WHERE auction_id = ? FOR UPDATE",
+      "SELECT ab.*, u.full_name, u.phone FROM auction_bids ab ",
+      "UPDATE auctions SET auction_status = "
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/notifications/:userId",
+    "params": [
+      "params"
+    ],
+    "sqls": [
+      "SELECT n.*, o.total_amount, o.order_status, o.shop_id, s.name AS shop_name, a.title AS auction_"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/notifications/unread-count/:userId",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "SELECT COUNT(*) AS unread_count FROM notifications WHERE user_id = ? AND is_read = 0",
+      "UPDATE notifications SET is_read = 1 WHERE notification_id = ?",
+      "UPDATE notifications SET is_read = 1 WHERE user_id = ?"
+    ]
+  },
+  {
+    "method": "PUT",
+    "path": "/api/notifications/:id/read",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "UPDATE notifications SET is_read = 1 WHERE notification_id = ?",
+      "UPDATE notifications SET is_read = 1 WHERE user_id = ?",
+      "INSERT INTO reviews (order_id, user_id, product_id, shop_id, rating, comment, image_url) "
+    ]
+  },
+  {
+    "method": "PUT",
+    "path": "/api/notifications/read-all/:userId",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "UPDATE notifications SET is_read = 1 WHERE user_id = ?",
+      "INSERT INTO reviews (order_id, user_id, product_id, shop_id, rating, comment, image_url) ",
+      "INSERT INTO user_points (user_id, points) VALUES (?, 1300) "
+    ]
+  },
+  {
+    "method": "POST",
+    "path": "/api/reviews",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "INSERT INTO reviews (order_id, user_id, product_id, shop_id, rating, comment, image_url) ",
+      "INSERT INTO user_points (user_id, points) VALUES (?, 1300) ",
+      "SELECT r.*, u.full_name AS user_name FROM reviews r "
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/reviews/product/:productId",
+    "params": [
+      "params"
+    ],
+    "sqls": [
+      "SELECT r.*, u.full_name AS user_name FROM reviews r ",
+      "SELECT points FROM user_points WHERE user_id = ?",
+      "SELECT o.*, s.name AS shop_name, s.image_url AS shop_image, del.status, del.assigned_at, del.d"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/points/:userId",
+    "params": [
+      "params"
+    ],
+    "sqls": [
+      "SELECT points FROM user_points WHERE user_id = ?",
+      "SELECT o.*, s.name AS shop_name, s.image_url AS shop_image, del.status, del.assigned_at, del.d",
+      "SELECT oi.*, p.name AS db_product_name, COALESCE(p.image_url, (SELECT image_url FROM auctions WHERE title COLLATE utf8mb4_unicode_ci = oi.product_name"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/orders/:orderId/tracking",
+    "params": [
+      "params"
+    ],
+    "sqls": [
+      "SELECT o.*, s.name AS shop_name, s.image_url AS shop_image, del.status, del.assigned_at, del.d",
+      "SELECT oi.*, p.name AS db_product_name, COALESCE(p.image_url, (SELECT image_url FROM auctions WHERE title COLLATE utf8mb4_unicode_ci = oi.product_name"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/categories",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "SELECT * FROM categories ORDER BY category_id ASC",
+      "SELECT * FROM shops WHERE owner_id = ? LIMIT 1",
+      "SELECT * FROM shops WHERE owner_id = ?"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/users/:userId/shop",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "SELECT * FROM shops WHERE owner_id = ? LIMIT 1",
+      "SELECT * FROM shops WHERE owner_id = ?",
+      "UPDATE shops SET name=?, description=?, category_id=?, address=?, latitude=?, longitude=?, bank_name=?, bank_account=?, id_card_image=?, bookbank_imag"
+    ]
+  },
+  {
+    "method": "POST",
+    "path": "/api/shops/register",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "SELECT * FROM shops WHERE owner_id = ?",
+      "UPDATE shops SET name=?, description=?, category_id=?, address=?, latitude=?, longitude=?, bank_name=?, bank_account=?, id_card_image=?, bookbank_imag",
+      "INSERT INTO shops (owner_id, name, description, category_id, address, latitude, longitude, bank_name, bank_account, id_card_image, bookbank_image, sta"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/shops/check-pending/:userId",
+    "params": [
+      "params"
+    ],
+    "sqls": [
+      "SELECT status FROM shops WHERE owner_id = ? AND status = ",
+      "SELECT shop_id, name, image_url, rating, distance, tag1, tag2 FROM shops ORDER BY shop_id ASC LIMIT 10",
+      "SELECT SUM(total_amount) AS total_revenue, COUNT(*) AS total_orders FROM orders WHERE shop_id = ? AND order_status IN ("
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/shops/nearby",
+    "params": [
+      "params"
+    ],
+    "sqls": [
+      "SELECT shop_id, name, image_url, rating, distance, tag1, tag2 FROM shops ORDER BY shop_id ASC LIMIT 10",
+      "SELECT SUM(total_amount) AS total_revenue, COUNT(*) AS total_orders FROM orders WHERE shop_id = ? AND order_status IN (",
+      "SELECT COUNT(*) AS pending_orders FROM orders WHERE shop_id = ? AND order_status IN ("
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/shops/:shopId/stats",
+    "params": [
+      "params"
+    ],
+    "sqls": [
+      "SELECT SUM(total_amount) AS total_revenue, COUNT(*) AS total_orders FROM orders WHERE shop_id = ? AND order_status IN (",
+      "SELECT COUNT(*) AS pending_orders FROM orders WHERE shop_id = ? AND order_status IN (",
+      "SELECT SUM(total_amount) AS today_revenue FROM orders WHERE shop_id = ? AND order_status IN ("
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/shops/:shopId/products",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "SELECT p.*, c.name AS category_name, c.icon_name AS category_icon FROM products p ",
+      "SELECT * FROM products WHERE product_id = ? AND shop_id = ?"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/shops/:shopId/products/:productId",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "SELECT * FROM products WHERE product_id = ? AND shop_id = ?",
+      "INSERT INTO products ( "
+    ]
+  },
+  {
+    "method": "POST",
+    "path": "/api/shops/:shopId/products",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "INSERT INTO products ( ",
+      "SELECT name FROM shops WHERE shop_id = ?",
+      "INSERT INTO auctions ( "
+    ]
+  },
+  {
+    "method": "POST",
+    "path": "/api/shops/:shopId/products/:productId",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "UPDATE products SET ",
+      "SELECT * FROM products WHERE product_id = ?",
+      "SELECT auction_id FROM auctions WHERE shop_id = ? AND title = ? AND auction_status = \\"
+    ]
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/shops/:shopId/products/:productId",
+    "params": [
+      "params",
+      "query"
+    ],
+    "sqls": [
+      "SELECT name FROM products WHERE product_id = ? AND shop_id = ?",
+      "DELETE FROM products WHERE product_id = ? AND shop_id = ?",
+      "UPDATE auctions SET auction_status = ? WHERE shop_id = ? AND title = ? AND auction_status = ?"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/shops/:shopId/orders",
+    "params": [
+      "body",
+      "params",
+      "query"
+    ],
+    "sqls": [
+      "SELECT o.*, u.full_name AS customer_name, u.phone AS customer_phone, u.email AS customer_email, u_rider.",
+      "SELECT oi.*, p.name AS db_product_name, COALESCE(p.image_url, (SELECT image_url FROM auctions WHERE title COLLATE utf8mb4_unicode_ci = oi.product_name",
+      "UPDATE orders SET order_status = ? WHERE order_id = ?"
+    ]
+  },
+  {
+    "method": "PUT",
+    "path": "/api/orders/:orderId/status",
+    "params": [
+      "body",
+      "params",
+      "query"
+    ],
+    "sqls": [
+      "UPDATE orders SET order_status = ? WHERE order_id = ?",
+      "SELECT shop_id, name, image_url, distance, rating FROM shops WHERE status = ",
+      "SELECT p.*, s.name AS shop_name FROM products p "
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/search",
+    "params": [
+      "body",
+      "params",
+      "query"
+    ],
+    "sqls": [
+      "SELECT shop_id, name, image_url, distance, rating FROM shops WHERE status = ",
+      "SELECT p.*, s.name AS shop_name FROM products p ",
+      "SELECT u.user_id, u.full_name, u.email, u.phone, u.role, u.status, u.avatar_url, u.created_at, CASE WHEN u.role = 'seller' THEN (SEL"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/users",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "SELECT u.user_id, u.full_name, u.email, u.phone, u.role, u.status, u.avatar_url, u.created_at, CASE WHEN u.role = 'seller' THEN (SEL",
+      "SELECT COUNT(*) FROM deliveries d JOIN riders r ON d.rider_id = r.rider_id WHERE r.user_id = u.user_id AND d.status = ",
+      "SELECT COUNT(*) FROM orders o WHERE o.user_id = u.user_id) "
+    ]
+  },
+  {
+    "method": "PUT",
+    "path": "/api/admin/users/:id/status",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "UPDATE users SET status = ? WHERE user_id = ?`, ",
+      "SELECT shops.shop_id, shops.name AS shop_name, users.full_name AS owner_name, users.email AS owner_email, users.phone AS owner_phone, shops.created_at",
+      "UPDATE shops SET status = "
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/shops/pending",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "SELECT shops.shop_id, shops.name AS shop_name, users.full_name AS owner_name, users.email AS owner_email, users.phone AS owner_phone, shops.created_at",
+      "UPDATE shops SET status = ",
+      "SELECT owner_id FROM shops WHERE shop_id = ?`, [shopId]);"
+    ]
+  },
+  {
+    "method": "PUT",
+    "path": "/api/admin/shops/:id/approve",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "UPDATE shops SET status = ",
+      "SELECT owner_id FROM shops WHERE shop_id = ?`, [shopId]);",
+      "UPDATE users SET role = "
+    ]
+  },
+  {
+    "method": "PUT",
+    "path": "/api/admin/shops/:id/approve",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "UPDATE shops SET status = ",
+      "SELECT owner_id FROM shops WHERE shop_id = ?",
+      "INSERT INTO notifications (user_id, title, message, type, reference_id) VALUES (?, ?, ?, ?, ?)"
+    ]
+  },
+  {
+    "method": "PUT",
+    "path": "/api/admin/shops/:id/reject",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "UPDATE shops SET status = ",
+      "SELECT owner_id FROM shops WHERE shop_id = ?",
+      "INSERT INTO notifications (user_id, title, message, type, reference_id) VALUES (?, ?, ?, ?, ?)"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/shops",
+    "params": [
+      "params"
+    ],
+    "sqls": [
+      "SELECT s.shop_id, s.name, s.rating, s.address, s.status, s.created_at, COUNT(p.product_id) AS product_count FROM shops s ",
+      "SELECT s.*, u.full_name AS owner_name, u.phone AS owner_phone, u.email AS owner_email FROM shops s LEFT JOIN users u ON s.owner_id = u.user_id WHERE s",
+      "SELECT COUNT(order_id) AS total_orders, SUM(total_amount) AS total_revenue FROM orders WHERE shop_id = ? AND order_status IN (\\"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/shops/:id/insights",
+    "params": [
+      "params"
+    ],
+    "sqls": [
+      "SELECT s.*, u.full_name AS owner_name, u.phone AS owner_phone, u.email AS owner_email FROM shops s LEFT JOIN users u ON s.owner_id = u.user_id WHERE s",
+      "SELECT COUNT(order_id) AS total_orders, SUM(total_amount) AS total_revenue FROM orders WHERE shop_id = ? AND order_status IN (\\",
+      "SELECT product_id, name, description, original_price, discount_price AS price, stock_quantity AS stock, image_url, expiry_time AS expiration_date, cat"
+    ]
+  },
+  {
+    "method": "PUT",
+    "path": "/api/admin/shops/:id/suspend",
+    "params": [
+      "params",
+      "query"
+    ],
+    "sqls": [
+      "UPDATE shops SET status = ",
+      "SELECT SUM(total_amount) AS total_sales FROM orders WHERE order_status IN (",
+      "SELECT COUNT(*) AS total_orders FROM orders`); "
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/dashboard",
+    "params": [
+      "params",
+      "query"
+    ],
+    "sqls": [
+      "SELECT SUM(total_amount) AS total_sales FROM orders WHERE order_status IN (",
+      "SELECT COUNT(*) AS total_orders FROM orders`); ",
+      "SELECT COUNT(*) AS total_users FROM users`); "
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/users/:id/details",
+    "params": [
+      "params"
+    ],
+    "sqls": [
+      "SELECT user_id, full_name, email, phone, role, status, created_at, avatar_url FROM users WHERE user_id = ?`, [userId]); ",
+      "SELECT COUNT(order_id) AS total_orders, SUM(total_amount) AS total_spent, AVG(total_amount) AS avg_order_value FROM orders WHERE user_id = ? AND (orde",
+      "SELECT order_id, total_amount, order_status, created_at FROM orders WHERE user_id = ? ORDER BY created_at DESC LIMIT 5`, [userId]); "
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/seller/dashboard/:owner_id",
+    "params": [
+      "params"
+    ],
+    "sqls": [
+      "SELECT shop_id, name, status FROM shops WHERE owner_id = ?",
+      "SELECT SUM(subtotal) AS today_sales, SUM(subtotal * (SELECT setting_value FROM system_settings WHERE setting_key=",
+      "SELECT o.order_id, (o.subtotal * (1 - (SELECT setting_value FROM system_settings WHERE setting_key="
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/seller/wallet/:shop_id",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "SELECT balance FROM shop_wallets WHERE shop_id = ?",
+      "SELECT SUM(amount) as pending_amount FROM withdrawals WHERE shop_id = ? AND status = ",
+      "SELECT SUM(total_amount - delivery_fee) as pending_escrow FROM orders WHERE shop_id = ? AND order_status IN ("
+    ]
+  },
+  {
+    "method": "POST",
+    "path": "/api/seller/wallet/withdraw",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "SELECT balance FROM shop_wallets WHERE shop_id = ? FOR UPDATE",
+      "UPDATE shop_wallets SET balance = balance - ? WHERE shop_id = ?",
+      "INSERT INTO withdrawals (shop_id, amount, status) VALUES (?, ?, "
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/withdrawals",
+    "params": [
+      "params"
+    ],
+    "sqls": [
+      "SELECT w.id, w.amount, w.status, w.created_at, w.user_type, COALESCE(s.name, u.full_name) as shop_name, COALESCE(s.bank_name, ",
+      "SELECT * FROM withdrawals WHERE id = ? AND status = ",
+      "UPDATE withdrawals SET status = "
+    ]
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/withdrawals/:id/approve",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "SELECT * FROM withdrawals WHERE id = ? AND status = ",
+      "UPDATE withdrawals SET status = ",
+      "INSERT INTO wallet_transactions (user_type, target_id, amount, type, description) VALUES ("
+    ]
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/withdrawals/:id/reject",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "UPDATE withdrawals SET status = ",
+      "SELECT s.shop_id, s.name, s.address, s.opening_hours, s.bank_name, s.bank_account, s.image_url, u.full_name AS owner_name FROM shops s JOIN users u ON",
+      "UPDATE shops SET image_url = ? WHERE shop_id = ?"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/seller/settings/:owner_id",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "SELECT s.shop_id, s.name, s.address, s.opening_hours, s.bank_name, s.bank_account, s.image_url, u.full_name AS owner_name FROM shops s JOIN users u ON",
+      "UPDATE shops SET image_url = ? WHERE shop_id = ?",
+      "UPDATE shops SET name = ?, address = ?, opening_hours = ?, bank_name = ?, bank_account = ?, latitude = ?, longitude = ? WHERE shop_id = ?"
+    ]
+  },
+  {
+    "method": "POST",
+    "path": "/api/seller/settings/:shop_id/image",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "UPDATE shops SET image_url = ? WHERE shop_id = ?",
+      "UPDATE shops SET name = ?, address = ?, opening_hours = ?, bank_name = ?, bank_account = ?, latitude = ?, longitude = ? WHERE shop_id = ?",
+      "SELECT * FROM order_messages WHERE order_id = ? ORDER BY created_at ASC"
+    ]
+  },
+  {
+    "method": "PUT",
+    "path": "/api/seller/settings/:shop_id",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "UPDATE shops SET name = ?, address = ?, opening_hours = ?, bank_name = ?, bank_account = ?, latitude = ?, longitude = ? WHERE shop_id = ?",
+      "SELECT * FROM order_messages WHERE order_id = ? ORDER BY created_at ASC",
+      "INSERT INTO order_messages (order_id, sender_id, sender_type, message) VALUES (?, ?, ?, ?)"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/orders/:order_id/messages",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "SELECT * FROM order_messages WHERE order_id = ? ORDER BY created_at ASC",
+      "INSERT INTO order_messages (order_id, sender_id, sender_type, message) VALUES (?, ?, ?, ?)",
+      "SELECT * FROM banners WHERE is_active = true ORDER BY id ASC"
+    ]
+  },
+  {
+    "method": "POST",
+    "path": "/api/orders/:order_id/messages",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "INSERT INTO order_messages (order_id, sender_id, sender_type, message) VALUES (?, ?, ?, ?)",
+      "SELECT * FROM banners WHERE is_active = true ORDER BY id ASC",
+      "SELECT * FROM banners ORDER BY created_at DESC"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/banners",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "SELECT * FROM banners WHERE is_active = true ORDER BY id ASC",
+      "SELECT * FROM banners ORDER BY created_at DESC",
+      "INSERT INTO banners (image_url, link_url, title, subtitle, badge_text, is_active) VALUES (?, ?, ?, ?, ?, ?)"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/banners",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "SELECT * FROM banners ORDER BY created_at DESC",
+      "INSERT INTO banners (image_url, link_url, title, subtitle, badge_text, is_active) VALUES (?, ?, ?, ?, ?, ?)",
+      "UPDATE banners SET image_url = COALESCE(?, image_url), link_url = ?, title = ?, subtitle = ?, badge_text = ?, is_active = COALESCE(?, is_active) WHERE"
+    ]
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/banners",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "INSERT INTO banners (image_url, link_url, title, subtitle, badge_text, is_active) VALUES (?, ?, ?, ?, ?, ?)",
+      "UPDATE banners SET image_url = COALESCE(?, image_url), link_url = ?, title = ?, subtitle = ?, badge_text = ?, is_active = COALESCE(?, is_active) WHERE",
+      "UPDATE banners SET is_active = ? WHERE id = ?"
+    ]
+  },
+  {
+    "method": "PUT",
+    "path": "/api/admin/banners/:id",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "UPDATE banners SET image_url = COALESCE(?, image_url), link_url = ?, title = ?, subtitle = ?, badge_text = ?, is_active = COALESCE(?, is_active) WHERE",
+      "UPDATE banners SET is_active = ? WHERE id = ?",
+      "DELETE FROM banners WHERE id = ?"
+    ]
+  },
+  {
+    "method": "PUT",
+    "path": "/api/admin/banners/:id/status",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "UPDATE banners SET is_active = ? WHERE id = ?",
+      "DELETE FROM banners WHERE id = ?",
+      "SELECT * FROM users WHERE email = ? OR phone = ?"
+    ]
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/admin/banners/:id",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "DELETE FROM banners WHERE id = ?",
+      "SELECT * FROM users WHERE email = ? OR phone = ?",
+      "SELECT * FROM riders WHERE user_id = ?"
+    ]
+  },
+  {
+    "method": "POST",
+    "path": "/api/rider/register",
+    "params": [
+      "body"
+    ],
+    "sqls": [
+      "SELECT * FROM users WHERE email = ? OR phone = ?",
+      "SELECT * FROM riders WHERE user_id = ?",
+      "UPDATE users SET password_hash = ?, phone = ?, full_name = ? WHERE user_id = ?"
+    ]
+  },
+  {
+    "method": "POST",
+    "path": "/api/rider/login",
+    "params": [
+      "body",
+      "query"
+    ],
+    "sqls": [
+      "SELECT * FROM users WHERE email = ?",
+      "SELECT * FROM riders WHERE user_id = ?"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/rider/jobs",
+    "params": [
+      "body",
+      "params",
+      "query"
+    ],
+    "sqls": [
+      "SELECT o.order_id as order_id, o.total_amount, o.delivery_fee, o.order_status, o.created_at, s.shop_id as shop_id, s.name as shop_name, ",
+      "SELECT order_id, order_status, delivery_type FROM orders WHERE order_id = ? FOR UPDATE",
+      "SELECT rider_id FROM riders WHERE rider_id = ? AND status = "
+    ]
+  },
+  {
+    "method": "PUT",
+    "path": "/api/rider/deliveries/:order_id/status",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "SELECT order_id, order_status, delivery_type FROM orders WHERE order_id = ? FOR UPDATE",
+      "SELECT rider_id FROM riders WHERE rider_id = ? AND status = ",
+      "SELECT id FROM deliveries WHERE order_id = ? FOR UPDATE"
+    ]
+  },
+  {
+    "method": "POST",
+    "path": "/api/rider/deliveries/:order_id/complete",
+    "params": [
+      "body",
+      "params",
+      "query"
+    ],
+    "sqls": [
+      "UPDATE deliveries SET status = ",
+      "UPDATE orders SET order_status = ",
+      "SELECT balance FROM rider_wallets WHERE rider_id = ?"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/rider/wallet",
+    "params": [
+      "params",
+      "query"
+    ],
+    "sqls": [
+      "SELECT balance FROM rider_wallets WHERE rider_id = ?",
+      "SELECT SUM(o.delivery_fee) as earned FROM deliveries d JOIN orders o ON d.order_id = o.order_id WHERE d.rider_id = ? AND d.status = ",
+      "SELECT SUM(amount) as withdrawn FROM wallet_transactions WHERE user_type = "
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/rider/jobs/:order_id",
+    "params": [
+      "params"
+    ],
+    "sqls": [
+      "SELECT o.order_id as order_id, o.total_amount, o.delivery_fee, o.order_status, o.created_at, s.name as shop_name, s.address as shop_addr",
+      "SELECT d.id as delivery_id, d.status, d.assigned_at, d.completed_at, d.proof_image, o.order_id, o.order_status, o.delivery_fee, o.total_"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/rider/:id/history",
+    "params": [
+      "params"
+    ],
+    "sqls": [
+      "SELECT d.id as delivery_id, d.status, d.assigned_at, d.completed_at, d.proof_image, o.order_id, o.order_status, o.delivery_fee, o.total_",
+      "SELECT r.rider_id, r.user_id, r.real_name, r.name, r.phone, r.vehicle_plate as license_plate,",
+      "SELECT r.*, u.email, u.full_name as user_full_name FROM riders r "
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/riders",
+    "params": [
+      "params"
+    ],
+    "sqls": [
+      "SELECT r.rider_id, r.user_id, r.real_name, r.name, r.phone, r.vehicle_plate as license_plate,",
+      "SELECT r.*, u.email, u.full_name as user_full_name FROM riders r ",
+      "SELECT COUNT(*) as total_jobs, SUM(o.delivery_fee) as total_earnings FROM deliveries d "
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/riders/:id/details",
+    "params": [
+      "params"
+    ],
+    "sqls": [
+      "SELECT r.*, u.email, u.full_name as user_full_name FROM riders r ",
+      "SELECT COUNT(*) as total_jobs, SUM(o.delivery_fee) as total_earnings FROM deliveries d ",
+      "SELECT d.*, o.shop_id, s.name as shop_name FROM deliveries d "
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/riders/pending",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "SELECT r.*, u.full_name, u.phone FROM riders r ",
+      "SELECT r.*, u.full_name, u.phone FROM riders r ",
+      "UPDATE riders SET status = "
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/riders/:id",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "SELECT r.*, u.full_name, u.phone FROM riders r ",
+      "UPDATE riders SET status = ",
+      "SELECT user_id FROM riders WHERE rider_id = ?"
+    ]
+  },
+  {
+    "method": "PUT",
+    "path": "/api/admin/riders/:id/approve",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "UPDATE riders SET status = ",
+      "SELECT user_id FROM riders WHERE rider_id = ?",
+      "INSERT INTO notifications (user_id, title, message, type, reference_id) VALUES (?, ?, ?, ?, ?)`, "
+    ]
+  },
+  {
+    "method": "PUT",
+    "path": "/api/admin/riders/:id/reject",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "UPDATE riders SET status = ",
+      "SELECT user_id FROM riders WHERE rider_id = ?",
+      "INSERT INTO notifications (user_id, title, message, type, reference_id) VALUES (?, ?, ?, ?, ?)`, "
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/rider/jobs",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "SELECT o.order_id, s.name AS shop_name, s.address AS shop_address, o.shipping_address AS customer_address, ",
+      "SELECT oi.issue_id, oi.order_id, oi.user_id, oi.issue_topic, oi.issue_detail, oi.status, oi.created_at, u.full_name AS reporter_name, u.role AS report",
+      "SELECT oi.*, u.full_name AS reporter_name, u.email AS reporter_email, u.phone AS reporter_phone, u.role AS reporter_role, u.avatar_url AS reporter_ava"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/tickets",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "SELECT oi.issue_id, oi.order_id, oi.user_id, oi.issue_topic, oi.issue_detail, oi.status, oi.created_at, u.full_name AS reporter_name, u.role AS report",
+      "SELECT oi.*, u.full_name AS reporter_name, u.email AS reporter_email, u.phone AS reporter_phone, u.role AS reporter_role, u.avatar_url AS reporter_ava",
+      "SELECT o.order_id, o.total_amount, o.order_status, o.created_at, s.name AS shop_name, s.shop_id FROM orders o "
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/tickets/:id",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "SELECT oi.*, u.full_name AS reporter_name, u.email AS reporter_email, u.phone AS reporter_phone, u.role AS reporter_role, u.avatar_url AS reporter_ava",
+      "SELECT o.order_id, o.total_amount, o.order_status, o.created_at, s.name AS shop_name, s.shop_id FROM orders o ",
+      "UPDATE order_issues SET status = ? WHERE issue_id = ?"
+    ]
+  },
+  {
+    "method": "PUT",
+    "path": "/api/admin/tickets/:id/status",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "UPDATE order_issues SET status = ? WHERE issue_id = ?",
+      "SELECT * FROM system_settings",
+      "UPDATE system_settings SET setting_value = ? WHERE setting_key = ?"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/settings",
+    "params": [
+      "body"
+    ],
+    "sqls": [
+      "SELECT * FROM system_settings",
+      "UPDATE system_settings SET setting_value = ? WHERE setting_key = ?",
+      "UPDATE orders SET charge_id = ?, payment_status = "
+    ]
+  },
+  {
+    "method": "PUT",
+    "path": "/api/admin/settings",
+    "params": [
+      "body"
+    ],
+    "sqls": [
+      "UPDATE system_settings SET setting_value = ? WHERE setting_key = ?",
+      "UPDATE orders SET charge_id = ?, payment_status = ",
+      "SELECT * FROM orders WHERE charge_id = ?"
+    ]
+  },
+  {
+    "method": "POST",
+    "path": "/api/payment/generate-qr",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "UPDATE orders SET charge_id = ?, payment_status = ",
+      "SELECT * FROM orders WHERE charge_id = ?",
+      "UPDATE orders SET payment_status = "
+    ]
+  },
+  {
+    "method": "POST",
+    "path": "/api/payment/webhook",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "SELECT * FROM orders WHERE charge_id = ?",
+      "UPDATE orders SET payment_status = ",
+      "SELECT payment_status FROM orders WHERE order_id = ?"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/payment/status/:order_id",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "SELECT payment_status FROM orders WHERE order_id = ?",
+      "SELECT * FROM users WHERE email = ?",
+      "INSERT INTO users (email, full_name, avatar_url, password_hash, role) VALUES (?, ?, ?, ?, ?)"
+    ]
+  },
+  {
+    "method": "POST",
+    "path": "/api/auth/google-mock",
+    "params": [
+      "body"
+    ],
+    "sqls": [
+      "SELECT * FROM users WHERE email = ?",
+      "INSERT INTO users (email, full_name, avatar_url, password_hash, role) VALUES (?, ?, ?, ?, ?)",
+      "SELECT * FROM users WHERE user_id = ?"
+    ]
+  },
+  {
+    "method": "POST",
+    "path": "/api/rider/wallet/withdraw",
+    "params": [
+      "body",
+      "params"
+    ],
+    "sqls": [
+      "SELECT SUM(o.delivery_fee) as earned FROM deliveries d JOIN orders o ON d.order_id = o.order_id WHERE d.rider_id = ? AND d.status = ",
+      "SELECT SUM(amount) as withdrawn FROM wallet_transactions WHERE user_type = ",
+      "SELECT SUM(amount) as p_amount FROM withdrawals WHERE user_type = "
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/seller/notifications/:shopId",
+    "params": [
+      "params"
+    ],
+    "sqls": [
+      "SELECT r.*, u.full_name as customer_name, p.name as product_name FROM reviews r LEFT JOIN users u ON r.user_id = u.user_id LEFT JOIN products p ON r.p",
+      "SELECT owner_id FROM shops WHERE shop_id = ?",
+      "SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 50"
+    ]
+  }
+]

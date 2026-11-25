@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  StyleSheet, Text, View, Image, TouchableOpacity, 
-  ScrollView, Alert, ActivityIndicator, Share 
+import {
+  StyleSheet, Text, View, Image, TouchableOpacity,
+  ScrollView, Alert, ActivityIndicator, Share
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons, Ionicons, FontAwesome5 } from '@expo/vector-icons';
@@ -20,7 +20,7 @@ export default function ProductDetailScreen() {
   const [isExpanded, setIsExpanded] = useState(false);
   const [addedToCart, setAddedToCart] = useState(false);
   const [myShopId, setMyShopId] = useState<string | number | null>(null);
-  
+
   // จำนวนที่เลือกสั่งซื้อ
   const [quantity, setQuantity] = useState<number>(1);
 
@@ -52,7 +52,7 @@ export default function ProductDetailScreen() {
             }
           }
         }
-      } catch (e) {}
+      } catch (e) { }
     };
     checkMyShop();
   }, []);
@@ -75,8 +75,8 @@ export default function ProductDetailScreen() {
             if (shopRes.data?.success && shopRes.data?.shop?.rating !== undefined) {
               prod = { ...prod, shop_rating: shopRes.data.shop.rating };
             }
-          } catch(e: any) { 
-            console.log('shop rating fetch err', e?.message); 
+          } catch (e: any) {
+            console.log('shop rating fetch err', e?.message);
           }
         }
         setProduct(prod);
@@ -167,7 +167,7 @@ export default function ProductDetailScreen() {
       await Share.share({
         message: `ดีลพิเศษลดราคา: ${product?.name || 'อาหารลดราคา'} ประหยัดสูงสุด ${product?.discount_percent || 30}% บน Smart Deal!`,
       });
-    } catch (e) {}
+    } catch (e) { }
   };
 
   const handleBuyNow = () => {
@@ -261,8 +261,8 @@ export default function ProductDetailScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* 1. Header Bar */}
       <View style={styles.header}>
-        <TouchableOpacity 
-          style={styles.circleBtn} 
+        <TouchableOpacity
+          style={styles.circleBtn}
           onPress={() => router.back()}
           activeOpacity={0.7}
         >
@@ -271,8 +271,8 @@ export default function ProductDetailScreen() {
 
         <Text style={styles.headerTitle}>รายละเอียดสินค้า</Text>
 
-        <TouchableOpacity 
-          style={styles.circleBtn} 
+        <TouchableOpacity
+          style={styles.circleBtn}
           onPress={handleShare}
           activeOpacity={0.7}
         >
@@ -280,8 +280,8 @@ export default function ProductDetailScreen() {
         </TouchableOpacity>
       </View>
 
-      <ScrollView 
-        showsVerticalScrollIndicator={false} 
+      <ScrollView
+        showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
       >
         {/* Banner แจ้งเตือนมุมมองเจ้าของร้าน (Seller Preview Mode) */}
@@ -301,9 +301,9 @@ export default function ProductDetailScreen() {
 
         {/* 2. การ์ดภาพสินค้า + กล่องนับเวลาถอยหลังด้านใน */}
         <View style={styles.imageCardContainer}>
-          <Image 
-            source={{ uri: product?.image_url || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=800' }} 
-            style={[styles.productImage, isOutOfStock && styles.productImageDisabled]} 
+          <Image
+            source={{ uri: product?.image_url || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=800' }}
+            style={[styles.productImage, isOutOfStock && styles.productImageDisabled]}
           />
 
           {isOutOfStock && (
@@ -382,10 +382,10 @@ export default function ProductDetailScreen() {
           isOutOfStock ? styles.stockCardOut : isLowStock ? styles.stockCardLow : styles.stockCardNormal
         ]}>
           <View style={styles.stockStatusIconCol}>
-            <MaterialIcons 
-              name={isOutOfStock ? "error-outline" : isLowStock ? "local-fire-department" : "inventory-2"} 
-              size={24} 
-              color={isOutOfStock ? "#ef4444" : isLowStock ? "#ea580c" : "#16a34a"} 
+            <MaterialIcons
+              name={isOutOfStock ? "error-outline" : isLowStock ? "local-fire-department" : "inventory-2"}
+              size={24}
+              color={isOutOfStock ? "#ef4444" : isLowStock ? "#ea580c" : "#16a34a"}
             />
           </View>
           <View style={{ flex: 1 }}>
@@ -393,11 +393,11 @@ export default function ProductDetailScreen() {
               styles.stockStatusTitle,
               isOutOfStock ? styles.stockTitleOut : isLowStock ? styles.stockTitleLow : styles.stockTitleNormal
             ]}>
-              {isOutOfStock 
-                ? 'สินค้าหมดชั่วคราว' 
-                : isLowStock 
-                ? `เหลือเพียง ${stock} ชิ้นสุดท้ายในวันนี้!` 
-                : `มีสินค้าพร้อมส่ง: คงเหลือ ${stock} ชิ้น`}
+              {isOutOfStock
+                ? 'สินค้าหมดชั่วคราว'
+                : isLowStock
+                  ? `เหลือเพียง ${stock} ชิ้นสุดท้ายในวันนี้!`
+                  : `มีสินค้าพร้อมส่ง: คงเหลือ ${stock} ชิ้น`}
             </Text>
             <Text style={styles.stockStatusDesc}>
               {isOutOfStock
@@ -412,8 +412,8 @@ export default function ProductDetailScreen() {
           <View style={styles.quantitySection}>
             <Text style={styles.quantityLabel}>เลือกจำนวนที่ต้องการซื้อ:</Text>
             <View style={styles.stepperContainer}>
-              <TouchableOpacity 
-                style={[styles.stepperBtn, quantity <= 1 && styles.stepperBtnDisabled]} 
+              <TouchableOpacity
+                style={[styles.stepperBtn, quantity <= 1 && styles.stepperBtnDisabled]}
                 onPress={handleDecreaseQty}
                 disabled={quantity <= 1}
                 activeOpacity={0.7}
@@ -423,8 +423,8 @@ export default function ProductDetailScreen() {
 
               <Text style={styles.quantityValue}>{quantity}</Text>
 
-              <TouchableOpacity 
-                style={[styles.stepperBtn, quantity >= stock && styles.stepperBtnDisabled]} 
+              <TouchableOpacity
+                style={[styles.stepperBtn, quantity >= stock && styles.stepperBtnDisabled]}
                 onPress={handleIncreaseQty}
                 disabled={quantity >= stock}
                 activeOpacity={0.7}
@@ -437,14 +437,14 @@ export default function ProductDetailScreen() {
 
         {/* 8. ส่วนรายละเอียดสินค้า (Expandable) */}
         <Text style={styles.sectionHeading}>รายละเอียดสินค้า</Text>
-        <Text 
-          style={styles.descriptionText} 
+        <Text
+          style={styles.descriptionText}
           numberOfLines={isExpanded ? undefined : 3}
         >
           {product?.description || 'อาหารส่วนเกินคุณภาพพรีเมียมจากร้านอาหารชั้นนำ ปรุงสดใหม่วันต่อวัน คัดสรรวัตถุดิบอย่างดี เพื่อช่วยลดขยะอาหาร (Food Waste) และส่งมอบความคุ้มค่าให้คุณ'}
         </Text>
-        <TouchableOpacity 
-          onPress={() => setIsExpanded(!isExpanded)} 
+        <TouchableOpacity
+          onPress={() => setIsExpanded(!isExpanded)}
           style={styles.expandBtn}
         >
           <Text style={styles.expandBtnText}>
@@ -488,21 +488,21 @@ export default function ProductDetailScreen() {
         ) : (
           <>
             {/* ปุ่มใส่ตะกร้า */}
-            <TouchableOpacity 
-              style={[styles.cartBtn, addedToCart && styles.cartBtnAdded]} 
+            <TouchableOpacity
+              style={[styles.cartBtn, addedToCart && styles.cartBtnAdded]}
               onPress={handleAddToCart}
               activeOpacity={0.8}
             >
-              <MaterialIcons 
-                name={addedToCart ? 'check' : 'add-shopping-cart'} 
-                size={22} 
-                color="#16a34a" 
+              <MaterialIcons
+                name={addedToCart ? 'check' : 'add-shopping-cart'}
+                size={22}
+                color="#16a34a"
               />
             </TouchableOpacity>
 
             {/* ปุ่มซื้อเลย */}
-            <TouchableOpacity 
-              style={styles.buyNowBtn} 
+            <TouchableOpacity
+              style={styles.buyNowBtn}
               onPress={handleBuyNow}
               activeOpacity={0.8}
             >
@@ -540,7 +540,7 @@ const styles = StyleSheet.create({
   },
   headerTitle: { fontSize: 17, fontWeight: 'bold', color: '#0f172a' },
   scrollContent: { paddingHorizontal: 20, paddingBottom: 110 },
-  
+
   imageCardContainer: {
     width: '100%',
     height: 300,
@@ -564,7 +564,7 @@ const styles = StyleSheet.create({
     zIndex: 10
   },
   soldOutBannerText: { color: '#fff', fontSize: 12, fontWeight: 'bold' },
-  
+
   countdownBox: {
     position: 'absolute',
     bottom: 12,
@@ -585,14 +585,14 @@ const styles = StyleSheet.create({
   timeDigit: { fontSize: 15, fontWeight: 'bold', color: '#16a34a' },
   timeUnit: { fontSize: 9, color: '#64748b', marginTop: -2 },
   colon: { fontSize: 14, fontWeight: 'bold', color: '#16a34a', marginBottom: 6 },
-  
+
   badgeRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 },
   dealTag: { backgroundColor: '#e8f5e9', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
   dealTagText: { color: '#16a34a', fontSize: 11, fontWeight: 'bold' },
   ratingRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   ratingText: { fontSize: 13, fontWeight: 'bold', color: '#0f172a' },
   reviewCount: { fontSize: 12, color: '#64748b', fontWeight: 'normal' },
-  
+
   titleText: { fontSize: 20, fontWeight: 'bold', color: '#0f172a', marginBottom: 6, lineHeight: 26 },
   shopBadgeRow: {
     flexDirection: 'row',
@@ -608,7 +608,7 @@ const styles = StyleSheet.create({
     borderColor: '#bbf7d0',
   },
   shopNameText: { fontSize: 13, color: '#16a34a', fontWeight: '600' },
-  
+
   priceRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 16 },
   priceCurrent: { fontSize: 26, fontWeight: 'bold', color: '#16a34a' },
   priceOriginal: { fontSize: 15, color: '#94a3b8', textDecorationLine: 'line-through' },
@@ -682,7 +682,7 @@ const styles = StyleSheet.create({
   featureTextCol: { flex: 1 },
   featureSubLabel: { fontSize: 10, color: '#64748b' },
   featureMainLabel: { fontSize: 12, fontWeight: 'bold', color: '#0f172a', marginTop: 1 },
-  
+
   bottomBar: {
     position: 'absolute',
     bottom: 0,

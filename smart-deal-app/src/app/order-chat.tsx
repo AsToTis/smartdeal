@@ -21,6 +21,7 @@ export default function OrderChatScreen() {
   
   const [role, setRole] = useState<string>(initialRole);
   const [userId, setUserId] = useState<number>(Number(params.user_id || params.userId) || 0);
+  const currentShopId = initialRole === 'seller' ? Number(params.user_id || params.userId || 0) : (params.target_shop_id ? Number(params.target_shop_id) : undefined);
   const [messages, setMessages] = useState<any[]>([]);
   const [inputText, setInputText] = useState('');
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
@@ -111,6 +112,7 @@ export default function OrderChatScreen() {
       const queryParams = new URLSearchParams();
       if (target) queryParams.append('target', target);
       if (role) queryParams.append('role', role);
+      if (params.target_shop_id) queryParams.append('shop_id', params.target_shop_id.toString());
       const queryStr = queryParams.toString() ? `?${queryParams.toString()}` : '';
 
       const res = await axios.get(`${BASE_URL}/orders/${orderId}/messages${queryStr}`);
@@ -210,8 +212,15 @@ export default function OrderChatScreen() {
         formData.append('sender_id', String(userId || 1));
         formData.append('sender_type', senderType);
         formData.append('receiver_type', receiverType);
-        if (inputText.trim()) {
-          formData.append('message', inputText.trim());
+        let finalMessageText = inputText.trim();
+        if (currentShopId && target !== 'rider' && role !== 'rider') {
+          finalMessageText = `[SHOP_ID:${currentShopId}] ${finalMessageText}`;
+        }
+        if (finalMessageText.trim()) {
+          formData.append('message', finalMessageText.trim());
+        }
+        if (params.target_shop_id) {
+          formData.append('shop_id', params.target_shop_id.toString());
         }
 
         const uriParts = selectedImage.split('.');
@@ -232,11 +241,16 @@ export default function OrderChatScreen() {
           fetchMessages(false);
         }
       } else {
+        let finalMessageText = inputText.trim();
+        if (currentShopId && target !== 'rider' && role !== 'rider') {
+          finalMessageText = `[SHOP_ID:${currentShopId}] ${finalMessageText}`;
+        }
         const res = await axios.post(`${BASE_URL}/orders/${orderId}/messages`, {
           sender_id: userId || 1,
           sender_type: senderType,
           receiver_type: receiverType,
-          message: inputText.trim()
+          message: finalMessageText,
+          shop_id: params.target_shop_id ? Number(params.target_shop_id) : undefined
         });
 
         if (res.data?.success) {
@@ -423,6 +437,25 @@ export default function OrderChatScreen() {
 
   const headerInfo = getHeaderInfo();
 
+  // Temporary fallback hack: Filter messages by shop_id prefix if backend doesn't support shop_id column
+  const filteredMessages = messages.filter(msg => {
+    const isShopToRider = msg.receiver_type === 'rider' || msg.sender_type === 'rider';
+    if (isShopToRider) return true; // Rider messages are global to the order
+    
+    if (currentShopId && msg.message && msg.message.includes('[SHOP_ID:')) {
+      const match = msg.message.match(/\[SHOP_ID:(\d+)\]/);
+      if (match && Number(match[1]) !== currentShopId) {
+        return false; // Hide messages meant for other shops
+      }
+    }
+    return true;
+  }).map(msg => {
+    if (msg.message && msg.message.includes('[SHOP_ID:')) {
+      return { ...msg, message: msg.message.replace(/\[SHOP_ID:\d+\]\s*/, '') };
+    }
+    return msg;
+  });
+
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       {/* Header */}
@@ -458,7 +491,7 @@ export default function OrderChatScreen() {
         ) : (
           <FlatList
             ref={flatListRef}
-            data={messages}
+            data={filteredMessages}
             keyExtractor={(item) => (item.id || item.message_id || Math.random()).toString()}
             renderItem={renderMessage}
             contentContainerStyle={styles.listContent}

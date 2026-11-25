@@ -125,7 +125,7 @@ export default function SellerOrdersScreen() {
       {/* Tabs */}
       <View style={styles.tabContainer}>
         {[
-          { key: 'preparing', label: 'กำลังเตรียม' },
+          { key: 'preparing', label: 'รอดำเนินการ' },
           { key: 'ready', label: 'พร้อมส่ง' },
           { key: 'history', label: 'ประวัติ/จัดส่ง' }
         ].map((tab) => {

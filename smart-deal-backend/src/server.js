@@ -264,15 +264,21 @@ app.get(['/health', '/api/health'], (req, res) => {
 const initBase64ImageSupport = async () => {
   try {
     console.log('Altering tables for LONGTEXT images...');
-    await db.execute('ALTER TABLE products MODIFY image_url LONGTEXT');
-    await db.execute('ALTER TABLE shops MODIFY image_url LONGTEXT');
-    await db.execute('ALTER TABLE auctions MODIFY image_url LONGTEXT');
-    await db.execute('ALTER TABLE users MODIFY avatar_url LONGTEXT');
-    await db.execute('ALTER TABLE banners MODIFY image_url LONGTEXT');
-    await db.execute('ALTER TABLE complaints MODIFY image_url LONGTEXT');
-    try { await db.execute('ALTER TABLE complaints ADD COLUMN order_id INT NULL AFTER user_id'); } catch (e) {}
-    try { await db.execute('ALTER TABLE shops ADD COLUMN is_open TINYINT(1) NOT NULL DEFAULT 1'); } catch (e) {}
-
+    const alterCommands = [
+      'ALTER TABLE products MODIFY image_url LONGTEXT',
+      'ALTER TABLE shops MODIFY image_url LONGTEXT',
+      'ALTER TABLE auctions MODIFY image_url LONGTEXT',
+      'ALTER TABLE users MODIFY avatar_url LONGTEXT',
+      'ALTER TABLE banners MODIFY image_url LONGTEXT',
+      'ALTER TABLE complaints MODIFY image_url LONGTEXT',
+      'ALTER TABLE complaints ADD COLUMN order_id INT NULL AFTER user_id',
+      'ALTER TABLE shops ADD COLUMN is_open TINYINT(1) NOT NULL DEFAULT 1'
+    ];
+    for (const cmd of alterCommands) {
+      try {
+        await db.execute(cmd);
+      } catch (e) {}
+    }
     console.log('✅ Tables altered for LONGTEXT images and is_open column successfully.');
   } catch (err) {
     console.error('❌ Error altering tables for LONGTEXT:', err.message);
@@ -301,6 +307,8 @@ const initNotificationsTable = async () => {
     console.error('❌ ไม่สามารถสร้างตาราง notifications ได้:', err.message);
   }
 };
+initNotificationsTable();
+
 const initAddressesTable = async () => {
   try {
     await db.execute(`
@@ -416,8 +424,54 @@ initComplaintsTable();
 // ==========================================
 // Multi-vendor Escrow & Wallet Synchronization
 // ==========================================
+const initWalletTables = async () => {
+  try {
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS shop_wallets (
+        shop_id INT PRIMARY KEY,
+        balance DECIMAL(10,2) DEFAULT 0.00,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )
+    `);
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS rider_wallets (
+        rider_id INT PRIMARY KEY,
+        balance DECIMAL(10,2) DEFAULT 0.00,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )
+    `);
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS wallet_transactions (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_type ENUM('shop', 'rider', 'system') NOT NULL,
+        target_id INT NOT NULL,
+        order_id INT NULL,
+        amount DECIMAL(10,2) NOT NULL,
+        type ENUM('credit', 'debit') NOT NULL,
+        description VARCHAR(255) NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS withdrawals (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_type ENUM('shop', 'rider') NOT NULL,
+        shop_id INT NULL,
+        rider_id INT NULL,
+        amount DECIMAL(10,2) NOT NULL,
+        status ENUM('pending', 'approved', 'rejected') DEFAULT 'pending',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    console.log('✅ Wallet tables initialized successfully.');
+  } catch (err) {
+    console.error('❌ Error initializing wallet tables:', err.message);
+  }
+};
+
 const syncShopWalletBalances = async (specificShopId = null) => {
   try {
+    await initWalletTables();
     const [feeRows] = await db.execute("SELECT setting_value FROM system_settings WHERE setting_key='platform_fee_percent'");
     const platform_fee = feeRows.length > 0 ? parseFloat(feeRows[0].setting_value) : 15;
     const fee_multiplier = 1 - (platform_fee / 100);

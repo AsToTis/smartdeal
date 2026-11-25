@@ -269,7 +269,7 @@ export default function SearchScreen() {
                         <View style={styles.nearbySubRow}>
                           <View style={styles.cardRating}>
                             <MaterialIcons name="star" size={14} color="#f59e0b" />
-                            <Text style={styles.ratingNumSmall}>{shop.rating || '5.0'}</Text>
+                            <Text style={styles.ratingNumSmall}>{shop.rating > 0 ? Number(shop.rating).toFixed(1) : 'ใหม่'}</Text>
                           </View>
                           <Text style={styles.nearbyDistance}>• {shop.distance || 'ใกล้คุณ'}</Text>
                         </View>
@@ -367,7 +367,7 @@ export default function SearchScreen() {
                     <View style={styles.cardBody}>
                       <View style={styles.cardTitleRow}>
                         <Text style={styles.shopCardTitle}>{shop.name}</Text>
-                        <View style={styles.cardRating}><MaterialIcons name="star" size={14} color="#f59e0b" /><Text style={styles.ratingNum}>{shop.rating || '5.0'}</Text></View>
+                        <View style={styles.cardRating}><MaterialIcons name="star" size={14} color="#f59e0b" /><Text style={styles.ratingNum}>{shop.rating > 0 ? Number(shop.rating).toFixed(1) : 'ใหม่'}</Text></View>
                       </View>
                       <Text style={styles.shopSubText}>📍 ระยะทาง: {shop.distance || 'ใกล้คุณ'}</Text>
                     </View>

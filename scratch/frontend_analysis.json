@@ -1,0 +1,145 @@
+{
+  "address.tsx": {
+    "stateCount": 12,
+    "effectCount": 2,
+    "apiCalls": [
+      "axios.get(`${BASE_URL}/users/${currentUid}/address",
+      "axios.post(`${BASE_URL}/users/${userId}/address`"
+    ]
+  },
+  "auction-detail.tsx": {
+    "stateCount": 13,
+    "effectCount": 5,
+    "apiCalls": [
+      "axios.get(`${BASE_URL}/auctions/${targetId}`",
+      "axios.post(`${BASE_URL}/auctions/${auctionId}/clos",
+      "axios.post(`${BASE_URL}/auctions/${auctionId}/bid`"
+    ]
+  },
+  "cart.tsx": {
+    "stateCount": 3,
+    "effectCount": 0,
+    "apiCalls": []
+  },
+  "checkout.tsx": {
+    "stateCount": 8,
+    "effectCount": 0,
+    "apiCalls": [
+      "axios.get(`${BASE_URL}/users/${userId}/address`",
+      "axios.post(`${BASE_URL}/orders`"
+    ]
+  },
+  "explore.tsx": {
+    "stateCount": 0,
+    "effectCount": 0,
+    "apiCalls": []
+  },
+  "help-center.tsx": {
+    "stateCount": 5,
+    "effectCount": 0,
+    "apiCalls": [
+      "axios.post(`${BASE_URL}/complaints`"
+    ]
+  },
+  "index.tsx": {
+    "stateCount": 3,
+    "effectCount": 2,
+    "apiCalls": []
+  },
+  "login.tsx": {
+    "stateCount": 16,
+    "effectCount": 3,
+    "apiCalls": [
+      "axios.post(`${BASE_URL}/login`",
+      "axios.post(`${BASE_URL}/login/verify-2fa`",
+      "axios.post(`${BASE_URL}/register/request-otp`",
+      "axios.post(`${BASE_URL}/register`",
+      "axios.post(`${BASE_URL}/forgot-password/request-ot",
+      "axios.post(`${BASE_URL}/forgot-password/verify-otp",
+      "axios.post(`${BASE_URL}/forgot-password/reset-pass"
+    ]
+  },
+  "notifications.tsx": {
+    "stateCount": 6,
+    "effectCount": 2,
+    "apiCalls": [
+      "axios.get(`${BASE_URL}/notifications/${currentUser",
+      "axios.put(`${BASE_URL}/notifications/${item.notifi",
+      "axios.put(`${BASE_URL}/notifications/read-all/${us",
+      "axios.delete(`${BASE_URL}/notifications/${notifica"
+    ]
+  },
+  "order-chat.tsx": {
+    "stateCount": 5,
+    "effectCount": 2,
+    "apiCalls": [
+      "axios.get(`${BASE_URL}/orders/${orderId}/messages`",
+      "axios.post(`${BASE_URL}/orders/${orderId}/messages"
+    ]
+  },
+  "order-tracking.tsx": {
+    "stateCount": 4,
+    "effectCount": 3,
+    "apiCalls": [
+      "axios.get(`${BASE_URL}/orders/${orderId}/tracking`"
+    ]
+  },
+  "payment.tsx": {
+    "stateCount": 6,
+    "effectCount": 4,
+    "apiCalls": [
+      "axios.post(`${BASE_URL}/payment/generate-qr`",
+      "axios.get(`${BASE_URL}/payment/status/${orderId}`",
+      "axios.post(`${BASE_URL}/payment/webhook`"
+    ]
+  },
+  "product-detail.tsx": {
+    "stateCount": 7,
+    "effectCount": 3,
+    "apiCalls": [
+      "axios.get(`${BASE_URL}/products/${id}`"
+    ]
+  },
+  "register.tsx": {
+    "stateCount": 8,
+    "effectCount": 0,
+    "apiCalls": [
+      "fetch(`${BASE_URL}/register/request-otp`",
+      "fetch(`${BASE_URL}/register`"
+    ]
+  },
+  "review.tsx": {
+    "stateCount": 5,
+    "effectCount": 0,
+    "apiCalls": [
+      "axios.post(`${BASE_URL}/reviews`"
+    ]
+  },
+  "settings.tsx": {
+    "stateCount": 7,
+    "effectCount": 1,
+    "apiCalls": [
+      "axios.put(`${BASE_URL}/users/${user.user_id}/2fa`"
+    ]
+  },
+  "shop-profile.tsx": {
+    "stateCount": 4,
+    "effectCount": 0,
+    "apiCalls": [
+      "axios.get(`${BASE_URL}/shops/${shopId}`",
+      "axios.get(`${BASE_URL}/shops/${shopId}/products`"
+    ]
+  },
+  "tracking.tsx": {
+    "stateCount": 11,
+    "effectCount": 2,
+    "apiCalls": [
+      "axios.get(`${BASE_URL}/orders/${orderId}/tracking`"
+    ]
+  },
+  "_layout.tsx": {
+    "stateCount": 0,
+    "effectCount": 0,
+    "apiCalls": []
+  }
+}

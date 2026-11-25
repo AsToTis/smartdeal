@@ -204,7 +204,14 @@ export default function TrackingScreen() {
               if (res.data?.success) {
                 Alert.alert('สำเร็จ', 'ขอบคุณที่ยืนยันการรับสินค้า กรุณาให้คะแนนความพึงพอใจ');
                 fetchTrackingData();
-                setShowRatingModal(true);
+                
+                // Navigate to the full separate review screen instead of the old popup
+                router.replace({
+                  pathname: '/review' as any,
+                  params: {
+                    order_id: order?.order_id || id
+                  }
+                });
               }
             } catch (err: any) {
               console.error('Confirm received error:', err);
@@ -593,7 +600,7 @@ export default function TrackingScreen() {
                 <View style={styles.locationItem}>
                   {s?.image_url || s?.shop_image ? (
                     <Image 
-                      source={{ uri: getImageUrl(s.image_url || s.shop_image) }} 
+                      source={{ uri: getImageUrl(s.image_url || s.shop_image) || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=200' }} 
                       style={{ width: 40, height: 40, borderRadius: 20, marginRight: 10, marginTop: 2, backgroundColor: '#f1f5f9' }} 
                     />
                   ) : (
@@ -696,65 +703,7 @@ export default function TrackingScreen() {
         </View>
       </ScrollView>
 
-      {/* Rating Modal */}
-      <Modal
-        visible={showRatingModal}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={() => setShowRatingModal(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.dragHandle} />
-            <Text style={styles.modalTitle}>ให้คะแนนความพึงพอใจ ⭐</Text>
-            <Text style={styles.modalSubTitle}>ช่วยให้คะแนนร้านค้าและไรเดอร์เพื่อพัฒนาการบริการ</Text>
-
-            <View style={styles.starsContainer}>
-              {[1, 2, 3, 4, 5].map((star) => (
-                <TouchableOpacity key={star} onPress={() => setSelectedRating(star)}>
-                  <MaterialIcons
-                    name={star <= selectedRating ? 'star' : 'star-border'}
-                    size={38}
-                    color="#f59e0b"
-                  />
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            <TextInput
-              style={styles.commentInput}
-              placeholder="แสดงความคิดเห็นเพิ่มเติม (ถ้ามี)..."
-              placeholderTextColor="#94a3b8"
-              value={ratingComment}
-              onChangeText={setRatingComment}
-              multiline
-            />
-
-            <View style={styles.modalActions}>
-              <TouchableOpacity 
-                style={styles.modalCancelBtn} 
-                onPress={() => {
-                  setShowRatingModal(false);
-                  router.replace('/(tabs)/orders' as any);
-                }}
-              >
-                <Text style={styles.modalCancelText}>ข้าม</Text>
-              </TouchableOpacity>
-              <TouchableOpacity 
-                style={styles.modalSubmitBtn} 
-                onPress={handleSubmitRating}
-                disabled={isSubmittingRating}
-              >
-                {isSubmittingRating ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={styles.modalSubmitText}>ส่งคะแนน</Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
+      {/* Rating Modal Removed in favor of review.tsx screen */}
 
       {/* Full Image Preview Modal */}
       <Modal

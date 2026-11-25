@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, Image, Switch } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, Image, Switch, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
@@ -305,11 +305,12 @@ export default function AddProductScreen() {
 
         {/* หมวดหมู่ */}
         <Text style={styles.inputLabel}>หมวดหมู่สินค้า</Text>
-        <View style={[styles.input, { padding: 0, justifyContent: 'center' }]}>
+        <View style={[styles.input, { padding: 0, justifyContent: 'center', overflow: 'hidden' }, Platform.OS === 'ios' && { height: 150 }]}>
           <Picker
             selectedValue={categoryId}
             onValueChange={(itemValue) => setCategoryId(itemValue)}
             style={{ width: '100%', color: '#0f172a' }}
+            itemStyle={Platform.OS === 'ios' ? { height: 150, fontSize: 15 } : undefined}
           >
             <Picker.Item label="เบเกอรี่" value="1" />
             <Picker.Item label="อาหารมื้อหลัก" value="2" />

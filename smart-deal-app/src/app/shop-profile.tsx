@@ -115,7 +115,7 @@ export default function ShopProfileScreen() {
           <View style={styles.statsRow}>
             <View style={styles.statItem}>
               <MaterialIcons name="star" size={16} color="#fbbf24" />
-              <Text style={styles.statText}>{shop?.rating || '5.0'}</Text>
+              <Text style={styles.statText}>{shop?.rating > 0 ? Number(shop?.rating).toFixed(1) : 'ใหม่'}</Text>
             </View>
             <Text style={styles.statDot}>•</Text>
             
