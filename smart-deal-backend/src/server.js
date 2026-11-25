@@ -35,7 +35,7 @@ app.set('trust proxy', true);
 app.use(cors());
 
 // ==========================================
-// READABLE SYNC: อัปเดตคอลัมน์ภาษาไทย (summary_th, *_th, ชื่อแทนรหัส) ในทุกตาราง
+// READABLE SYNC: อัปเดตคอลัมน์ภาษาไทย (*_th, ชื่อแทนรหัส, ตัวเลขสรุปแยกคอลัมน์) ในทุกตาราง
 // - หลังทุกคำขอที่เขียนข้อมูล (POST/PUT/DELETE) ภายใน ~1.5 วินาที
 // - และทุก 1 นาที (รวมถึงการเปลี่ยนแปลงจาก cron)
 // ==========================================
@@ -3726,10 +3726,10 @@ app.put('/api/cart/:userId', async (req, res) => {
       const line = parseFloat((price * qty).toFixed(2));
       const summary = `${p.name} x${qty} (${money(price)}/ชิ้น = ${money(line)}) ร้าน ${p.shop_name || '-'} ในตะกร้าของ ${u.full_name}`;
       await connection.query(
-        `INSERT INTO cart_items (user_id, user_name, product_id, product_name, shop_id, shop_name, quantity, unit_price, line_total, summary_th)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE quantity = VALUES(quantity), unit_price = VALUES(unit_price), line_total = VALUES(line_total), summary_th = VALUES(summary_th), product_name = VALUES(product_name), shop_name = VALUES(shop_name), user_name = VALUES(user_name)`,
-        [userId, u.full_name, pid, p.name, p.shop_id, p.shop_name, qty, price, line, summary]);
+        `INSERT INTO cart_items (user_id, user_name, product_id, product_name, shop_id, shop_name, quantity, unit_price, line_total)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE quantity = VALUES(quantity), unit_price = VALUES(unit_price), line_total = VALUES(line_total), product_name = VALUES(product_name), shop_name = VALUES(shop_name), user_name = VALUES(user_name)`,
+        [userId, u.full_name, pid, p.name, p.shop_id, p.shop_name, qty, price, line]);
       const old = before.get(pid);
       if (!old) changes.push({ action: 'cart.add', th: 'เพิ่มสินค้าลงตะกร้า', text: `เพิ่ม "${p.name}" x${qty} (ร้าน ${p.shop_name || '-'}) ลงตะกร้า`, pid, name: p.name, oldV: null, newV: { quantity: qty } });
       else if (Number(old.quantity) !== qty) changes.push({ action: 'cart.update', th: 'แก้จำนวนสินค้าในตะกร้า', text: `เปลี่ยนจำนวน "${p.name}" ในตะกร้าจาก ${old.quantity} เป็น ${qty}`, pid, name: p.name, oldV: { quantity: old.quantity }, newV: { quantity: qty } });

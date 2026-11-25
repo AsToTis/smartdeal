@@ -180,8 +180,8 @@ const call = async (method, path, body, headers = {}) => {
   const [lo] = await q("SELECT description_th, session_minutes FROM login_logs WHERE user_id = ? AND event_type = 'logout' ORDER BY id DESC LIMIT 1", [buyerId]);
   check('ออกจากระบบบันทึกลง login_logs', r.data?.success && lo && lo.session_minutes !== null, lo?.description_th);
   await sleepMs(2500);
-  const [rd] = await q('SELECT summary_th, timeline_th FROM orders WHERE order_id = ?', [orderId]);
-  check('readable sync: summary_th/timeline_th ของออเดอร์', rd.summary_th && rd.timeline_th && rd.timeline_th.includes('ไรเดอร์'), (rd.summary_th || '').slice(0, 80));
+  const [rd] = await q('SELECT o.item_count, o.event_count, o.last_event_th, u.order_count, u.total_spent FROM orders o JOIN users u ON u.user_id = o.user_id WHERE o.order_id = ?', [orderId]);
+  check('readable sync: คอลัมน์สรุปแยกหัวข้อ', rd.item_count === 3 && rd.event_count >= 8 && rd.last_event_th && rd.order_count >= 1 && Number(rd.total_spent) > 0, `ชิ้น ${rd.item_count}, เหตุการณ์ ${rd.event_count}, ลูกค้าสั่ง ${rd.order_count} ออเดอร์ ฿${rd.total_spent}`);
 
   // ---------- ตรวจผลในฐานข้อมูล ----------
   const timeline = await q('SELECT created_at AS เวลา, actor_name AS ผู้ดำเนินการ, description_th AS เหตุการณ์ FROM order_status_logs WHERE order_id = ? ORDER BY id', [orderId]);

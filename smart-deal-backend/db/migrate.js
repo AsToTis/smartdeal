@@ -26,6 +26,11 @@ const makeHelpers = (conn, database) => {
         await conn.query(`ALTER TABLE \`${table}\` ADD COLUMN \`${column}\` ${definition}`);
       }
     },
+    dropColumn: async (table, column) => {
+      if (await columnInfo(table, column)) {
+        await conn.query(`ALTER TABLE \`${table}\` DROP COLUMN \`${column}\``);
+      }
+    },
     comment: async (table, column, definition) => {
       if (await columnInfo(table, column)) {
         await conn.query(`ALTER TABLE \`${table}\` MODIFY \`${column}\` ${definition}`);
@@ -100,7 +105,7 @@ const runMigrations = async ({ log = console.log } = {}) => {
     }
     if (applied.length === 0) log(`✅ [Migration] ฐานข้อมูล ${cfg.database} (${cfg.profile}) เป็นเวอร์ชันล่าสุดแล้ว`);
     if (applied.length > 0) {
-      // คำนวณคอลัมน์ภาษาไทย (summary_th ฯลฯ) ให้ข้อมูลที่มีอยู่ทันทีหลังอัปเกรด
+      // คำนวณคอลัมน์ภาษาไทย/ตัวเลขสรุป ให้ข้อมูลที่มีอยู่ทันทีหลังอัปเกรด
       const r = await require('../src/readable_sync').syncReadable(conn);
       log(`📝 [Readable] อัปเดตคอลัมน์ภาษาไทย ${r.statements - r.failed}/${r.statements} ตาราง`);
     }
