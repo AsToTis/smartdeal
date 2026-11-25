@@ -9,7 +9,7 @@ const generatePayload = require('promptpay-qr');
 const QRCode = require('qrcode');
 const db = require('./db');
 const audit = require('./audit');
-const { logLogin, logAudit, recordOrderEvent, actorUser, actorShop, actorRider, actorAdmin, diffText, money, SYSTEM } = audit;
+const { logLogin, logAudit, recordOrderEvent, actorUser, actorShop, actorRider, actorAdmin, adminActor, slim, diffText, money, SYSTEM } = audit;
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -2333,10 +2333,15 @@ app.get('/api/orders/:orderId', async (req, res) => {
     }
 
     const [reviews] = await db.execute('SELECT rating, comment, created_at FROM reviews WHERE order_id = ? LIMIT 1', [orderId]);
+    const [timeline] = await db.execute(
+      'SELECT id, event_code, status_th, description_th, actor_type, actor_name, shop_name, created_at FROM order_status_logs WHERE order_id = ? ORDER BY created_at ASC, id ASC',
+      [orderId]
+    );
     res.json({
       success: true,
       order: {
         ...order,
+        timeline,
         subtotal: effectiveSubtotal,
         total_amount: effectiveTotal,
         order_status: effectiveStatus,
@@ -4726,6 +4731,75 @@ app.get('/api/search', async (req, res) => {
 // ==========================================
 
 // 1. API จัดการผู้ใช้ (User Management)
+// ==========================================
+// ADMIN AUTH & ACTIVITY LOGS
+// ==========================================
+app.post('/api/admin/login', async (req, res) => {
+  const identifier = (req.body?.email || req.body?.username || '').trim();
+  const password = req.body?.password || '';
+  const appName = 'เว็บแอดมิน Smart Deal';
+  try {
+    const [rows] = await db.query("SELECT * FROM users WHERE (email = ? OR phone = ? OR (? = 'admin' AND role = 'admin')) ORDER BY role = 'admin' DESC LIMIT 1", [identifier, identifier, identifier]);
+    const user = rows[0];
+    if (!user) {
+      await logLogin(db, { req, appName, identifier, success: false, reason: 'ไม่พบบัญชีผู้ใช้' });
+      return res.status(401).json({ success: false, message: 'อีเมลหรือรหัสผ่านไม่ถูกต้อง' });
+    }
+    const ok = await bcrypt.compare(password, user.password_hash);
+    if (!ok) {
+      await logLogin(db, { req, user, appName, identifier, success: false, reason: 'รหัสผ่านไม่ถูกต้อง' });
+      return res.status(401).json({ success: false, message: 'อีเมลหรือรหัสผ่านไม่ถูกต้อง' });
+    }
+    if (user.role !== 'admin') {
+      await logLogin(db, { req, user, appName, identifier, success: false, reason: 'บัญชีนี้ไม่มีสิทธิ์ผู้ดูแลระบบ' });
+      return res.status(403).json({ success: false, message: 'บัญชีนี้ไม่มีสิทธิ์เข้าใช้งานเว็บแอดมิน' });
+    }
+    if (user.status && user.status !== 'active') {
+      await logLogin(db, { req, user, appName, identifier, success: false, reason: 'บัญชีแอดมินถูกระงับ' });
+      return res.status(403).json({ success: false, message: 'บัญชีนี้ถูกระงับการใช้งาน' });
+    }
+    await logLogin(db, { req, user, appName, identifier, success: true });
+    res.json({ success: true, admin: { admin_id: user.user_id, full_name: user.full_name, email: user.email } });
+  } catch (error) {
+    console.error('Admin login error:', error);
+    res.status(500).json({ success: false, message: 'เกิดข้อผิดพลาดของเซิร์ฟเวอร์' });
+  }
+});
+
+app.post('/api/admin/logout', async (req, res) => {
+  const admin = await adminActor(db, req);
+  await logAudit(db, { req, actor: admin, action: 'admin.logout', actionTh: 'ออกจากระบบเว็บแอดมิน', entityType: 'user', entityId: admin.id, entityName: admin.name, description: `${admin.name} ออกจากระบบเว็บแอดมิน` });
+  res.json({ success: true });
+});
+
+// ประวัติการกระทำ (แอดมิน/ร้านค้า/ไรเดอร์/ลูกค้า)
+app.get('/api/admin/audit-logs', async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 200, 1000);
+    const params = [];
+    let where = '1=1';
+    if (req.query.actor_type) { where += ' AND actor_type = ?'; params.push(req.query.actor_type); }
+    if (req.query.q) { where += ' AND (description_th LIKE ? OR actor_name LIKE ? OR entity_name LIKE ?)'; params.push(`%${req.query.q}%`, `%${req.query.q}%`, `%${req.query.q}%`); }
+    const [rows] = await db.query(
+      `SELECT id, actor_type, actor_name, action, action_th, entity_type, entity_id, entity_name, description_th, ip_address, created_at FROM admin_audit_logs WHERE ${where} ORDER BY id DESC LIMIT ${limit}`, params);
+    res.json({ success: true, data: rows });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ประวัติการเข้าสู่ระบบทุก Role
+app.get('/api/admin/login-logs', async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 200, 1000);
+    const [rows] = await db.query(
+      `SELECT id, user_id, full_name, role, role_th, app_name, login_identifier, is_success, fail_reason, description_th, ip_address, device_info, created_at FROM login_logs ORDER BY id DESC LIMIT ${limit}`);
+    res.json({ success: true, data: rows });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 app.get('/api/admin/users', async (req, res) => {
   try {
     const [results] = await db.execute(
@@ -4751,14 +4825,25 @@ app.get('/api/admin/users', async (req, res) => {
 });
 
 app.put('/api/admin/users/:id/status', async (req, res) => {
-  const { status } = req.body;
+  const { status, reason } = req.body;
   try {
+    const [beforeU] = await db.execute('SELECT full_name, role, status FROM users WHERE user_id = ?', [req.params.id]);
     const [result] = await db.execute(
       `UPDATE users SET status = ? WHERE user_id = ?`,
       [status, req.params.id]
     );
     if (result.affectedRows === 0) {
       return res.status(404).json({ error: 'ไม่พบผู้ใช้' });
+    }
+    {
+      const admin = await adminActor(db, req);
+      const u = beforeU[0] || {};
+      const STATUS_TH = { active: 'ใช้งานได้ปกติ', suspended: 'ระงับการใช้งาน', deleted: 'ลบบัญชี' };
+      await logAudit(db, { req, actor: admin, action: `user.${status}`, actionTh: status === 'active' ? 'เปิดใช้งานบัญชีผู้ใช้' : 'ระงับบัญชีผู้ใช้',
+        entityType: 'user', entityId: req.params.id, entityName: u.full_name,
+        description: `แอดมิน ${admin.name} เปลี่ยนสถานะบัญชี ${u.full_name} (${audit.roleTh(u.role)}) จาก "${STATUS_TH[u.status] || u.status}" เป็น "${STATUS_TH[status] || status}"${reason ? ` เหตุผล: ${reason}` : ''}`,
+        oldValue: { status: u.status }, newValue: { status } });
+      await db.query('INSERT INTO notifications (user_id, title, message, type, reference_id, is_read, created_at) VALUES (?, ?, ?, ?, ?, 0, NOW())', [req.params.id, status === 'active' ? '✅ บัญชีของคุณเปิดใช้งานแล้ว' : '⛔ บัญชีของคุณถูกระงับการใช้งาน', status === 'active' ? 'ผู้ดูแลระบบเปิดใช้งานบัญชีของคุณแล้ว สามารถเข้าสู่ระบบได้ตามปกติ' : `ผู้ดูแลระบบระงับบัญชีของคุณ${reason ? ' เหตุผล: ' + reason : ''} กรุณาติดต่อฝ่ายซัพพอร์ต`, 'account_status', req.params.id]);
     }
     res.json({ success: true, message: 'อัปเดตสถานะสำเร็จ' });
   } catch (error) {
@@ -4785,9 +4870,16 @@ app.put('/api/admin/shops/:id/approve', async (req, res) => {
     const shopId = req.params.id;
     const [result] = await db.execute(`UPDATE shops SET status = "approved" WHERE shop_id = ?`, [shopId]);
     if (result.affectedRows === 0) return res.status(404).json({ error: 'ไม่พบร้านค้า' });
-    const [shop] = await db.execute(`SELECT owner_id FROM shops WHERE shop_id = ?`, [shopId]);
+    const [shop] = await db.execute(`SELECT owner_id, name FROM shops WHERE shop_id = ?`, [shopId]);
     if (shop.length > 0) {
       await db.execute(`UPDATE users SET role = "seller" WHERE user_id = ?`, [shop[0].owner_id]);
+      const admin = await adminActor(db, req);
+      await db.execute('UPDATE shops SET status_updated_at = NOW(), status_updated_by = ?, reject_reason = NULL WHERE shop_id = ?', [admin.name, shopId]);
+      const owner = await actorUser(db, shop[0].owner_id);
+      await logAudit(db, { req, actor: admin, action: 'shop.approve', actionTh: 'อนุมัติร้านค้า', entityType: 'shop', entityId: shopId, entityName: shop[0].name,
+        description: `แอดมิน ${admin.name} อนุมัติร้าน "${shop[0].name}" ของ ${owner.name} ให้เปิดขายได้ และเปลี่ยนบทบาทผู้ใช้เป็นร้านค้า`,
+        oldValue: { status: 'pending' }, newValue: { status: 'approved' } });
+      await db.query('INSERT INTO notifications (user_id, title, message, type, reference_id, is_read, created_at) VALUES (?, ?, ?, ?, ?, 0, NOW())', [shop[0].owner_id, `🎉 ร้าน ${shop[0].name} ได้รับการอนุมัติแล้ว`, 'ผู้ดูแลระบบอนุมัติร้านค้าของคุณแล้ว เริ่มลงเมนูและรับออเดอร์ได้ทันที', 'shop_approved', shopId]);
     }
     res.json({ success: true, message: 'อนุมัติร้านค้าเรียบร้อยแล้ว' });
   } catch (error) {
@@ -4812,9 +4904,13 @@ app.put('/api/admin/shops/:id/reject', async (req, res) => {
     const [result] = await db.execute('UPDATE shops SET status = "rejected", reject_reason = ? WHERE shop_id = ?', [reason || null, req.params.id]);
     if (result.affectedRows === 0) return res.status(404).json({ error: 'ไม่พบร้านค้า' });
 
-    const [shopData] = await db.execute('SELECT owner_id FROM shops WHERE shop_id = ?', [req.params.id]);
+    const [shopData] = await db.execute('SELECT owner_id, name FROM shops WHERE shop_id = ?', [req.params.id]);
     if (shopData.length > 0) {
       const ownerId = shopData[0].owner_id;
+      const admin = await adminActor(db, req);
+      await db.execute('UPDATE shops SET status_updated_at = NOW(), status_updated_by = ? WHERE shop_id = ?', [admin.name, req.params.id]);
+      await logAudit(db, { req, actor: admin, action: 'shop.reject', actionTh: 'ปฏิเสธคำขอเปิดร้าน', entityType: 'shop', entityId: req.params.id, entityName: shopData[0].name,
+        description: `แอดมิน ${admin.name} ปฏิเสธคำขอเปิดร้าน "${shopData[0].name}" เหตุผล: ${reason || 'ไม่ระบุ'}`, newValue: { status: 'rejected', reject_reason: reason || null } });
       await db.execute('INSERT INTO notifications (user_id, title, message, type, reference_id) VALUES (?, ?, ?, ?, ?)', 
         [ownerId, 'คำขอเปิดร้านไม่ผ่านการอนุมัติ', `เหตุผล: ${reason || 'ไม่ระบุ'}`, 'shop_rejected', req.params.id]);
       
@@ -4893,8 +4989,17 @@ app.get('/api/admin/shops/:id/insights', async (req, res) => {
   
   app.put('/api/admin/shops/:id/suspend', async (req, res) => {
   try {
-    const [result] = await db.execute('UPDATE shops SET status = "suspended" WHERE shop_id = ?', [req.params.id]);
+    const [beforeShop] = await db.execute('SELECT name, owner_id, status FROM shops WHERE shop_id = ?', [req.params.id]);
+    const admin = await adminActor(db, req);
+    const [result] = await db.execute('UPDATE shops SET status = "suspended", status_updated_at = NOW(), status_updated_by = ? WHERE shop_id = ?', [admin.name, req.params.id]);
     if (result.affectedRows === 0) return res.status(404).json({ error: 'Shop not found' });
+    {
+      const s = beforeShop[0] || {};
+      const why = req.body?.reason || null;
+      await logAudit(db, { req, actor: admin, action: 'shop.suspend', actionTh: 'ระงับร้านค้า', entityType: 'shop', entityId: req.params.id, entityName: s.name,
+        description: `แอดมิน ${admin.name} ระงับร้าน "${s.name}"${why ? ` เหตุผล: ${why}` : ''}`, oldValue: { status: s.status }, newValue: { status: 'suspended' } });
+      if (s.owner_id) { await db.query('INSERT INTO notifications (user_id, title, message, type, reference_id, is_read, created_at) VALUES (?, ?, ?, ?, ?, 0, NOW())', [s.owner_id, `⛔ ร้าน ${s.name} ถูกระงับชั่วคราว`, 'ผู้ดูแลระบบระงับร้านค้าของคุณ กรุณาติดต่อฝ่ายซัพพอร์ตเพื่อตรวจสอบ', 'shop_suspended', req.params.id]); }
+    }
     res.json({ success: true, message: 'Shop suspended successfully' });
   } catch (error) {
     console.error('API /api/admin/shops/:id/suspend Error:', error);
@@ -5285,10 +5390,25 @@ app.post('/api/admin/withdrawals/:id/approve', async (req, res) => {
       if (wCheck.length === 0) return res.status(404).json({ success: false, message: 'ไม่พบคำขอถอนเงินที่รออนุมัติ' });
       
       const wData = wCheck[0];
-      const [result] = await db.execute('UPDATE withdrawals SET status = "completed", processed_at = CURRENT_TIMESTAMP WHERE id = ?', [id]);
-      
+      const admin = await adminActor(db, req);
+      const [result] = await db.execute('UPDATE withdrawals SET status = "completed", processed_at = CURRENT_TIMESTAMP, processed_by_name = ? WHERE id = ?', [admin.name, id]);
+      const who = wData.requester_name || (wData.user_type === 'rider' ? `ไรเดอร์ #${wData.rider_id}` : `ร้าน #${wData.shop_id}`);
+
       if (wData.user_type === 'rider') {
-        await db.execute("INSERT INTO wallet_transactions (user_type, target_id, amount, type, description) VALUES ('rider', ?, ?, 'debit', 'ถอนเงิน')", [wData.rider_id, wData.amount]);
+        await db.execute("INSERT INTO wallet_transactions (user_type, target_id, target_name, amount, type, description) VALUES ('rider', ?, ?, ?, 'debit', ?)",
+          [wData.rider_id, who, wData.amount, `ถอนเงิน ${money(wData.amount)} เข้า ${wData.bank_info || 'บัญชีไรเดอร์'} (อนุมัติโดย ${admin.name})`]);
+        await db.execute('UPDATE rider_wallets SET balance = GREATEST(0, balance - ?) WHERE rider_id = ?', [wData.amount, wData.rider_id]);
+      } else {
+        await db.execute("UPDATE transactions SET status = 'completed', description = CONCAT(COALESCE(description, ''), ?) WHERE withdrawal_id = ? AND type = 'withdrawal'",
+          [` | แอดมิน ${admin.name} อนุมัติและโอนเงินแล้ว`, id]);
+      }
+      await logAudit(db, { req, actor: admin, action: 'withdrawal.approve', actionTh: 'อนุมัติคำขอถอนเงิน', entityType: 'withdrawal', entityId: id, entityName: who,
+        description: `แอดมิน ${admin.name} อนุมัติการถอนเงิน ${money(wData.amount)} ของ ${who} เข้าบัญชี ${wData.bank_info || '-'}`, oldValue: { status: 'pending' }, newValue: { status: 'completed' } });
+      {
+        const [[ownerRow]] = wData.user_type === 'rider'
+          ? await db.query('SELECT user_id AS uid FROM riders WHERE rider_id = ?', [wData.rider_id])
+          : await db.query('SELECT owner_id AS uid FROM shops WHERE shop_id = ?', [wData.shop_id]);
+        if (ownerRow?.uid) { await db.query('INSERT INTO notifications (user_id, title, message, type, reference_id, is_read, created_at) VALUES (?, ?, ?, ?, ?, 0, NOW())', [ownerRow.uid, `💸 โอนเงิน ${money(wData.amount)} สำเร็จ`, `ผู้ดูแลระบบอนุมัติคำขอถอนเงิน ${money(wData.amount)} และโอนเข้าบัญชี ${wData.bank_info || ''} แล้ว`, 'withdrawal', id]); }
       }
   
     if (result.affectedRows === 0) return res.status(404).json({ success: false, message: 'ไม่พบคำขอถอนเงินที่รออนุมัติ' });
@@ -5301,8 +5421,28 @@ app.post('/api/admin/withdrawals/:id/approve', async (req, res) => {
 app.post('/api/admin/withdrawals/:id/reject', async (req, res) => {
   try {
     const { id } = req.params;
-    const [result] = await db.execute('UPDATE withdrawals SET status = "rejected", processed_at = CURRENT_TIMESTAMP WHERE id = ? AND status = "pending"', [id]);
+    const reason = req.body?.reason || 'ไม่ระบุเหตุผล';
+    const admin = await adminActor(db, req);
+    const [[wData]] = await db.query('SELECT * FROM withdrawals WHERE id = ?', [id]);
+    const [result] = await db.execute('UPDATE withdrawals SET status = "rejected", processed_at = CURRENT_TIMESTAMP, processed_by_name = ?, reject_reason = ? WHERE id = ? AND status = "pending"', [admin.name, reason, id]);
     if (result.affectedRows === 0) return res.status(404).json({ success: false, message: 'ไม่พบคำขอถอนเงินที่รออนุมัติ' });
+    {
+      const who = wData.requester_name || (wData.user_type === 'rider' ? `ไรเดอร์ #${wData.rider_id}` : `ร้าน #${wData.shop_id}`);
+      if (wData.shop_id && wData.user_type !== 'rider') {
+        // ยอดถูกหักจากกระเป๋าตอนยื่นคำขอ จึงต้องคืนเงินเมื่อถูกปฏิเสธ
+        await db.query('UPDATE shop_wallets SET balance = balance + ? WHERE shop_id = ?', [wData.amount, wData.shop_id]);
+        await db.query("UPDATE transactions SET status = 'failed' WHERE withdrawal_id = ? AND type = 'withdrawal'", [id]);
+        await db.query("INSERT INTO transactions (shop_id, withdrawal_id, amount, type, status, description) VALUES (?, ?, ?, 'refund', 'completed', ?)",
+          [wData.shop_id, id, wData.amount, `คืนเงิน ${money(wData.amount)} เข้ากระเป๋าร้าน ${who} เพราะแอดมิน ${admin.name} ปฏิเสธคำขอถอน (เหตุผล: ${reason})`]);
+      }
+      await logAudit(db, { req, actor: admin, action: 'withdrawal.reject', actionTh: 'ปฏิเสธคำขอถอนเงิน', entityType: 'withdrawal', entityId: id, entityName: who,
+        description: `แอดมิน ${admin.name} ปฏิเสธการถอนเงิน ${money(wData.amount)} ของ ${who} เหตุผล: ${reason}${wData.user_type !== 'rider' ? ' (คืนยอดเข้ากระเป๋าร้านแล้ว)' : ''}`,
+        oldValue: { status: 'pending' }, newValue: { status: 'rejected', reject_reason: reason } });
+      const [[ownerRow]] = wData.user_type === 'rider'
+        ? await db.query('SELECT user_id AS uid FROM riders WHERE rider_id = ?', [wData.rider_id])
+        : await db.query('SELECT owner_id AS uid FROM shops WHERE shop_id = ?', [wData.shop_id]);
+      if (ownerRow?.uid) { await db.query('INSERT INTO notifications (user_id, title, message, type, reference_id, is_read, created_at) VALUES (?, ?, ?, ?, ?, 0, NOW())', [ownerRow.uid, `❌ คำขอถอนเงิน ${money(wData.amount)} ไม่ได้รับการอนุมัติ`, `เหตุผล: ${reason} (ยอดเงินยังอยู่ในกระเป๋าของคุณ)`, 'withdrawal', id]); }
+    }
     res.json({ success: true, message: 'ปฏิเสธคำขอถอนเงินสำเร็จ' });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -5440,7 +5580,16 @@ app.put('/api/admin/complaints/:id/status', async (req, res) => {
   const { id } = req.params;
   const { status } = req.body;
   try {
-    await db.execute('UPDATE complaints SET status = ? WHERE id = ?', [status, id]);
+    const [[beforeC]] = await db.query('SELECT c.*, u.full_name FROM complaints c LEFT JOIN users u ON u.user_id = c.user_id WHERE c.id = ?', [id]);
+    const admin = await adminActor(db, req);
+    await db.execute('UPDATE complaints SET status = ?, updated_at = NOW(), handled_by_name = ? WHERE id = ?', [status, admin.name, id]);
+    if (beforeC) {
+      const ST = { pending: 'รอดำเนินการ', in_progress: 'กำลังดำเนินการ', resolved: 'แก้ไขเรียบร้อย' };
+      await logAudit(db, { req, actor: admin, action: 'complaint.status', actionTh: 'อัปเดตสถานะเรื่องร้องเรียน', entityType: 'complaint', entityId: id, entityName: beforeC.subject,
+        description: `แอดมิน ${admin.name} เปลี่ยนสถานะเรื่อง "${beforeC.subject}" ของ ${beforeC.full_name || '-'} จาก "${ST[beforeC.status] || beforeC.status}" เป็น "${ST[status] || status}"`,
+        oldValue: { status: beforeC.status }, newValue: { status } });
+      if (beforeC.user_id) { await db.query('INSERT INTO notifications (user_id, title, message, type, reference_id, is_read, created_at) VALUES (?, ?, ?, ?, ?, 0, NOW())', [beforeC.user_id, `📮 อัปเดตเรื่อง "${beforeC.subject}"`, `สถานะเรื่องของคุณเปลี่ยนเป็น "${ST[status] || status}" โดยผู้ดูแลระบบ`, 'complaint', id]); }
+    }
     res.json({ success: true, message: 'Status updated' });
   } catch (error) {
     console.error('Error updating complaint status:', error);
@@ -5584,6 +5733,11 @@ app.post('/api/admin/banners', async (req, res) => {
       'INSERT INTO banners (image_url, link_url, title, subtitle, badge_text, is_active) VALUES (?, ?, ?, ?, ?, ?)',
       [image_url, link_url || null, title || null, subtitle || null, badge_text || null, is_active !== undefined ? is_active : true]
     );
+    {
+      const admin = await adminActor(db, req);
+      await logAudit(db, { req, actor: admin, action: 'banner.create', actionTh: 'เพิ่มแบนเนอร์/โปรโมชัน', entityType: 'banner', entityId: result.insertId, entityName: title,
+        description: `แอดมิน ${admin.name} เพิ่มแบนเนอร์ "${title || '-'}"${badge_text ? ` ป้าย "${badge_text}"` : ''}${subtitle ? ` : ${subtitle}` : ''}`, newValue: slim({ image_url, link_url, title, subtitle, badge_text, is_active }) });
+    }
     res.json({ success: true, message: 'Banner created', id: result.insertId });
   } catch (error) {
     console.error('Error creating banner:', error);
@@ -5596,10 +5750,19 @@ app.put('/api/admin/banners/:id', async (req, res) => {
   const { image_url, link_url, title, subtitle, badge_text, is_active } = req.body;
   
   try {
+    const [[beforeB]] = await db.query('SELECT image_url, link_url, title, subtitle, badge_text, is_active FROM banners WHERE id = ?', [id]);
     await db.query(
       'UPDATE banners SET image_url = COALESCE(?, image_url), link_url = ?, title = ?, subtitle = ?, badge_text = ?, is_active = COALESCE(?, is_active) WHERE id = ?',
       [image_url, link_url, title, subtitle, badge_text, is_active, id]
     );
+    {
+      const admin = await adminActor(db, req);
+      const [[afterB]] = await db.query('SELECT image_url, link_url, title, subtitle, badge_text, is_active FROM banners WHERE id = ?', [id]);
+      const changes = diffText(beforeB, afterB, { title: 'หัวข้อ', subtitle: 'คำอธิบาย', badge_text: 'ป้าย', link_url: 'ลิงก์', is_active: 'แสดงผล' });
+      await logAudit(db, { req, actor: admin, action: 'banner.update', actionTh: 'แก้ไขแบนเนอร์/โปรโมชัน', entityType: 'banner', entityId: id, entityName: afterB?.title,
+        description: `แอดมิน ${admin.name} แก้ไขแบนเนอร์ "${afterB?.title || '-'}": ${[changes, beforeB?.image_url !== afterB?.image_url ? 'เปลี่ยนรูป' : ''].filter(Boolean).join(', ') || 'ไม่มีการเปลี่ยนแปลง'}`,
+        oldValue: slim(beforeB), newValue: slim(afterB) });
+    }
     res.json({ success: true, message: 'Banner updated' });
   } catch (error) {
     console.error('Error updating banner:', error);
@@ -5615,6 +5778,12 @@ app.put('/api/admin/banners/:id/status', async (req, res) => {
   try {
     const [result] = await db.query('UPDATE banners SET is_active = ? WHERE id = ?', [is_active, req.params.id]);
     if (result.affectedRows === 0) return res.status(404).json({ success: false, message: 'Banner not found' });
+    {
+      const admin = await adminActor(db, req);
+      const [[b]] = await db.query('SELECT title FROM banners WHERE id = ?', [req.params.id]);
+      await logAudit(db, { req, actor: admin, action: is_active ? 'banner.show' : 'banner.hide', actionTh: is_active ? 'เปิดแสดงแบนเนอร์' : 'ซ่อนแบนเนอร์',
+        entityType: 'banner', entityId: req.params.id, entityName: b?.title, description: `แอดมิน ${admin.name} ${is_active ? 'เปิดแสดง' : 'ซ่อน'}แบนเนอร์ "${b?.title || '-'}"`, newValue: { is_active } });
+    }
     res.json({ success: true, message: 'Banner status updated' });
   } catch (error) {
     console.error('Error updating banner status:', error);
@@ -5625,7 +5794,13 @@ app.put('/api/admin/banners/:id/status', async (req, res) => {
 app.delete('/api/admin/banners/:id', async (req, res) => {
   const id = req.params.id;
   try {
+    const [[beforeDel]] = await db.query('SELECT image_url, link_url, title, subtitle, badge_text, is_active FROM banners WHERE id = ?', [id]);
     await db.query('DELETE FROM banners WHERE id = ?', [id]);
+    if (beforeDel) {
+      const admin = await adminActor(db, req);
+      await logAudit(db, { req, actor: admin, action: 'banner.delete', actionTh: 'ลบแบนเนอร์/โปรโมชัน', entityType: 'banner', entityId: id, entityName: beforeDel.title,
+        description: `แอดมิน ${admin.name} ลบแบนเนอร์ "${beforeDel.title || '-'}"`, oldValue: slim(beforeDel) });
+    }
     res.json({ success: true, message: 'Banner deleted' });
   } catch (error) {
     console.error('Error deleting banner:', error);
@@ -6678,8 +6853,16 @@ app.get('/api/admin/riders/:id', async (req, res) => {
 // Approve rider
 app.put('/api/admin/riders/:id/approve', async (req, res) => {
   try {
-    const [result] = await db.query('UPDATE riders SET status = "approved", reject_reason = NULL WHERE rider_id = ?', [req.params.id]);
+    const admin = await adminActor(db, req);
+    const [result] = await db.query('UPDATE riders SET status = "approved", reject_reason = NULL, status_updated_at = NOW(), status_updated_by = ? WHERE rider_id = ?', [admin.name, req.params.id]);
     if (result.affectedRows === 0) return res.status(404).json({ success: false, message: 'Rider not found' });
+    {
+      const r = await actorRider(db, req.params.id);
+      const [[rd]] = await db.query('SELECT vehicle_type, vehicle_plate, user_id FROM riders WHERE rider_id = ?', [req.params.id]);
+      await logAudit(db, { req, actor: admin, action: 'rider.approve', actionTh: 'อนุมัติไรเดอร์', entityType: 'rider', entityId: req.params.id, entityName: r.name,
+        description: `แอดมิน ${admin.name} อนุมัติไรเดอร์ ${r.name} (รถ ${rd?.vehicle_type || '-'} ทะเบียน ${rd?.vehicle_plate || '-'}) ให้เริ่มรับงานได้`, newValue: { status: 'approved' } });
+      if (rd?.user_id) { await db.query('INSERT INTO notifications (user_id, title, message, type, reference_id, is_read, created_at) VALUES (?, ?, ?, ?, ?, 0, NOW())', [rd.user_id, '🎉 บัญชีไรเดอร์ของคุณได้รับการอนุมัติแล้ว', 'ผู้ดูแลระบบอนุมัติบัญชีไรเดอร์ของคุณแล้ว เข้าสู่ระบบและเปิดรับงานได้ทันที', 'rider_approved', req.params.id]); }
+    }
     res.json({ success: true, message: 'Rider approved successfully' });
   } catch (err) {
     console.error(err);
@@ -6691,8 +6874,14 @@ app.put('/api/admin/riders/:id/approve', async (req, res) => {
 app.put('/api/admin/riders/:id/reject', async (req, res) => {
   const { reason } = req.body;
   try {
-    const [result] = await db.query('UPDATE riders SET status = "rejected", reject_reason = ? WHERE rider_id = ?', [reason || 'ไม่ระบุเหตุผล', req.params.id]);
+    const admin = await adminActor(db, req);
+    const [result] = await db.query('UPDATE riders SET status = "rejected", reject_reason = ?, status_updated_at = NOW(), status_updated_by = ? WHERE rider_id = ?', [reason || 'ไม่ระบุเหตุผล', admin.name, req.params.id]);
     if (result.affectedRows === 0) return res.status(404).json({ success: false, message: 'Rider not found' });
+    {
+      const r = await actorRider(db, req.params.id);
+      await logAudit(db, { req, actor: admin, action: 'rider.reject', actionTh: 'ปฏิเสธใบสมัครไรเดอร์', entityType: 'rider', entityId: req.params.id, entityName: r.name,
+        description: `แอดมิน ${admin.name} ปฏิเสธใบสมัครไรเดอร์ ${r.name} เหตุผล: ${reason || 'ไม่ระบุเหตุผล'}`, newValue: { status: 'rejected', reject_reason: reason || null } });
+    }
 
     // ส่งแจ้งเตือนผ่าน In-App Notification (วิธีที่ 2)
     const [riderData] = await db.query('SELECT user_id FROM riders WHERE rider_id = ?', [req.params.id]);
@@ -6761,8 +6950,16 @@ app.put('/api/admin/tickets/:id/status', async (req, res) => {
     return res.status(400).json({ error: 'Invalid status' });
   }
   try {
+    const [[beforeT]] = await db.query('SELECT * FROM order_issues WHERE issue_id = ?', [req.params.id]);
     const [result] = await db.execute('UPDATE order_issues SET status = ? WHERE issue_id = ?', [status, req.params.id]);
     if (result.affectedRows === 0) return res.status(404).json({ error: 'Ticket not found' });
+    {
+      const admin = await adminActor(db, req);
+      const ST = { pending: 'รอดำเนินการ', investigating: 'กำลังตรวจสอบ', resolved: 'แก้ไขเรียบร้อย' };
+      await logAudit(db, { req, actor: admin, action: 'ticket.status', actionTh: 'อัปเดตสถานะปัญหาออเดอร์', entityType: 'order_issue', entityId: req.params.id, entityName: beforeT?.issue_topic,
+        description: `แอดมิน ${admin.name} เปลี่ยนสถานะปัญหา "${beforeT?.issue_topic}" ของออเดอร์ #${beforeT?.order_id} เป็น "${ST[status]}"`, oldValue: { status: beforeT?.status }, newValue: { status } });
+      if (beforeT?.order_id) await recordOrderEvent(db, beforeT.order_id, { event: 'issue_status', actor: admin, description: `แอดมิน ${admin.name} อัปเดตปัญหา "${beforeT.issue_topic}" เป็น "${ST[status]}"` });
+    }
     res.json({ success: true, message: 'Ticket status updated' });
   } catch (error) {
     console.error('API /api/admin/tickets/:id/status Error:', error);
@@ -6839,11 +7036,24 @@ app.put('/api/admin/settings', async (req, res) => {
   const connection = await db.getConnection();
   try {
     await connection.beginTransaction();
+    const [beforeRows] = await connection.query('SELECT setting_key, setting_value, description FROM system_settings');
+    const beforeMap = Object.fromEntries(beforeRows.map(r => [r.setting_key, r]));
+    const changedList = [];
     for (const setting of settings) {
       await connection.execute(
         'UPDATE system_settings SET setting_value = ? WHERE setting_key = ?',
         [setting.setting_value, setting.setting_key]
       );
+      const prev = beforeMap[setting.setting_key];
+      if (prev && String(prev.setting_value) !== String(setting.setting_value)) {
+        changedList.push({ key: setting.setting_key, label: prev.description || setting.setting_key, from: prev.setting_value, to: setting.setting_value });
+      }
+    }
+    if (changedList.length) {
+      const admin = await adminActor(connection, req);
+      await logAudit(connection, { req, actor: admin, action: 'settings.update', actionTh: 'แก้ไขการตั้งค่าระบบ', entityType: 'system_settings', entityName: 'ตั้งค่าระบบ',
+        description: `แอดมิน ${admin.name} แก้ไขการตั้งค่า: ${changedList.map(c => `${c.label} ${c.from} → ${c.to}`).join(', ')}`,
+        oldValue: Object.fromEntries(changedList.map(c => [c.key, c.from])), newValue: Object.fromEntries(changedList.map(c => [c.key, c.to])) });
     }
     await connection.commit();
     res.json({ success: true, message: 'Settings updated successfully' });
@@ -7155,7 +7365,18 @@ app.get('/api/admin/refunds', async (req, res) => {
 app.put('/api/admin/refund-status/:id', async (req, res) => {
   const { status } = req.body;
   try {
-    await db.query("UPDATE refund_requests SET status = ? WHERE id = ?", [status, req.params.id]);
+    const admin = await adminActor(db, req);
+    const [[beforeR]] = await db.query('SELECT * FROM refund_requests WHERE id = ?', [req.params.id]);
+    await db.query("UPDATE refund_requests SET status = ?, processed_by_name = ?, processed_at = NOW() WHERE id = ?", [status, admin.name, req.params.id]);
+    if (beforeR) {
+      const ST = { pending: 'รอดำเนินการ', approved: 'อนุมัติคืนเงิน', rejected: 'ปฏิเสธคำขอคืนเงิน' };
+      await logAudit(db, { req, actor: admin, action: `refund.${status}`, actionTh: ST[status] || 'อัปเดตคำขอคืนเงิน', entityType: 'refund_request', entityId: req.params.id, entityName: beforeR.requester_name,
+        description: `แอดมิน ${admin.name} ${ST[status] || status} ออเดอร์ #${beforeR.order_id} จำนวน ${money(beforeR.amount)} ให้ ${beforeR.requester_name || beforeR.account_name} (${beforeR.bank_name} ${beforeR.account_number})`,
+        oldValue: { status: beforeR.status }, newValue: { status } });
+      await recordOrderEvent(db, beforeR.order_id, { event: `refund_${status}`, actor: admin,
+        description: `แอดมิน ${admin.name} ${ST[status] || status} จำนวน ${money(beforeR.amount)} เข้าบัญชี ${beforeR.bank_name} ${beforeR.account_number}` });
+      await db.query('INSERT INTO notifications (user_id, title, message, type, reference_id, is_read, created_at) VALUES (?, ?, ?, ?, ?, 0, NOW())', [beforeR.user_id, status === 'approved' ? `💸 คืนเงินออเดอร์ #${beforeR.order_id} แล้ว` : `คำขอคืนเงินออเดอร์ #${beforeR.order_id}`, `${ST[status] || status} จำนวน ${money(beforeR.amount)}`, 'refund', beforeR.order_id]);
+    }
     res.json({ success: true, message: 'อัปเดตสถานะสำเร็จ' });
   } catch (error) {
     console.error('Update refund status error:', error);

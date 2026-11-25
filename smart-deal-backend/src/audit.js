@@ -57,6 +57,26 @@ const actorAdmin = (req) => {
   return { type: 'admin', id: Number.isFinite(id) ? id : null, name: name || 'ผู้ดูแลระบบ (เว็บแอดมิน)' };
 };
 
+// ยืนยันชื่อแอดมินจากฐานข้อมูลด้วย X-Admin-Id (ถ้ามี) เพื่อไม่ให้ชื่อใน log ถูกปลอม
+const adminActor = async (db, req) => {
+  const a = actorAdmin(req);
+  if (a.id) {
+    const r = await safe('adminActor', () => db.query('SELECT full_name, email FROM users WHERE user_id = ? AND role = "admin"', [a.id]));
+    const u = r && r[0] && r[0][0];
+    if (u) return { type: 'admin', id: a.id, name: `${u.full_name} (${u.email})` };
+    return { type: 'admin', id: null, name: `${a.name} (ไม่ยืนยันตัวตน)` };
+  }
+  return a;
+};
+
+// ตัดค่ารูปภาพ base64 ยาวๆ ออกก่อนเก็บใน log
+const slim = (obj) => {
+  if (!obj || typeof obj !== 'object') return obj;
+  const o = { ...obj };
+  for (const k of Object.keys(o)) if (typeof o[k] === 'string' && o[k].length > 300) o[k] = `${o[k].slice(0, 60)}... (${o[k].length} ตัวอักษร)`;
+  return o;
+};
+
 const SYSTEM = { type: 'system', id: null, name: 'ระบบอัตโนมัติ' };
 
 // ---------- login_logs ----------
@@ -123,7 +143,7 @@ const recordOrderEvent = (db, orderId, { event, fromStatus, toStatus, actor, des
 
 module.exports = {
   safe, money, clientInfo,
-  actorUser, actorShop, actorRider, actorAdmin, SYSTEM,
+  actorUser, actorShop, actorRider, actorAdmin, adminActor, slim, SYSTEM,
   logLogin, logAudit, diffText, recordOrderEvent,
   statusTh, roleTh,
 };

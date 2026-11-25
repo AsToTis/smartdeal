@@ -143,8 +143,12 @@ const call = async (method, path, body, headers = {}) => {
   check('แอดมินระงับผู้ใช้ (ENUM suspended)', sus.status === 'suspended', sus.status);
   r = await call('POST', '/login', { identifier: `apply${stamp}@e2e.test`, password: 'Test1234' });
   check('ผู้ใช้ที่ถูกระงับล็อกอินไม่ได้', r.status === 403);
-  r = await call('PUT', `/admin/orders/${order2}/note`, { note: 'ตรวจสอบแล้ว ลูกค้าได้รับแจ้งการยกเลิก' }, adminHeaders);
-  check('แอดมินบันทึกโน้ตออเดอร์', r.data?.success, r.data?.message);
+  r = await call('PUT', `/admin/settings`, { settings: [{ setting_key: 'base_delivery_fee', setting_value: '36' }] }, adminHeaders);
+  check('แอดมินแก้ตั้งค่าระบบ', r.data?.success);
+  r = await call('GET', '/admin/audit-logs?actor_type=admin', null, adminHeaders);
+  check('หน้าประวัติระบบอ่านจาก DB', (r.data?.data || []).length > 0, (r.data?.data || [])[0]?.description_th);
+  r = await call('GET', `/orders/${orderId}`);
+  check('รายละเอียดออเดอร์มีไทม์ไลน์', (r.data?.order?.timeline || []).length >= 8, (r.data?.order?.timeline || []).length + ' เหตุการณ์');
 
   // ---------- 9. แจ้งเตือน ----------
   const [n1] = await q('SELECT notification_id FROM notifications WHERE user_id = ? ORDER BY notification_id LIMIT 1', [buyerId]);
