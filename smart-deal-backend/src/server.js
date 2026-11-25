@@ -2637,7 +2637,7 @@ app.post('/api/orders', async (req, res) => {
       const itemsText = itemSummaries.join(', ');
       await connection.query(
         'UPDATE orders SET shop_name = ?, buyer_name = ?, items_summary = ?, coupon_code = ? WHERE order_id = ?',
-        [shopNamesText || null, buyerName, itemsText || null, req.body.coupon_code || null, orderId]
+        [shopNamesText || null, buyerName, itemsText || null, req.body.coupon_code || 'ไม่ได้ใช้คูปอง', orderId]
       );
       const payText = { promptpay: 'พร้อมเพย์ (QR)', cash: 'เงินสด', mobilebanking: 'โมบายแบงก์กิ้ง' }[payment_method] || payment_method || 'พร้อมเพย์ (QR)';
       await recordOrderEvent(connection, orderId, {

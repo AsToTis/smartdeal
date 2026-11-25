@@ -90,7 +90,8 @@ const logLogin = (db, { req, user, appName, identifier, success, reason }) => sa
   await db.query(
     `INSERT INTO login_logs (user_id, full_name, role, role_th, app_name, login_identifier, is_success, fail_reason, description_th, ip_address, user_agent, device_info)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [user?.user_id || null, name, role, role ? roleTh(role) : null, appName, identifier || null, success ? 1 : 0, success ? null : (reason || null), desc, ip, userAgent, device]
+    [user?.user_id || null, name || 'ไม่พบบัญชีผู้ใช้', role || 'unknown', role ? roleTh(role) : 'ไม่ทราบ (ไม่พบบัญชี)', appName, identifier || '-', success ? 1 : 0,
+      success ? 'เข้าสู่ระบบสำเร็จ' : (reason || 'ไม่ระบุสาเหตุ'), desc, ip || 'ไม่ทราบ', userAgent || 'ไม่ทราบ', device || 'ไม่ทราบ']
   );
   if (success && user?.user_id) await db.query('UPDATE users SET last_login = NOW() WHERE user_id = ?', [user.user_id]);
 });
@@ -104,7 +105,8 @@ const logAudit = (db, { req, actor, action, actionTh, entityType, entityId, enti
     `INSERT INTO admin_audit_logs (actor_type, actor_id, actor_name, action, action_th, entity_type, entity_id, entity_name, description_th, old_value, new_value, ip_address, user_agent)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [a.type, a.id || null, a.name, action, actionTh, entityType || null, entityId != null ? String(entityId) : null, entityName || null,
-      description || `${a.name} ${actionTh}${entityName ? ` : ${entityName}` : ''}`, toJson(oldValue), toJson(newValue), ip, userAgent]
+      description || `${a.name} ${actionTh}${entityName ? ` : ${entityName}` : ''}`,
+      toJson(oldValue) ?? 'ไม่มีค่าเดิม (เป็นการสร้างใหม่หรือไม่ได้แก้ค่าใด)', toJson(newValue) ?? 'ไม่มีค่าใหม่ (เป็นการลบหรือไม่ได้แก้ค่าใด)', ip || 'ไม่ทราบ', userAgent || 'ไม่ทราบ']
   );
 });
 
